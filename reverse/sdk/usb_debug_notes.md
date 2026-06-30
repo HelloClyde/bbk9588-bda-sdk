@@ -114,6 +114,9 @@ status
 peek 81c00000 8
 call fs 7c 0
 call gui 738 0
+manual call gui 2b8 4 0 0 0 0
+wait check the device screen, then press Enter here
+sleep 2
 ```
 
 It waits for `done`, `ret`, `pong`, or `error` before sending the next command.
@@ -124,6 +127,29 @@ the target command is nonblocking:
 ```powershell
 python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --continue-on-timeout
 ```
+
+Some GUI commands need human observation or produce modal UI. Prefix those lines
+with `manual`:
+
+```text
+manual call gui 2b8 4 0 0 0 0
+```
+
+The host sends the command, waits for the usual result or timeout, then pauses
+and asks whether to continue. Pure operator checkpoints use `wait`:
+
+```text
+wait verify whether the screen changed
+```
+
+Fixed delays use `sleep`:
+
+```text
+sleep 3
+```
+
+This keeps automated scans fast while still allowing visual/manual confirmation
+for display, modal dialog, file selector, audio, and input tests.
 
 Offset scan mode generates raw `call` commands:
 

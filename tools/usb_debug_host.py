@@ -115,9 +115,31 @@ def run_sequence(log_path: Path, cmd_path: Path, commands: list[str], timeout: f
     results = []
     for index, command in enumerate(commands, 1):
         print(f"\n=== {index}/{len(commands)} {command} ===")
+        if command.startswith("sleep "):
+            seconds = float(command.split(maxsplit=1)[1])
+            print(f"sleeping {seconds}s")
+            time.sleep(seconds)
+            results.append((command, "sleep"))
+            continue
+        if command.startswith("wait "):
+            print(command.split(maxsplit=1)[1])
+            input("press Enter to continue...")
+            results.append((command, "manual_wait"))
+            continue
+        manual = False
+        if command.startswith("manual "):
+            manual = True
+            command = command.split(maxsplit=1)[1]
+
         status, text = run_command(log_path, cmd_path, command, timeout)
         results.append((command, status))
         print(f"\n=> {status}")
+        if manual:
+            print("manual command finished or timed out; inspect the device before continuing.")
+            answer = input("continue? [Y/n] ").strip().lower()
+            if answer in {"n", "no", "q", "quit"}:
+                print("stopping by user request")
+                break
         if status.startswith("timeout") and stop_on_timeout:
             print("stopping after timeout; device may have crashed or stopped polling")
             break
@@ -140,6 +162,7 @@ def main() -> None:
     ap.add_argument("--batch", type=Path, help="run commands from a UTF-8 text file")
     ap.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for each command in batch/scan mode")
     ap.add_argument("--continue-on-timeout", action="store_true", help="keep sending commands after a timeout")
+    ap.add_argument("--non-interactive", action="store_true", help="fail if a batch contains manual wait commands")
     ap.add_argument("--scan-table", choices=["gui", "fs", "sys", "mem", "res"], help="generate call commands for one table")
     ap.add_argument("--start", type=lambda x: int(x, 0), default=0, help="scan start offset")
     ap.add_argument("--end", type=lambda x: int(x, 0), default=0, help="scan end offset")
@@ -156,6 +179,10 @@ def main() -> None:
     if ns.command:
         write_command(cmd_path, ns.command)
     if ns.batch:
+        if ns.non_interactive:
+            for line in batch_commands(ns.batch):
+                if line.startswith("manual ") or line.startswith("wait "):
+                    raise SystemExit("batch contains manual command but --non-interactive was passed")
         run_sequence(log_path, cmd_path, batch_commands(ns.batch), ns.timeout, not ns.continue_on_timeout)
         return
     if ns.scan_table:
