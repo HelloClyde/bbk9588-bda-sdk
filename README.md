@@ -13,6 +13,7 @@ The project currently covers:
 - a freestanding MIPS little-endian C SDK draft
 - hardware-tested probes for filesystem, GUI, input, text, image, audio, and
   emulator-related APIs
+- an experimental USB mass-storage debug bridge for faster hardware probing
 - per-application reverse-engineering reports for bundled apps
 
 ## Repository Layout
@@ -112,6 +113,30 @@ python reverse\bda_disasm_preview.py path\to\calculator.bda --count 80
 python reverse\dlx_inspect.py path\to\text_A.dlx
 python reverse\dlx_extract.py path\to\text_A.dlx -o build\text_A_extract
 ```
+
+## USB Debug Bridge
+
+Build the resident debug bridge:
+
+```powershell
+python reverse\bda_compile_c.py reverse\examples\usb_debug_bridge.c `
+  --no-template `
+  --title UsbDebug `
+  --category 9 `
+  -o build\UsbDebugBridge.bda
+```
+
+Copy it to the device application directory, run it on the device, then use the
+host helper:
+
+```powershell
+python tools\usb_debug_host.py --drive F: --tail
+python tools\usb_debug_host.py --drive F: -c status
+python tools\usb_debug_host.py --drive F: -c "msg hello"
+python tools\usb_debug_host.py --drive F: -c quit
+```
+
+See [reverse/sdk/usb_debug_notes.md](reverse/sdk/usb_debug_notes.md).
 
 ## Publishing Notes
 

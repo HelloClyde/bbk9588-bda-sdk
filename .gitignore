@@ -8,6 +8,7 @@
 # Toolchain bundle: keep the packaged archive and docs, ignore extracted files.
 /tools/*
 !/tools/README.md
+!/tools/*.py
 
 # Python caches and local virtual environments.
 __pycache__/

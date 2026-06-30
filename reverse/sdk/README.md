@@ -188,3 +188,6 @@ for canvas/pixel drawing leads, `dlx_notes.md`
 for DLX resource container notes, `bbvm_notes.md` for BB virtual machine wrapper
 clues, `gameboy_notes.md` for emulator-specific reverse engineering notes, and
 `game_framework_notes.md` for bundled game display/sound patterns.
+
+`usb_debug_notes.md` documents the first-pass USB mass-storage command/log
+debug bridge.

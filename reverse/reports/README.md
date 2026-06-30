@@ -50,6 +50,7 @@ The inventory is only an index. A complete per-BDA report still needs:
 - `reverse/sdk/picture_notes.md`
 - `reverse/sdk/paint_notes.md`
 - `reverse/sdk/showcase_notes.md`
+- `reverse/sdk/usb_debug_notes.md`
 
 These are SDK-facing notes rather than final per-BDA reports. The next pass
 should convert them into one report per original application and link each SDK
