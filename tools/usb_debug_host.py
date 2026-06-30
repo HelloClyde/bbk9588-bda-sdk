@@ -44,7 +44,11 @@ def write_command(cmd_path: Path, command: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Host-side helper for UsbDebugBridge.bda over USB mass storage.")
     ap.add_argument("--drive", default="F:", help="mounted device drive, e.g. F:")
-    ap.add_argument("--command", "-c", help="send one command, e.g. ping/status/msg hello/quit")
+    ap.add_argument(
+        "--command",
+        "-c",
+        help="send one command, e.g. ping/status/msg hello/call gui 2b8 4 0 0 0 0/peek 81c00000 4/quit",
+    )
     ap.add_argument("--tail", action="store_true", help="tail debug log")
     ap.add_argument("--seconds", type=float, default=None, help="optional tail duration")
     ns = ap.parse_args()

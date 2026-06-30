@@ -73,6 +73,168 @@ static void log_hex(const char *tag, u32 value) {
     log_line(tag, g_line);
 }
 
+static int hex_value(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+static const char *skip_spaces(const char *s) {
+    while (*s == ' ' || *s == '\t') {
+        ++s;
+    }
+    return s;
+}
+
+static const char *next_token(const char *s) {
+    s = skip_spaces(s);
+    while (*s && *s != ' ' && *s != '\t') {
+        ++s;
+    }
+    return skip_spaces(s);
+}
+
+static int parse_u32(const char **cursor, u32 *out) {
+    const char *s = skip_spaces(*cursor);
+    u32 value = 0;
+    int any = 0;
+
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        s += 2;
+    }
+    while (*s) {
+        int h = hex_value(*s);
+        if (h < 0) {
+            break;
+        }
+        value = (value << 4) | (u32)h;
+        any = 1;
+        ++s;
+    }
+    if (!any) {
+        return 0;
+    }
+    *out = value;
+    *cursor = skip_spaces(s);
+    return 1;
+}
+
+static int same_token(const char *s, const char *token) {
+    s = skip_spaces(s);
+    while (*token) {
+        if (*s++ != *token++) {
+            return 0;
+        }
+    }
+    return *s == 0 || *s == ' ' || *s == '\t';
+}
+
+static void *table_by_name(const char *name) {
+    if (same_token(name, "gui")) {
+        return bda_gui_table();
+    }
+    if (same_token(name, "fs")) {
+        return bda_fs_table();
+    }
+    if (same_token(name, "sys")) {
+        return bda_sys_table();
+    }
+    if (same_token(name, "mem")) {
+        return bda_mem_table();
+    }
+    if (same_token(name, "res")) {
+        return bda_res_table();
+    }
+    return 0;
+}
+
+static void run_call_command(const char *args) {
+    const char *table_token;
+    const char *cursor;
+    void *table;
+    u32 offset;
+    u32 argc;
+    u32 a0 = 0;
+    u32 a1 = 0;
+    u32 a2 = 0;
+    u32 a3 = 0;
+    int ret;
+
+    table_token = skip_spaces(args);
+    table = table_by_name(table_token);
+    if (!table) {
+        log_line("error", "bad table");
+        return;
+    }
+    cursor = next_token(table_token);
+    if (!parse_u32(&cursor, &offset) || !parse_u32(&cursor, &argc)) {
+        log_line("error", "bad call args");
+        return;
+    }
+    if (argc > 4) {
+        log_line("error", "argc > 4");
+        return;
+    }
+    if (argc >= 1 && !parse_u32(&cursor, &a0)) {
+        log_line("error", "bad a0");
+        return;
+    }
+    if (argc >= 2 && !parse_u32(&cursor, &a1)) {
+        log_line("error", "bad a1");
+        return;
+    }
+    if (argc >= 3 && !parse_u32(&cursor, &a2)) {
+        log_line("error", "bad a2");
+        return;
+    }
+    if (argc >= 4 && !parse_u32(&cursor, &a3)) {
+        log_line("error", "bad a3");
+        return;
+    }
+
+    log_line("begin", g_cmd);
+    if (argc == 0) {
+        ret = bda_call0(table, offset);
+    } else if (argc == 1) {
+        ret = bda_call1(table, offset, a0);
+    } else if (argc == 2) {
+        ret = bda_call2(table, offset, a0, a1);
+    } else if (argc == 3) {
+        ret = bda_call3(table, offset, a0, a1, a2);
+    } else {
+        ret = bda_call4(table, offset, a0, a1, a2, a3);
+    }
+    log_hex("ret", (u32)ret);
+    log_line("done", g_cmd);
+}
+
+static void run_peek_command(const char *args) {
+    const char *cursor = args;
+    u32 addr;
+    u32 count;
+    volatile u32 *p;
+    if (!parse_u32(&cursor, &addr) || !parse_u32(&cursor, &count)) {
+        log_line("error", "bad peek args");
+        return;
+    }
+    if (count > 16) {
+        count = 16;
+    }
+    p = (volatile u32 *)addr;
+    log_line("begin", g_cmd);
+    for (u32 i = 0; i < count; ++i) {
+        log_hex("word", p[i]);
+    }
+    log_line("done", g_cmd);
+}
+
 static int read_command(void) {
     int f;
     int n;
@@ -120,6 +282,10 @@ int bda_main(void) {
             }
             if (starts_with(g_cmd, "status")) {
                 log_status();
+            } else if (starts_with(g_cmd, "call ")) {
+                run_call_command(g_cmd + 5);
+            } else if (starts_with(g_cmd, "peek ")) {
+                run_peek_command(g_cmd + 5);
             } else if (starts_with(g_cmd, "msg ")) {
                 bda_msgbox("UsbDebug", g_cmd + 4);
                 log_line("msg", "shown");

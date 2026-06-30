@@ -68,8 +68,32 @@ Supported commands:
 ping       -> log pong
 status     -> log runtime table pointers and storage-ready value
 msg TEXT   -> show a message box on the device
+peek ADDR COUNT
+           -> read up to 16 words from memory
+call TABLE OFFSET ARGC [A0 [A1 [A2 [A3]]]]
+           -> call an SDK table entry with 0..4 raw u32 arguments
 quit       -> exit the resident bridge
 ```
+
+Tables for `call`:
+
+```text
+gui fs sys mem res
+```
+
+Examples:
+
+```powershell
+python tools\usb_debug_host.py --drive F: -c "call fs 7c 0"
+python tools\usb_debug_host.py --drive F: -c "call gui 2b8 4 0 0 0 0"
+python tools\usb_debug_host.py --drive F: -c "peek 81c00000 8"
+```
+
+There is no native try/catch. If a call jumps to a bad table entry, passes a bad
+pointer, or violates GUI lifetime rules, the device can hang or reboot. The
+bridge deletes `cmd.txt` before executing a command and logs `begin` before the
+dangerous call and `done` afterwards. If the log contains `begin` without
+`done`, that command likely crashed the device.
 
 ## Next Steps
 
@@ -77,9 +101,7 @@ If this file-channel bridge works while the app is running, extend it into a
 small monitor:
 
 ```text
-peek ADDR LEN       dump memory as hex into log
 poke ADDR VALUE     write one word/byte
-call TABLE OFF ...  call SDK table offsets for probes
 load PATH           read a small script or binary payload
 ```
 
