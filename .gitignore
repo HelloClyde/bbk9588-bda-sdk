@@ -1,0 +1,47 @@
+# Local device dump. Keep these out of public repositories.
+/系统/
+/应用/
+
+# Build outputs and hardware probe artifacts.
+/build/
+
+# Toolchain bundle: keep the packaged archive and docs, ignore extracted files.
+/tools/*
+!/tools/README.md
+
+# Python caches and local virtual environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated reverse-engineering scratch files.
+/reverse/__pycache__/
+/reverse/analysis_*.txt
+/reverse/*.disasm.txt
+/reverse/reports/*_calls.txt
+/reverse/reports/*_context.txt
+/reverse/reports/*_layout.json
+/reverse/reports/*_layout.txt
+/reverse/reports/*_media.txt
+/reverse/reports/*_strings_vx.txt
+/reverse/reports/*_dlx.txt
+
+# Binary outputs that may be generated inside the source tree.
+*.bda
+*.BDA
+*.dba
+*.DBA
+*.dlx
+*.DLX
+*.elf
+*.bin
+*.o
+*.map
+*.zip
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

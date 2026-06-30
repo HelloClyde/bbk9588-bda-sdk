@@ -1,0 +1,34 @@
+param(
+    [string]$Archive = "tools/g++-mipsel-none-elf-15.2.0.zip",
+    [string]$Url = "https://static.grumpycoder.net/pixel/mips/g++-mipsel-none-elf-15.2.0.zip",
+    [string]$Destination = "tools"
+)
+
+$ErrorActionPreference = "Stop"
+
+$root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$archivePath = Join-Path $root $Archive
+$destPath = Join-Path $root $Destination
+$expectedDir = Join-Path $destPath "g++-mipsel-none-elf-15.2.0"
+$gcc = Join-Path $expectedDir "bin/mipsel-none-elf-gcc.exe"
+
+if (Test-Path -LiteralPath $gcc) {
+    Write-Host "Toolchain already installed: $expectedDir"
+    exit 0
+}
+
+if (!(Test-Path -LiteralPath $archivePath)) {
+    Write-Host "Downloading $Url"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $archivePath) | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $archivePath
+}
+
+New-Item -ItemType Directory -Force -Path $destPath | Out-Null
+Write-Host "Extracting $archivePath"
+Expand-Archive -LiteralPath $archivePath -DestinationPath $destPath -Force
+
+if (!(Test-Path -LiteralPath $gcc)) {
+    throw "Extraction finished, but gcc was not found at: $gcc"
+}
+
+Write-Host "Toolchain ready: $expectedDir"
