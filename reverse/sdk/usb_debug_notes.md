@@ -41,6 +41,8 @@ python tools\usb_debug_host.py --drive F: --tail
 python tools\usb_debug_host.py --drive F: -c ping
 python tools\usb_debug_host.py --drive F: -c status
 python tools\usb_debug_host.py --drive F: -c "msg hello"
+python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt
+python tools\usb_debug_host.py --drive F: --scan-table fs --start 0 --end 0x90 --argc 0
 python tools\usb_debug_host.py --drive F: -c quit
 ```
 
@@ -94,6 +96,64 @@ pointer, or violates GUI lifetime rules, the device can hang or reboot. The
 bridge deletes `cmd.txt` before executing a command and logs `begin` before the
 dangerous call and `done` afterwards. If the log contains `begin` without
 `done`, that command likely crashed the device.
+
+## Batch And Scan Mode
+
+The host helper can loop commands:
+
+```powershell
+python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --timeout 5
+```
+
+Batch file format:
+
+```text
+# comments and blank lines are ignored
+ping
+status
+peek 81c00000 8
+call fs 7c 0
+call gui 738 0
+```
+
+It waits for `done`, `ret`, `pong`, or `error` before sending the next command.
+On timeout it stops by default, because a timeout after `begin` usually means
+the device crashed or the bridge stopped polling. Use this only when you know
+the target command is nonblocking:
+
+```powershell
+python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --continue-on-timeout
+```
+
+Offset scan mode generates raw `call` commands:
+
+```powershell
+python tools\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 0
+python tools\usb_debug_host.py --drive F: --scan-table fs  --start 0 --end 0x90  --argc 0
+python tools\usb_debug_host.py --drive F: --scan-table sys --start 0 --end 0xc0  --argc 0
+```
+
+Argument templates can be supplied:
+
+```powershell
+python tools\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 1 --arg 0
+python tools\usb_debug_host.py --drive F: --scan-table gui --start 0x2b8 --end 0x2b8 --argc 4 --arg 0 --arg 0 --arg 0 --arg 0
+```
+
+This will not magically prove semantics in one pass. Many GUI functions require
+valid handles, string pointers, draw contexts, or active frame state. Batch mode
+is still useful because it quickly classifies offsets into:
+
+```text
+returns immediately
+returns an interesting value
+logs error before call
+hangs/crashes after begin
+```
+
+For GUI APIs, prefer scanning known candidate offsets with conservative argument
+templates, then move to stateful scripts that create a frame/draw handle and
+reuse those pointers.
 
 ## Next Steps
 
