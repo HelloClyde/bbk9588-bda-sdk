@@ -630,12 +630,18 @@ make that loop interactive:
   `build/bbk9588_fs_fat16_root256.img` and
   `build/bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin`.
 - `0x8017b4e0` is the FAT16 cluster-read/cache function. The raw NAND path now
-  uses the same equivalent cluster-read accelerator as the block-image path,
-  but reads from the real backing FAT sectors. This avoids stale in-RAM FAT
-  cache state when resuming older checkpoints and fixes the Desktop resource
-  failure: `build/c200_desktopres_root256_clusterhook.json` runs past
-  `0x8001e900`, with cluster 2 resolving to LBA `0x169` and Desktop cluster 3
-  resolving to LBA `0x179`.
+  models its two-entry cluster cache per cluster parity: cache hits copy from
+  the firmware cache buffer and increment the slot counter; clean misses load
+  backing FAT sectors into the requested destination and copy them into the
+  selected cache slot. This avoids stale in-RAM FAT cache state when resuming
+  older checkpoints and fixes the Desktop resource failure:
+  `build/c200_desktopres_root256_clusterhook.json` runs past `0x8001e900`,
+  with cluster 2 resolving to LBA `0x169` and Desktop cluster 3 resolving to
+  LBA `0x179`.
+- `build/hwemu_cluster_cache_probe.json` verifies the refined cluster-cache
+  model from an existing calibration checkpoint: `invalid = 0`, six accelerated
+  cluster reads, two `miss-load` events, and three later `cache-hit` events from
+  firmware buffers such as `0x8094a9c0` and `0x809489c0`.
 - refine LCD/framebuffer layout until the boot UI is visually coherent;
 - complete the application draw/commit path after direct BDA launch. The BDA
   startup path now reaches the repaint loop, but current framebuffer dumps from

@@ -4216,6 +4216,41 @@ class Bbk9588HwEmu:
         if length <= 0 or length > 0x20000 or not self._is_mapped_ram_va(dest_va, length):
             return False
 
+        table = 0x8086D200 + ((cluster & 1) * 0x20)
+        for slot in range(2):
+            entry = table + slot * 0x10
+            entry_cluster = self._read_u32_va_safe(entry)
+            if entry_cluster != cluster:
+                continue
+            buffer_va = self._read_u32_va_safe(entry + 4) or 0
+            if not self._is_mapped_ram_va(buffer_va, length):
+                return False
+            data = self._read_block_va_safe(buffer_va, length)
+            if data is None:
+                return False
+            self.uc.mem_write(va_to_phys(dest_va), data)
+            hits = (self._read_u32_va_safe(entry + 8) or 0) + 1
+            self._write_u32_va(entry + 8, hits & 0xFFFFFFFF)
+            self.uc.reg_write(UC_MIPS_REG_2, 1)
+            self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+            self.cluster_read_accel_count += 1
+            row: dict[str, str | int] = {
+                "pc": f"0x{pc:08x}",
+                "cluster": f"0x{cluster:x}",
+                "dest_va": f"0x{dest_va:08x}",
+                "slot": slot,
+                "buffer": f"0x{buffer_va:08x}",
+                "length": length,
+                "preview": data[:16].hex(),
+                "count": self.cluster_read_accel_count,
+                "mode": "cache-hit",
+            }
+            self.cluster_read_events.append(row)
+            if len(self.cluster_read_events) > 128:
+                del self.cluster_read_events[0]
+            self._trace_event("fat16-cluster-read-cache-hit", pc=pc, addr=dest_va, value=cluster, size=length)
+            return True
+
         lba = layout["first_data_lba"] + (cluster - 2) * layout["sectors_per_cluster"]
         chunks: list[bytes] = []
         for sector_index in range(sectors_per_read):
@@ -4224,6 +4259,27 @@ class Bbk9588HwEmu:
                 return False
             chunks.append(sector_data)
         data = b"".join(chunks)[:length]
+        victim_slot: int | None = None
+        victim_hits = 0xFFFFFFFF
+        for slot in range(2):
+            entry = table + slot * 0x10
+            hits = self._read_u32_va_safe(entry + 8)
+            if hits is None:
+                return False
+            if hits <= victim_hits:
+                victim_hits = hits
+                victim_slot = slot
+        cache_mode = "backing-read"
+        cache_buffer = 0
+        if victim_slot is not None and victim_hits != 1:
+            entry = table + victim_slot * 0x10
+            cache_buffer = self._read_u32_va_safe(entry + 4) or 0
+            if self._is_mapped_ram_va(cache_buffer, length):
+                self.uc.mem_write(va_to_phys(cache_buffer), data)
+                self._write_u32_va(entry, cluster)
+                self._write_u32_va(entry + 8, 1)
+                cache_mode = "miss-load"
+
         self.uc.mem_write(va_to_phys(dest_va), data)
         self.uc.reg_write(UC_MIPS_REG_2, 1)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
@@ -4238,7 +4294,12 @@ class Bbk9588HwEmu:
             "length": length,
             "preview": data[:16].hex(),
             "count": self.cluster_read_accel_count,
+            "mode": cache_mode,
         }
+        if victim_slot is not None:
+            row["slot"] = victim_slot
+        if cache_buffer:
+            row["buffer"] = f"0x{cache_buffer:08x}"
         self.cluster_read_events.append(row)
         if len(self.cluster_read_events) > 128:
             del self.cluster_read_events[0]
