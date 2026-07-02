@@ -500,6 +500,7 @@ class Bbk9588HwEmu:
         self.surface_pixel_read_count = 0
         self.surface_event_count = 0
         self.surface_events: list[dict[str, str | int]] = []
+        self.surface_events_by_mode: dict[str, list[dict[str, str | int]]] = {}
         self.raster_loop_accel_count = 0
         self.glyph_mask_loop_accel_count = 0
         self.repeat_prologue_mode = repeat_prologue_mode
@@ -4888,6 +4889,10 @@ class Bbk9588HwEmu:
         self.surface_events.append(row)
         if len(self.surface_events) > 256:
             del self.surface_events[0]
+        mode_events = self.surface_events_by_mode.setdefault(mode, [])
+        mode_events.append(row)
+        if len(mode_events) > 64:
+            del mode_events[0]
 
     def _handle_surface_setpixel(self, pc: int) -> bool:
         if not self.fast_hooks or not self.surface_pixel_accelerator or pc != 0x8012BDF4:
@@ -6661,6 +6666,9 @@ class Bbk9588HwEmu:
                 "pixel_read_count": self.surface_pixel_read_count,
                 "event_count": self.surface_event_count,
                 "recent_events": self.surface_events[-128:],
+                "recent_events_by_mode": {
+                    mode: events[-32:] for mode, events in sorted(self.surface_events_by_mode.items())
+                },
             },
             "surface_setpixel_accel_count": self.surface_setpixel_accel_count,
             "surface_hline_accel_count": self.surface_hline_accel_count,
