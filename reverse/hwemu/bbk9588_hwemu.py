@@ -498,6 +498,8 @@ class Bbk9588HwEmu:
         self.surface_block_read_accel_count = 0
         self.surface_block_write_accel_count = 0
         self.surface_pixel_read_count = 0
+        self.surface_event_count = 0
+        self.surface_events: list[dict[str, str | int]] = []
         self.raster_loop_accel_count = 0
         self.glyph_mask_loop_accel_count = 0
         self.repeat_prologue_mode = repeat_prologue_mode
@@ -2318,11 +2320,26 @@ class Bbk9588HwEmu:
                 ptr = (buffer + y * stride + (x << 1)) & 0xFFFFFFFF
                 value = self._read_mem_va(ptr, 2) & 0xFFFF
             except Exception:
+                stride = 0
+                buffer = 0
                 ptr = 0
                 value = 0
             self.uc.reg_write(UC_MIPS_REG_2, value)
             self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
             self.surface_pixel_read_count += 1
+            self._record_surface_event(
+                "pixel-read",
+                address,
+                surface=surface,
+                buffer=buffer,
+                x=x,
+                y=y,
+                width=1,
+                height=1,
+                pitch=stride,
+                color=value,
+                addr=ptr,
+            )
             if self.surface_pixel_read_count <= 32 or self.surface_pixel_read_count % 4096 == 0:
                 self._trace_event("surface-pixel-read", pc=address, addr=ptr, value=value, size=2)
             return
@@ -4835,6 +4852,43 @@ class Bbk9588HwEmu:
         if self._is_mapped_ram_va(dest, 2):
             self.uc.mem_write(va_to_phys(dest), struct.pack("<H", color & 0xFFFF))
 
+    def _record_surface_event(
+        self,
+        mode: str,
+        pc: int,
+        *,
+        surface: int,
+        buffer: int,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        pitch: int,
+        color: int | None = None,
+        addr: int | None = None,
+    ) -> None:
+        self.surface_event_count += 1
+        row: dict[str, str | int] = {
+            "pc": f"0x{pc:08x}",
+            "mode": mode,
+            "surface": f"0x{surface:08x}",
+            "buffer": f"0x{buffer:08x}",
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "pitch": pitch,
+            "mirror_enabled": int((self._read_u32_va_safe(0x80474040) or 0) != 0),
+            "count": self.surface_event_count,
+        }
+        if color is not None:
+            row["color"] = f"0x{color & 0xFFFF:04x}"
+        if addr is not None:
+            row["addr"] = f"0x{addr:08x}"
+        self.surface_events.append(row)
+        if len(self.surface_events) > 256:
+            del self.surface_events[0]
+
     def _handle_surface_setpixel(self, pc: int) -> bool:
         if not self.fast_hooks or not self.surface_pixel_accelerator or pc != 0x8012BDF4:
             return False
@@ -4855,6 +4909,19 @@ class Bbk9588HwEmu:
         self.uc.mem_write(va_to_phys(dest), struct.pack("<H", color))
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_setpixel_accel_count += 1
+        self._record_surface_event(
+            "setpixel",
+            pc,
+            surface=surface,
+            buffer=buffer_va,
+            x=x,
+            y=y,
+            width=1,
+            height=1,
+            pitch=pitch,
+            color=color,
+            addr=dest,
+        )
         return True
 
     def _handle_surface_hline(self, pc: int) -> bool:
@@ -4883,6 +4950,19 @@ class Bbk9588HwEmu:
         self.uc.mem_write(va_to_phys(dest), struct.pack("<H", color) * width)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_hline_accel_count += 1
+        self._record_surface_event(
+            "hline",
+            pc,
+            surface=surface,
+            buffer=buffer_va,
+            x=x0,
+            y=y,
+            width=width,
+            height=1,
+            pitch=pitch,
+            color=color,
+            addr=dest,
+        )
         return True
 
     def _surface_block_args(self, pc: int) -> tuple[int, int, int, int, int, int, int] | None:
@@ -4937,6 +5017,18 @@ class Bbk9588HwEmu:
         self.uc.reg_write(UC_MIPS_REG_2, 0)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_block_read_accel_count += 1
+        self._record_surface_event(
+            "block-read",
+            pc,
+            surface=surface,
+            buffer=surface_buffer,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            pitch=pitch,
+            addr=buffer_va,
+        )
         if self.surface_block_read_accel_count <= 32 or self.surface_block_read_accel_count % 4096 == 0:
             self._trace_event("surface-block-read", pc=pc, addr=buffer_va, value=(x & 0xFFFF) | ((y & 0xFFFF) << 16), size=width * height)
         return True
@@ -4964,6 +5056,18 @@ class Bbk9588HwEmu:
         self.uc.reg_write(UC_MIPS_REG_2, 0)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_block_write_accel_count += 1
+        self._record_surface_event(
+            "block-write",
+            pc,
+            surface=surface,
+            buffer=surface_buffer,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            pitch=pitch,
+            addr=buffer_va,
+        )
         if self.surface_block_write_accel_count <= 32 or self.surface_block_write_accel_count % 4096 == 0:
             self._trace_event("surface-block-write", pc=pc, addr=buffer_va, value=(x & 0xFFFF) | ((y & 0xFFFF) << 16), size=width * height)
         return True
@@ -6549,6 +6653,15 @@ class Bbk9588HwEmu:
             },
             "dirent_copy_accel_count": self.dirent_copy_accel_count,
             "logo_strip_blit_accel_count": self.logo_strip_blit_accel_count,
+            "surface": {
+                "setpixel_accel_count": self.surface_setpixel_accel_count,
+                "hline_accel_count": self.surface_hline_accel_count,
+                "block_read_accel_count": self.surface_block_read_accel_count,
+                "block_write_accel_count": self.surface_block_write_accel_count,
+                "pixel_read_count": self.surface_pixel_read_count,
+                "event_count": self.surface_event_count,
+                "recent_events": self.surface_events[-128:],
+            },
             "surface_setpixel_accel_count": self.surface_setpixel_accel_count,
             "surface_hline_accel_count": self.surface_hline_accel_count,
             "surface_block_read_accel_count": self.surface_block_read_accel_count,

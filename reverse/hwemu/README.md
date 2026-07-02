@@ -581,6 +581,16 @@ make that loop interactive:
   `stop=max_seconds` with no invalid access, records `11590` accelerated
   lookups, and includes `mode=miss-load` events that populate real firmware
   cache buffers such as `0x809517c0` before later cache hits.
+- Surface diagnostics now include `mmio_snapshot.surface`, with counters for
+  `setpixel`, `hline`, rectangle block copy, and single-pixel read
+  accelerators plus a rolling `recent_events` list. Each event records the
+  surface object, backing buffer, coordinates, dimensions, pitch, optional
+  color, destination/source address, and whether LCD mirroring was enabled.
+  `build/hwemu_surface_event_probe.json` resumes from the current menu
+  checkpoint, runs with no invalid memory access, and records `5284`
+  `setpixel` events plus `38144` `pixel-read` events. The recent ring can be
+  dominated by high-frequency pixel reads, so use the per-mode counters when
+  checking whether earlier write accelerators ran.
 - C200 reset now has two narrow equivalent accelerators in the fast-hook set:
   the cache-management loop at `0x8000403c` and the BSS clear loop at
   `0x80004074`. These replace hardware/cache setup and a linear zero-fill with
