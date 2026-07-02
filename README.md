@@ -13,6 +13,7 @@ The project currently covers:
 - a freestanding MIPS little-endian C SDK draft
 - hardware-tested probes for filesystem, GUI, input, text, image, audio, and
   emulator-related APIs
+- a separate hardware-emulator work area for booting the real system image
 - an experimental USB mass-storage debug bridge for faster hardware probing
 - per-application reverse-engineering reports for bundled apps
 
@@ -21,6 +22,7 @@ The project currently covers:
 ```text
 reverse/                 Python build/reverse-engineering tools
 reverse/examples/        Freestanding C/ASM BDA probe sources
+reverse/hwemu/           Hardware emulator, frontend, NAND helpers, smoke tests
 reverse/sdk/             Experimental native SDK header and API notes
 reverse/reports/         Per-BDA analysis reports and indexes
 tools/                   Toolchain notes and local install/cache location
@@ -55,7 +57,10 @@ Hardware-confirmed highlights:
 
 See [reverse/sdk/README.md](reverse/sdk/README.md) for SDK details and
 [reverse/native_toolchain_notes.md](reverse/native_toolchain_notes.md) for the
-toolchain notes.
+toolchain notes. The hardware emulator lives in
+[reverse/hwemu/](reverse/hwemu/) with its own
+[README](reverse/hwemu/README.md), frontend, NAND image helpers, and smoke-test
+entry points.
 
 ## Setup
 
