@@ -24,6 +24,10 @@ DIALOG_TRACE_PCS = [
     "0x800dced0",
     "0x800dd380",
     "0x800e0d68",
+    "0x800087c4",
+    "0x800080f0",
+    "0x800081a8",
+    "0x8005bcd4",
 ]
 
 
@@ -144,6 +148,57 @@ def framebuffer(row: dict[str, object]) -> dict[str, object]:
         return {}
     fb = execution.get("execution", {}).get("framebuffer", {})
     return fb if isinstance(fb, dict) else {}
+
+
+def execution_payload(row: dict[str, object]) -> dict[str, object]:
+    execution = row.get("execution")
+    if not isinstance(execution, dict):
+        return {}
+    payload = execution.get("execution")
+    return payload if isinstance(payload, dict) else {}
+
+
+def surface_count(surface: dict[str, object], key: str) -> int:
+    value = surface.get(key)
+    return int(value) if isinstance(value, int) else 0
+
+
+def compact_runtime(row: dict[str, object]) -> dict[str, object]:
+    payload = execution_payload(row)
+    if not payload:
+        return {}
+    regs = payload.get("regs") if isinstance(payload.get("regs"), dict) else {}
+    mmio = payload.get("mmio_snapshot") if isinstance(payload.get("mmio_snapshot"), dict) else {}
+    touch = mmio.get("touch_controller") if isinstance(mmio.get("touch_controller"), dict) else {}
+    surface = mmio.get("surface") if isinstance(mmio.get("surface"), dict) else {}
+    watch = payload.get("watch") if isinstance(payload.get("watch"), dict) else {}
+    trace_pc = watch.get("trace_pc") if isinstance(watch.get("trace_pc"), dict) else {}
+    trace_counts = trace_pc.get("counts", {})
+    if not isinstance(trace_counts, dict):
+        trace_counts = {}
+    return {
+        "stop_reason": payload.get("stop_reason"),
+        "pc": regs.get("pc"),
+        "invalid_count": len(payload.get("invalid", [])) if isinstance(payload.get("invalid"), list) else 0,
+        "framebuffer": {
+            "nonzero_pixels": framebuffer(row).get("nonzero_pixels"),
+            "unique_pixel_values": framebuffer(row).get("unique_pixel_values"),
+        },
+        "touch_controller": {
+            "x": touch.get("x"),
+            "y": touch.get("y"),
+            "down": touch.get("down"),
+            "controller_poll_hits": touch.get("controller_poll_hits"),
+            "sadc_status_event": touch.get("sadc_status_event"),
+            "sadc_conversion_events_remaining": touch.get("sadc_conversion_events_remaining"),
+        },
+        "trace_counts": {str(k): int(v) for k, v in trace_counts.items()},
+        "surface": {
+            "setpixel": surface_count(surface, "setpixel_accel_count"),
+            "pixel_read": surface_count(surface, "pixel_read_count"),
+            "event_count": surface_count(surface, "event_count"),
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -300,18 +355,29 @@ def main(argv: list[str] | None = None) -> int:
     if int(release_fb.get("nonzero_pixels") or 0) < 20000:
         failures.append("release framebuffer does not look like the main menu")
 
+    release_runtime = compact_runtime(release)
+    release_trace = release_runtime.get("trace_counts", {})
+    if not isinstance(release_trace, dict):
+        release_trace = {}
+    menu_checkpoint_ready = (
+        release_runtime.get("pc") == "0x80008a84"
+        or int(release_trace.get("0x800080f0", 0)) > 0
+        or int(release_trace.get("0x8005bcd4", 0)) > 0
+    )
+
     summary = {
         "ok": not failures,
         "nand_image": str(args.nand_image),
         "touch": {"x": args.x, "y": args.y},
-        "boot": {k: v for k, v in boot.items() if k != "execution"},
-        "left_press": {k: v for k, v in left_press.items() if k != "execution"},
-        "left_release": {k: v for k, v in left_release.items() if k != "execution"},
-        "right_press": {k: v for k, v in right_press.items() if k != "execution"},
-        "right_release": {k: v for k, v in right_release.items() if k != "execution"},
-        "dialog": {k: v for k, v in dialog.items() if k != "execution"},
-        "press": {k: v for k, v in press.items() if k != "execution"},
-        "release": {k: v for k, v in release.items() if k != "execution"},
+        "menu_checkpoint_ready_for_hardware_input": menu_checkpoint_ready,
+        "boot": {**{k: v for k, v in boot.items() if k != "execution"}, "runtime": compact_runtime(boot)},
+        "left_press": {**{k: v for k, v in left_press.items() if k != "execution"}, "runtime": compact_runtime(left_press)},
+        "left_release": {**{k: v for k, v in left_release.items() if k != "execution"}, "runtime": compact_runtime(left_release)},
+        "right_press": {**{k: v for k, v in right_press.items() if k != "execution"}, "runtime": compact_runtime(right_press)},
+        "right_release": {**{k: v for k, v in right_release.items() if k != "execution"}, "runtime": compact_runtime(right_release)},
+        "dialog": {**{k: v for k, v in dialog.items() if k != "execution"}, "runtime": compact_runtime(dialog)},
+        "press": {**{k: v for k, v in press.items() if k != "execution"}, "runtime": compact_runtime(press)},
+        "release": {**{k: v for k, v in release.items() if k != "execution"}, "runtime": release_runtime},
         "failures": failures,
     }
     summary_path = args.out_dir / f"{args.prefix}_summary.json"

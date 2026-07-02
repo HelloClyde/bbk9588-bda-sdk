@@ -575,7 +575,12 @@ make that loop interactive:
   longer passes that option. The same artifacts show no NAND program/erase or
   page overrides, so the script also no longer passes the historical readonly
   NAND guard. It still uses the raw-NAND copy loop accelerator and the
-  `0x8017ca10` resource-cache16 equivalent lookup accelerator.
+  `0x8017ca10` resource-cache16 equivalent lookup accelerator. The summary now
+  records compact runtime state for every phase, including final `pc`, touch
+  controller poll count, scheduler/timer trace counts, and surface activity.
+  `menu_checkpoint_ready_for_hardware_input` distinguishes a visible main-menu
+  framebuffer from a checkpoint that has returned to an input-polling/scheduler
+  point and can immediately consume the next modeled hardware touch.
 - `build/hwemu_rescache_missload_probe.json` verifies the refined
   resource-cache16 model from an existing calibration checkpoint: it reaches
   `stop=max_seconds` with no invalid access, records `11590` accelerated
