@@ -235,6 +235,17 @@ def compact_surface(execution: dict[str, object]) -> dict[str, object]:
     }
 
 
+def compact_input(execution: dict[str, object]) -> dict[str, object]:
+    input_state = execution.get("input_state")
+    if not isinstance(input_state, dict):
+        return {}
+    return {
+        "input_globals": input_state.get("input_globals", {}),
+        "active_node_summary": input_state.get("active_node_summary", []),
+        "key_table_nonzero": input_state.get("key_table_nonzero", []),
+    }
+
+
 def validate_press(row: dict[str, object], expect_no_block: bool) -> list[str]:
     failures: list[str] = []
     execution = row.get("execution")
@@ -361,10 +372,12 @@ def main(argv: list[str] | None = None) -> int:
         "press": {
             **{k: v for k, v in press.items() if k != "execution"},
             "surface": compact_surface(press["execution"]) if isinstance(press.get("execution"), dict) else {},
+            "input": compact_input(press["execution"]) if isinstance(press.get("execution"), dict) else {},
         },
         "release": {
             **{k: v for k, v in release.items() if k != "execution"},
             "surface": compact_surface(release["execution"]) if isinstance(release.get("execution"), dict) else {},
+            "input": compact_input(release["execution"]) if isinstance(release.get("execution"), dict) else {},
         },
         "press_failures": press_failures,
         "release_failures": release_failures,

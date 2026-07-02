@@ -169,6 +169,7 @@ def compact_runtime(row: dict[str, object]) -> dict[str, object]:
         return {}
     regs = payload.get("regs") if isinstance(payload.get("regs"), dict) else {}
     mmio = payload.get("mmio_snapshot") if isinstance(payload.get("mmio_snapshot"), dict) else {}
+    input_state = payload.get("input_state") if isinstance(payload.get("input_state"), dict) else {}
     touch = mmio.get("touch_controller") if isinstance(mmio.get("touch_controller"), dict) else {}
     surface = mmio.get("surface") if isinstance(mmio.get("surface"), dict) else {}
     watch = payload.get("watch") if isinstance(payload.get("watch"), dict) else {}
@@ -192,6 +193,7 @@ def compact_runtime(row: dict[str, object]) -> dict[str, object]:
             "sadc_status_event": touch.get("sadc_status_event"),
             "sadc_conversion_events_remaining": touch.get("sadc_conversion_events_remaining"),
         },
+        "active_node_summary": input_state.get("active_node_summary", []),
         "trace_counts": {str(k): int(v) for k, v in trace_counts.items()},
         "surface": {
             "setpixel": surface_count(surface, "setpixel_accel_count"),

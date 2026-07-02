@@ -586,7 +586,11 @@ make that loop interactive:
   set `menu_checkpoint_reached_input_poll` when the checkpoint has returned to
   the scheduler/input-polling path. This proves hardware touch can be consumed
   into IRQ/queue processing; menu item activation from that checkpoint remains a
-  separate GUI-state issue to verify.
+  separate GUI-state issue to verify. `input_state.active_node_summary` now
+  records each active input node's state-table offset, node pointer, callback,
+  selected words, and status bytes. Current comparison shows the cold-boot
+  settled checkpoint and stable menu checkpoint differ at node `0x806c5370`,
+  especially status byte `0x3c`, which is the next GUI-state target.
 - `build/hwemu_rescache_missload_probe.json` verifies the refined
   resource-cache16 model from an existing calibration checkpoint: it reaches
   `stop=max_seconds` with no invalid access, records `11590` accelerated

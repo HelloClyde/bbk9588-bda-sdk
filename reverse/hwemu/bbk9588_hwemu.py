@@ -7224,28 +7224,46 @@ class Bbk9588HwEmu:
         out["state_pointers"] = ptrs
 
         nodes = []
+        active_nodes = []
         seen: set[int] = set()
         for item in ptrs:
+            offset = item["offset"]
             va = int(item["value"], 16)
-            if va in seen:
-                continue
-            seen.add(va)
             try:
                 data = read_block(va, 0x70)
             except Exception:
                 continue
             node_words = [int.from_bytes(data[i : i + 4], "little") for i in range(0, 0x30, 4)]
+            callback = int.from_bytes(data[0:4], "little")
+            status_bytes = data[0x30:0x40]
+            active_nodes.append(
+                {
+                    "state_offset": offset,
+                    "va": f"0x{va:08x}",
+                    "callback": f"0x{callback:08x}",
+                    "word_08": f"0x{node_words[2]:08x}",
+                    "word_0c": f"0x{node_words[3]:08x}",
+                    "word_10": f"0x{node_words[4]:08x}",
+                    "word_14": f"0x{node_words[5]:08x}",
+                    "status_30_3f": status_bytes.hex(),
+                    "status_3c": status_bytes[0x0C],
+                }
+            )
+            if va in seen:
+                continue
+            seen.add(va)
             nodes.append(
                 {
                     "va": f"0x{va:08x}",
                     "words_00_2c": [f"0x{word:08x}" for word in node_words],
-                    "bytes_30_3f": data[0x30:0x40].hex(),
+                    "bytes_30_3f": status_bytes.hex(),
                     "links_18_1c_20_24": [
                         f"0x{int.from_bytes(data[i:i+4], 'little'):08x}" for i in (0x18, 0x1C, 0x20, 0x24)
                     ],
-                    "callback_00": f"0x{int.from_bytes(data[0:4], 'little'):08x}",
+                    "callback_00": f"0x{callback:08x}",
                 }
             )
+        out["active_node_summary"] = active_nodes
         out["pointed_nodes"] = nodes
 
         try:
