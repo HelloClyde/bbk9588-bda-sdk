@@ -4261,26 +4261,6 @@ class Bbk9588HwEmu:
             return False
         sector = ((index >> 8) + base_sector) & 0xFFFFFFFF
         low = index & 0xFF
-        backing_sector = self._read_backing_sector(sector)
-        if backing_sector is not None:
-            value = struct.unpack_from("<H", backing_sector, low * 2)[0]
-            self.uc.reg_write(UC_MIPS_REG_2, value)
-            self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-            self.resource_cache16_accel_count += 1
-            if self.resource_cache16_accel_count <= 32 or self.resource_cache16_accel_count % 4096 == 0:
-                row = {
-                    "pc": f"0x{pc:08x}",
-                    "index": f"0x{index:x}",
-                    "sector": f"0x{sector:x}",
-                    "slot": "backing",
-                    "buffer": "backing-sector",
-                    "value": f"0x{value:04x}",
-                    "count": self.resource_cache16_accel_count,
-                }
-                self.resource_cache16_events.append(row)
-                if len(self.resource_cache16_events) > 128:
-                    del self.resource_cache16_events[0]
-            return True
         table = 0x8086D180
         for slot in range(8):
             entry = table + slot * 0x10
@@ -4311,7 +4291,53 @@ class Bbk9588HwEmu:
                 if len(self.resource_cache16_events) > 128:
                     del self.resource_cache16_events[0]
             return True
-        return False
+        backing_sector = self._read_backing_sector(sector)
+        if backing_sector is None:
+            return False
+        victim_slot: int | None = None
+        victim_hits = 0xFFFFFFFF
+        for slot in range(8):
+            entry = table + slot * 0x10
+            hits = self._read_u32_va_safe(entry + 8)
+            if hits is None:
+                return False
+            if hits <= victim_hits:
+                victim_hits = hits
+                victim_slot = slot
+        if victim_slot is None:
+            return False
+        entry = table + victim_slot * 0x10
+        buffer_va = self._read_u32_va_safe(entry + 4) or 0
+        dirty = self._read_u32_va_safe(entry + 0x0C) or 0
+        if dirty:
+            # The firmware flushes dirty cache slots before reuse. Do not
+            # shortcut that path until the writeback side is modeled.
+            return False
+        if not self._is_mapped_ram_va(buffer_va, 0x200):
+            return False
+        self.uc.mem_write(va_to_phys(buffer_va), backing_sector[:0x200])
+        value = struct.unpack_from("<H", backing_sector, low * 2)[0]
+        self._write_u32_va(entry, sector)
+        self._write_u32_va(entry + 8, 1)
+        self._write_u32_va(entry + 0x0C, 0)
+        self.uc.reg_write(UC_MIPS_REG_2, value)
+        self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+        self.resource_cache16_accel_count += 1
+        if self.resource_cache16_accel_count <= 32 or self.resource_cache16_accel_count % 4096 == 0:
+            row = {
+                "pc": f"0x{pc:08x}",
+                "index": f"0x{index:x}",
+                "sector": f"0x{sector:x}",
+                "slot": victim_slot,
+                "buffer": f"0x{buffer_va:08x}",
+                "value": f"0x{value:04x}",
+                "count": self.resource_cache16_accel_count,
+                "mode": "miss-load",
+            }
+            self.resource_cache16_events.append(row)
+            if len(self.resource_cache16_events) > 128:
+                del self.resource_cache16_events[0]
+        return True
 
     def _handle_dirent_copy(self, pc: int) -> bool:
         if not self.fast_hooks or pc != 0x80175E40:

@@ -282,9 +282,13 @@ Latest useful trace:
   around `0x80183e0c`, `0x80183fa4`, `0x80184140`, `0x801841bc`,
   `0x801843d8`, and `0x80184530`. It is disabled by default because it is
   still a PC-level accelerator, not part of the final minimal-hook target.
-- `--resource-cache16-accelerator` enables the provisional `0x8017ca10`
-  resource-cache lookup shortcut. It is disabled by default because incorrect
-  cache modeling can make valid image/resource files appear corrupt or missing.
+- `--resource-cache16-accelerator` models the hot `0x8017ca10` 16-bit
+  FAT/resource sector-cache lookup. It now checks the firmware's eight cache
+  slots first; on a clean miss it loads the backing sector into the selected
+  lowest-hit cache buffer, updates the sector/hit/dirty fields, and returns the
+  requested halfword. Dirty misses are left to the firmware path until writeback
+  is modeled. This remains a PC-level accelerator, but it preserves the cache
+  table side effects observed by later firmware code.
 - Current fast-hook boundary for the raw-system menu path:
   `0x8012c3d0` / `0x8012c1bc` bulk-copy surface rectangles using the same
   source/destination buffers as the firmware surface vtable; `0x80006658`
@@ -569,6 +573,11 @@ make that loop interactive:
   shows `scheduler-tick-clamp` was not hit in any phase, so the script no
   longer passes that option. It still uses the raw-NAND copy loop accelerator
   and the `0x8017ca10` resource-cache16 equivalent lookup accelerator.
+- `build/hwemu_rescache_missload_probe.json` verifies the refined
+  resource-cache16 model from an existing calibration checkpoint: it reaches
+  `stop=max_seconds` with no invalid access, records `11590` accelerated
+  lookups, and includes `mode=miss-load` events that populate real firmware
+  cache buffers such as `0x809517c0` before later cache hits.
 - C200 reset now has two narrow equivalent accelerators in the fast-hook set:
   the cache-management loop at `0x8000403c` and the BSS clear loop at
   `0x80004074`. These replace hardware/cache setup and a linear zero-fill with
