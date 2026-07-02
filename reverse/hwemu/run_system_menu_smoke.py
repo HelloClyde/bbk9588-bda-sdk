@@ -163,6 +163,63 @@ def block_image_snapshot(execution: dict[str, object]) -> dict[str, object]:
     return block if isinstance(block, dict) else {}
 
 
+def surface_snapshot(execution: dict[str, object]) -> dict[str, object]:
+    mmio = execution.get("mmio_snapshot")
+    if not isinstance(mmio, dict):
+        return {}
+    surface = mmio.get("surface")
+    if isinstance(surface, dict):
+        return surface
+    return {
+        "setpixel_accel_count": mmio.get("surface_setpixel_accel_count", 0),
+        "hline_accel_count": mmio.get("surface_hline_accel_count", 0),
+        "block_read_accel_count": mmio.get("surface_block_read_accel_count", 0),
+        "block_write_accel_count": mmio.get("surface_block_write_accel_count", 0),
+        "pixel_read_count": mmio.get("surface_pixel_read_count", 0),
+    }
+
+
+def surface_count(surface: dict[str, object], key: str) -> int:
+    value = surface.get(key)
+    return int(value) if isinstance(value, int) else 0
+
+
+def validate_surface_activity(execution: dict[str, object], failures: list[str], phase: str) -> None:
+    surface = surface_snapshot(execution)
+    setpixel_count = surface_count(surface, "setpixel_accel_count")
+    event_count = surface_count(surface, "event_count")
+    require(setpixel_count > 0, failures, f"{phase} did not exercise surface setpixel path")
+    if event_count:
+        require(event_count >= setpixel_count, failures, f"{phase} surface event count is inconsistent")
+        by_mode = surface.get("recent_events_by_mode")
+        require(isinstance(by_mode, dict), failures, f"{phase} surface per-mode trace is missing")
+        if isinstance(by_mode, dict):
+            setpixel_events = by_mode.get("setpixel")
+            require(
+                isinstance(setpixel_events, list) and len(setpixel_events) > 0,
+                failures,
+                f"{phase} surface per-mode trace has no setpixel events",
+            )
+
+
+def compact_surface(execution: dict[str, object]) -> dict[str, object]:
+    surface = surface_snapshot(execution)
+    by_mode = surface.get("recent_events_by_mode")
+    mode_counts: dict[str, int] = {}
+    if isinstance(by_mode, dict):
+        for mode, events in by_mode.items():
+            mode_counts[str(mode)] = len(events) if isinstance(events, list) else 0
+    return {
+        "setpixel": surface_count(surface, "setpixel_accel_count"),
+        "hline": surface_count(surface, "hline_accel_count"),
+        "block_read": surface_count(surface, "block_read_accel_count"),
+        "block_write": surface_count(surface, "block_write_accel_count"),
+        "pixel_read": surface_count(surface, "pixel_read_count"),
+        "event_count": surface_count(surface, "event_count"),
+        "recent_by_mode_counts": mode_counts,
+    }
+
+
 def validate_press(row: dict[str, object], expect_no_block: bool) -> list[str]:
     failures: list[str] = []
     execution = row.get("execution")
@@ -177,6 +234,7 @@ def validate_press(row: dict[str, object], expect_no_block: bool) -> list[str]:
     require(input_global(execution, "touch_flag_8048dd04") == "0x00000001", failures, "press did not leave touch-down flag set")
     require(int(framebuffer.get("nonzero_pixels") or 0) > 20000, failures, "press framebuffer is unexpectedly sparse")
     require(Path(str(row.get("png"))).is_file(), failures, "press PNG was not written")
+    validate_surface_activity(execution, failures, "press")
     if expect_no_block:
         block = block_image_snapshot(execution)
         require(block.get("image") is None, failures, "press unexpectedly used block image hook")
@@ -201,6 +259,7 @@ def validate_release(row: dict[str, object], strict_hash: str | None, expect_no_
     require(int(framebuffer.get("nonzero_pixels") or 0) > 20000, failures, "release framebuffer is unexpectedly sparse")
     require(int(framebuffer.get("unique_pixel_values") or 0) > 500, failures, "release framebuffer has too few colors")
     require(png.is_file(), failures, "release PNG was not written")
+    validate_surface_activity(execution, failures, "release")
     if expect_no_block:
         block = block_image_snapshot(execution)
         require(block.get("image") is None, failures, "release unexpectedly used block image hook")
@@ -284,8 +343,14 @@ def main(argv: list[str] | None = None) -> int:
         "clear_nand_overrides_page_ranges": args.clear_nand_overrides_page_range,
         "c200": str(c200),
         "touch": {"x": args.x, "y": args.y},
-        "press": {k: v for k, v in press.items() if k != "execution"},
-        "release": {k: v for k, v in release.items() if k != "execution"},
+        "press": {
+            **{k: v for k, v in press.items() if k != "execution"},
+            "surface": compact_surface(press["execution"]) if isinstance(press.get("execution"), dict) else {},
+        },
+        "release": {
+            **{k: v for k, v in release.items() if k != "execution"},
+            "surface": compact_surface(release["execution"]) if isinstance(release.get("execution"), dict) else {},
+        },
         "press_failures": press_failures,
         "release_failures": release_failures,
     }

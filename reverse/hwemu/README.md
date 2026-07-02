@@ -600,14 +600,17 @@ make that loop interactive:
   interaction regression. It starts from `build/c200_searching_schedfix.pkl`,
   sends a hardware-controller touch at `(210,287)` to the bottom `工具` tab,
   releases it, and checks the touch IRQ/queue/GUI path, scheduler activity,
-  release flags, and framebuffer sanity. It intentionally does not pass
-  `--scheduler-tick-clamp` or `--resource-cache16-accelerator`;
+  release flags, framebuffer sanity, and surface draw activity. It
+  intentionally does not pass `--scheduler-tick-clamp` or
+  `--resource-cache16-accelerator`;
   `0x800087c4`, `0x80007e08`, and `0x800080f0` advance through the normal
   wait/timer/scheduler path. Current passing run:
-  `build/hwemu_system_menu_minhooks_summary.json`,
-  `build/hwemu_system_menu_minhooks_press.png`, and
-  `build/hwemu_system_menu_minhooks_release.png`; the release screenshot shows
-  the tools page with `Ver`, pointer, and `USB` icons.
+  `build/hwemu_system_menu_surface_trace_summary.json`,
+  `build/hwemu_system_menu_surface_trace_press.png`, and
+  `build/hwemu_system_menu_surface_trace_release.png`; the release screenshot
+  shows the tools page with `Ver`, pointer, and `USB` icons. The summary now
+  includes compact surface counts and verifies that `recent_events_by_mode`
+  retains `setpixel` samples for both press and release phases.
 - `0x8001b464` is a six-key scanner that returns these active-low GPIO codes:
   code `10` = GPIO B bit 30 (`0x10010100 & 0x40000000`), code `5` = GPIO B
   bit 28, code `7` = GPIO B bit 27, code `6` = GPIO B bit 29, code `9` =
