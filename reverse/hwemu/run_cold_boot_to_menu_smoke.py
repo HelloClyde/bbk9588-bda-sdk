@@ -195,6 +195,7 @@ def compact_runtime(row: dict[str, object]) -> dict[str, object]:
         "trace_counts": {str(k): int(v) for k, v in trace_counts.items()},
         "surface": {
             "setpixel": surface_count(surface, "setpixel_accel_count"),
+            "color_span": surface_count(surface, "color_span_accel_count"),
             "pixel_read": surface_count(surface, "pixel_read_count"),
             "event_count": surface_count(surface, "event_count"),
         },

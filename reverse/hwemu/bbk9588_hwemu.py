@@ -495,12 +495,14 @@ class Bbk9588HwEmu:
         self.free_scan_accel_count = 0
         self.surface_setpixel_accel_count = 0
         self.surface_hline_accel_count = 0
+        self.surface_color_span_accel_count = 0
         self.surface_block_read_accel_count = 0
         self.surface_block_write_accel_count = 0
         self.surface_pixel_read_count = 0
         self.surface_event_count = 0
         self.surface_events: list[dict[str, str | int]] = []
         self.surface_events_by_mode: dict[str, list[dict[str, str | int]]] = {}
+        self.halfword_copy_accel_count = 0
         self.raster_loop_accel_count = 0
         self.glyph_mask_loop_accel_count = 0
         self.repeat_prologue_mode = repeat_prologue_mode
@@ -1459,6 +1461,9 @@ class Bbk9588HwEmu:
                 0x8012BDF4,
                 0x8012BEA4,
                 0x8012BE84,
+                0x8012B034,
+                0x8012B064,
+                0x8012BF64,
                 0x80173630,
                 0x80173638,
                 0x80173640,
@@ -1589,9 +1594,13 @@ class Bbk9588HwEmu:
             return
         if self.profile == "bbk9588-uboot" and self._handle_free_scan_loop(address):
             return
+        if self.profile == "bbk9588-uboot" and self._handle_halfword_copy_loop(address):
+            return
         if self.profile == "bbk9588-uboot" and self._handle_raster_copy_loop(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_glyph_mask_loop(address):
+            return
+        if self.profile == "bbk9588-uboot" and self._handle_surface_color_span_loop(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_surface_setpixel(address):
             return
@@ -4751,6 +4760,48 @@ class Bbk9588HwEmu:
         self.free_scan_accel_count += 1
         return True
 
+    def _handle_halfword_copy_loop(self, pc: int) -> bool:
+        if not self.fast_hooks or pc not in (0x8012B034, 0x8012B064):
+            return False
+        count = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF  # a3
+        if count == 0 or count > 0x20000:
+            return False
+        dst = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF  # a0
+        src = self.uc.reg_read(UC_MIPS_REG_3) & 0xFFFFFFFF  # v1
+        size = count * 2
+        if not self._is_mapped_ram_va(src, size):
+            return False
+        if pc == 0x8012B064:
+            if not self._is_mapped_ram_va(dst, size):
+                return False
+            data = self._read_block_va_safe(src, size)
+            if len(data) != size:
+                return False
+            self.uc.mem_write(va_to_phys(dst), data)
+            final_dst = (dst + size) & 0xFFFFFFFF
+        else:
+            low_dst = (dst - (count - 1) * 2) & 0xFFFFFFFF
+            if not self._is_mapped_ram_va(low_dst, size):
+                return False
+            data = self._read_block_va_safe(src, size)
+            if len(data) != size:
+                return False
+            out = bytearray(size)
+            for i in range(count):
+                out[(count - 1 - i) * 2 : (count - i) * 2] = data[i * 2 : i * 2 + 2]
+            self.uc.mem_write(va_to_phys(low_dst), bytes(out))
+            final_dst = (dst - size) & 0xFFFFFFFF
+        last = struct.unpack_from("<H", data, size - 2)[0]
+        self.uc.reg_write(UC_MIPS_REG_2, last)
+        self.uc.reg_write(UC_MIPS_REG_3, (src + size) & 0xFFFFFFFF)
+        self.uc.reg_write(UC_MIPS_REG_4, final_dst)
+        self.uc.reg_write(UC_MIPS_REG_7, 0)
+        self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+        self.halfword_copy_accel_count += 1
+        if self.halfword_copy_accel_count <= 32 or self.halfword_copy_accel_count % 4096 == 0:
+            self._trace_event("halfword-copy-loop", pc=pc, addr=dst, value=src, size=size)
+        return True
+
     def _handle_raster_copy_loop(self, pc: int) -> bool:
         if not self.fast_hooks or not self.raster_copy_accelerator or pc != 0x800AC388:
             return False
@@ -4966,6 +5017,75 @@ class Bbk9588HwEmu:
             height=1,
             pitch=pitch,
             color=color,
+            addr=dest,
+        )
+        return True
+
+    def _handle_surface_color_span_loop(self, pc: int) -> bool:
+        if not self.fast_hooks or pc != 0x8012BF64:
+            return False
+        surface = self.uc.reg_read(UC_MIPS_REG_21) & 0xFFFFFFFF  # s5
+        x_base = self.uc.reg_read(UC_MIPS_REG_19) & 0xFFFFFFFF  # s3
+        y = self.uc.reg_read(UC_MIPS_REG_18) & 0xFFFFFFFF  # s2
+        index = self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF  # s1
+        width = self.uc.reg_read(UC_MIPS_REG_20) & 0xFFFFFFFF  # s4
+        src_va = self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF  # s0
+        if index >= width:
+            return False
+        count = width - index
+        if count > 0x400 or not self._is_mapped_ram_va(surface, 0x48):
+            return False
+        pitch = self._read_u32_va_safe(surface + 0x18) or 0
+        buffer_va = self._read_u32_va_safe(surface + 0x44) or 0
+        x = (x_base + index) & 0xFFFFFFFF
+        if pitch == 0 or buffer_va == 0 or x > 0xFFFF or y > 0xFFFF:
+            return False
+        src_size = count * 2
+        dest = (buffer_va + y * pitch + x * 2) & 0xFFFFFFFF
+        if not self._is_mapped_ram_va(src_va, src_size) or not self._is_mapped_ram_va(dest, src_size):
+            return False
+        colors = self._read_block_va_safe(src_va, src_size)
+        if len(colors) != src_size:
+            return False
+        self.uc.mem_write(va_to_phys(dest), colors)
+        if (self._read_u32_va_safe(0x80474040) or 0) != 0:
+            for i in range(count):
+                color = struct.unpack_from("<H", colors, i * 2)[0]
+                self._mirror_lcd_pixel_if_enabled(x + i, y, color)
+
+        sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+        if not self._is_mapped_ram_va(sp + 0x10, 0x1C):
+            return False
+        restore_slots = (
+            (UC_MIPS_REG_16, 0x10),
+            (UC_MIPS_REG_17, 0x14),
+            (UC_MIPS_REG_18, 0x18),
+            (UC_MIPS_REG_19, 0x1C),
+            (UC_MIPS_REG_20, 0x20),
+            (UC_MIPS_REG_21, 0x24),
+        )
+        for reg, off in restore_slots:
+            value = self._read_u32_va_safe(sp + off)
+            if value is None:
+                return False
+            self.uc.reg_write(reg, value)
+        ra = self._read_u32_va_safe(sp + 0x28)
+        if ra is None or not (0x80000000 <= ra <= 0x81FFFFFF):
+            return False
+        self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x30) & 0xFFFFFFFF)
+        self.uc.reg_write(UC_MIPS_REG_31, ra)
+        self.uc.reg_write(UC_MIPS_REG_PC, ra)
+        self.surface_color_span_accel_count += 1
+        self._record_surface_event(
+            "color-span",
+            pc,
+            surface=surface,
+            buffer=buffer_va,
+            x=x,
+            y=y,
+            width=count,
+            height=1,
+            pitch=pitch,
             addr=dest,
         )
         return True
@@ -6658,9 +6778,11 @@ class Bbk9588HwEmu:
             },
             "dirent_copy_accel_count": self.dirent_copy_accel_count,
             "logo_strip_blit_accel_count": self.logo_strip_blit_accel_count,
+            "halfword_copy_accel_count": self.halfword_copy_accel_count,
             "surface": {
                 "setpixel_accel_count": self.surface_setpixel_accel_count,
                 "hline_accel_count": self.surface_hline_accel_count,
+                "color_span_accel_count": self.surface_color_span_accel_count,
                 "block_read_accel_count": self.surface_block_read_accel_count,
                 "block_write_accel_count": self.surface_block_write_accel_count,
                 "pixel_read_count": self.surface_pixel_read_count,
@@ -6672,6 +6794,7 @@ class Bbk9588HwEmu:
             },
             "surface_setpixel_accel_count": self.surface_setpixel_accel_count,
             "surface_hline_accel_count": self.surface_hline_accel_count,
+            "surface_color_span_accel_count": self.surface_color_span_accel_count,
             "surface_block_read_accel_count": self.surface_block_read_accel_count,
             "surface_block_write_accel_count": self.surface_block_write_accel_count,
             "surface_pixel_read_count": self.surface_pixel_read_count,
