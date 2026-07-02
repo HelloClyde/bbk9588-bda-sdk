@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=int, default=190)
     ap.add_argument("--boot-max-seconds", type=int, default=120)
     ap.add_argument("--dialog-max-seconds", type=int, default=80)
+    ap.add_argument("--settle-max-seconds", type=int, default=60)
     ap.add_argument("--x", type=int, default=180)
     ap.add_argument("--y", type=int, default=220)
     args = ap.parse_args(argv)
@@ -321,6 +322,18 @@ def main(argv: list[str] | None = None) -> int:
         trace_pcs=DIALOG_TRACE_PCS,
         event_args=["--touch-state", f"{args.x}:{args.y}:0"],
     )
+    settle = run_hwemu(
+        c200=c200,
+        state_in=Path(str(release["state"])),
+        state_out=args.out_dir / f"{args.prefix}_menu_ready.pkl",
+        json_out=args.out_dir / f"{args.prefix}_menu_ready.json",
+        png_out=args.out_dir / f"{args.prefix}_menu_ready.png",
+        nand_image=args.nand_image,
+        timeout=args.timeout,
+        max_seconds=args.settle_max_seconds,
+        trace_pcs=DIALOG_TRACE_PCS,
+        event_args=[],
+    )
 
     failures: list[str] = []
     if boot.get("returncode") != 0:
@@ -339,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
         failures.append("press phase failed")
     if release.get("returncode") != 0:
         failures.append("release phase failed")
+    if settle.get("returncode") != 0:
+        failures.append("menu settle phase failed")
     boot_fb = framebuffer(boot)
     dialog_fb = framebuffer(dialog)
     release_fb = framebuffer(release)
@@ -358,20 +373,24 @@ def main(argv: list[str] | None = None) -> int:
         failures.append("release framebuffer does not look like the main menu")
 
     release_runtime = compact_runtime(release)
-    release_trace = release_runtime.get("trace_counts", {})
-    if not isinstance(release_trace, dict):
-        release_trace = {}
-    menu_checkpoint_ready = (
-        release_runtime.get("pc") == "0x80008a84"
-        or int(release_trace.get("0x800080f0", 0)) > 0
-        or int(release_trace.get("0x8005bcd4", 0)) > 0
+    settle_runtime = compact_runtime(settle)
+    settle_trace = settle_runtime.get("trace_counts", {})
+    if not isinstance(settle_trace, dict):
+        settle_trace = {}
+    menu_checkpoint_reached_input_poll = (
+        settle_runtime.get("pc") == "0x80008a84"
+        or int(settle_trace.get("0x800080f0", 0)) > 0
+        or int(settle_trace.get("0x8005bcd4", 0)) > 0
     )
+    if not menu_checkpoint_reached_input_poll:
+        failures.append("menu settle checkpoint did not reach scheduler/input polling path")
 
     summary = {
         "ok": not failures,
         "nand_image": str(args.nand_image),
         "touch": {"x": args.x, "y": args.y},
-        "menu_checkpoint_ready_for_hardware_input": menu_checkpoint_ready,
+        "menu_checkpoint_reached_input_poll": menu_checkpoint_reached_input_poll,
+        "menu_checkpoint_ready_for_hardware_input": menu_checkpoint_reached_input_poll,
         "boot": {**{k: v for k, v in boot.items() if k != "execution"}, "runtime": compact_runtime(boot)},
         "left_press": {**{k: v for k, v in left_press.items() if k != "execution"}, "runtime": compact_runtime(left_press)},
         "left_release": {**{k: v for k, v in left_release.items() if k != "execution"}, "runtime": compact_runtime(left_release)},
@@ -380,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         "dialog": {**{k: v for k, v in dialog.items() if k != "execution"}, "runtime": compact_runtime(dialog)},
         "press": {**{k: v for k, v in press.items() if k != "execution"}, "runtime": compact_runtime(press)},
         "release": {**{k: v for k, v in release.items() if k != "execution"}, "runtime": release_runtime},
+        "settle": {**{k: v for k, v in settle.items() if k != "execution"}, "runtime": settle_runtime},
         "failures": failures,
     }
     summary_path = args.out_dir / f"{args.prefix}_summary.json"

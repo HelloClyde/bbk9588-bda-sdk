@@ -571,7 +571,8 @@ make that loop interactive:
 - `reverse/hwemu/run_cold_boot_to_menu_smoke.py` runs the current longest
   system regression: raw `C200.bin` at `0x80004000`, combined raw NAND, the
   two observed calibration touches `(10,10)` and `(229,10)`, the time-change
-  dialog `否` button, and finally the main menu. Current passing run:
+  dialog `否` button, the visible main menu, and then an additional settle
+  phase back to scheduler/input polling. Current archived run:
   `build/hwemu_cold_boot_to_menu_check3_summary.json` with final screenshot
   `build/hwemu_cold_boot_to_menu_check3_menu.png`. The archived check3 JSON
   shows `scheduler-tick-clamp` was not hit in any phase, so the script no
@@ -581,9 +582,11 @@ make that loop interactive:
   `0x8017ca10` resource-cache16 equivalent lookup accelerator. The summary now
   records compact runtime state for every phase, including final `pc`, touch
   controller poll count, scheduler/timer trace counts, and surface activity.
-  `menu_checkpoint_ready_for_hardware_input` distinguishes a visible main-menu
-  framebuffer from a checkpoint that has returned to an input-polling/scheduler
-  point and can immediately consume the next modeled hardware touch.
+  New runs also write `*_menu_ready.pkl/json/png` after the settle phase and
+  set `menu_checkpoint_reached_input_poll` when the checkpoint has returned to
+  the scheduler/input-polling path. This proves hardware touch can be consumed
+  into IRQ/queue processing; menu item activation from that checkpoint remains a
+  separate GUI-state issue to verify.
 - `build/hwemu_rescache_missload_probe.json` verifies the refined
   resource-cache16 model from an existing calibration checkpoint: it reaches
   `stop=max_seconds` with no invalid access, records `11590` accelerated
