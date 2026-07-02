@@ -43,8 +43,6 @@ python .\reverse\hwemu\run_system_menu_smoke.py `
   --state-in .\build\hwemu_cold_boot_to_menu_check3_menu.pkl `
   --no-block-image `
   --nand-image .\build\bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin `
-  --readonly-nand-page-range 0x1c40:0x21c40 `
-  --clear-nand-overrides-page-range 0x1c40:0x21c40 `
   --prefix hwemu_menu_click_tools_from_coldboot
 ```
 
@@ -255,16 +253,13 @@ Latest useful trace:
   `build/bbk9588_nand_c200_fat_page1c40.bin`, C200 reads FAT sectors through
   the lower NAND path (`0x80183d04` / `0xb800` / `0xb801` / `0xb301`) rather
   than through `0x80182a90` short-circuiting.
-- Current raw NAND limitation: the host-built FAT image is injected as a linear
-  NAND page overlay, but C200 also writes FTL/cache pages in the same physical
-  range. When those writes are applied literally, they overwrite the injected
-  desktop resources (`c200dts1a.dlx`, `c200dts1b.dlx`, `c200dts2a.dlx`) and the
-  firmware displays `桌面图片数据不存在，请恢复系统！`. Use
-  `--readonly-nand-page-range 0x1c40:0x28a33` to protect the injected FAT range
-  during this provisional raw-NAND path, and
-  `--clear-nand-overrides-page-range 0x1c40:0x28a33` when continuing from older
-  checkpoints that already contain polluted `nand_page_overrides`. This is a
-  diagnostic guard, not a real FTL implementation.
+- Historical raw NAND limitation: older experimental runs used
+  `--readonly-nand-page-range` and `--clear-nand-overrides-page-range` to
+  protect the injected FAT range from provisional FTL/cache writes. The current
+  cold-boot-to-menu check3 artifacts show `erase_count = 0`,
+  `recent_program_writes = []`, and `page_override_count = 0`, so the cold boot
+  smoke no longer uses that guard. A real FTL write/cache model is still needed
+  for later workflows that actually modify NAND.
 - USB/resource note: C200 can send event `0x60` to the desktop handler during
   GUI startup. That handler tries to open `A:\...\Desktop\USB.bmp` before
   drawing the USB connection screen. The current exported file tree does not
@@ -571,8 +566,10 @@ make that loop interactive:
   `build/hwemu_cold_boot_to_menu_check3_summary.json` with final screenshot
   `build/hwemu_cold_boot_to_menu_check3_menu.png`. The archived check3 JSON
   shows `scheduler-tick-clamp` was not hit in any phase, so the script no
-  longer passes that option. It still uses the raw-NAND copy loop accelerator
-  and the `0x8017ca10` resource-cache16 equivalent lookup accelerator.
+  longer passes that option. The same artifacts show no NAND program/erase or
+  page overrides, so the script also no longer passes the historical readonly
+  NAND guard. It still uses the raw-NAND copy loop accelerator and the
+  `0x8017ca10` resource-cache16 equivalent lookup accelerator.
 - `build/hwemu_rescache_missload_probe.json` verifies the refined
   resource-cache16 model from an existing calibration checkpoint: it reaches
   `stop=max_seconds` with no invalid access, records `11590` accelerated
