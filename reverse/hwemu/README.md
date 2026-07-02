@@ -529,11 +529,11 @@ make that loop interactive:
   from the saved `touch_down` state. A held touch must be released through
   `--touch-controller-event x:y:0@idle_hit`; otherwise `0x80059f68` sees
   GPIOB bit 18 low and the idle path skips `0x800087c4` timer ticks.
-- the scheduler tick clamp must enter `0x800080f0` with
-  `0x80473f08 == 0` and `0x80473f4d == 0`. Writing `0x80473f08 = 1` before
-  the direct dispatch is observably wrong because `0x800080f0` immediately
-  returns when the countdown byte is nonzero. The corrected clamp models the
-  post-decrement state of `0x80007e08`.
+- `--scheduler-tick-clamp` is now a historical diagnostic option, not part of
+  the cold-boot regression. When used for old checkpoints it must enter
+  `0x800080f0` with `0x80473f08 == 0` and `0x80473f4d == 0`; writing
+  `0x80473f08 = 1` before direct dispatch is observably wrong because
+  `0x800080f0` immediately returns when the countdown byte is nonzero.
 - raw C200 boot can now pass the time-change modal and reach the visible system
   main menu. Repro checkpoint:
   `build/c200_searching_schedfix.json` /
@@ -565,7 +565,10 @@ make that loop interactive:
   two observed calibration touches `(10,10)` and `(229,10)`, the time-change
   dialog `否` button, and finally the main menu. Current passing run:
   `build/hwemu_cold_boot_to_menu_check3_summary.json` with final screenshot
-  `build/hwemu_cold_boot_to_menu_check3_menu.png`.
+  `build/hwemu_cold_boot_to_menu_check3_menu.png`. The archived check3 JSON
+  shows `scheduler-tick-clamp` was not hit in any phase, so the script no
+  longer passes that option. It still uses the raw-NAND copy loop accelerator
+  and the `0x8017ca10` resource-cache16 equivalent lookup accelerator.
 - C200 reset now has two narrow equivalent accelerators in the fast-hook set:
   the cache-management loop at `0x8000403c` and the BSS clear loop at
   `0x80004074`. These replace hardware/cache setup and a linear zero-fill with

@@ -79,7 +79,6 @@ def run_hwemu(
         "--fast-hooks",
         "--nand-loop-accelerator",
         "--resource-cache16-accelerator",
-        "--scheduler-tick-clamp",
         "--idle-stop-hits",
         "30000",
         "--no-block-image",
