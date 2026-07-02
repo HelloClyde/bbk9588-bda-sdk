@@ -277,6 +277,12 @@ Latest useful trace:
   around `0x80183e0c`, `0x80183fa4`, `0x80184140`, `0x801841bc`,
   `0x801843d8`, and `0x80184530`. It is disabled by default because it is
   still a PC-level accelerator, not part of the final minimal-hook target.
+  The accelerator uses the same data-window helpers as scalar MMIO reads and
+  therefore advances `nand_read_index`, `data_window_read_count`, and program
+  buffers. Recent loop events record mode, PC, destination/source, page/column,
+  read index, and preview bytes. `build/hwemu_nand_loop_event_probe.json`
+  verifies the current cold-start read path with `invalid = 0`, `1965`
+  accelerated loops, and no program-buffer growth.
 - `--resource-cache16-accelerator` models the hot `0x8017ca10` 16-bit
   FAT/resource sector-cache lookup. It now checks the firmware's eight cache
   slots first; on a clean miss it loads the backing sector into the selected

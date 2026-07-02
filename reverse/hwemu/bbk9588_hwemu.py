@@ -482,6 +482,7 @@ class Bbk9588HwEmu:
         self.gui_ring_pump = gui_ring_pump
         self.gui_ring_pump_events: list[dict[str, str | int]] = []
         self.nand_loop_accel_count = 0
+        self.nand_loop_events: list[dict[str, str | int]] = []
         self.resource_cache16_accel_count = 0
         self.resource_cache16_events: list[dict[str, str | int]] = []
         self.cluster_read_accel_count = 0
@@ -5296,6 +5297,7 @@ class Bbk9588HwEmu:
         self.uc.reg_write(dst_reg, (dst + count) & 0xFFFFFFFF)
         self.uc.reg_write(UC_MIPS_REG_PC, target)
         self.nand_loop_accel_count += 1
+        self._record_nand_loop_event("read", pc, dst, count, target, preview=data[:16].hex())
         if self.nand_loop_accel_count <= 32 or self.nand_loop_accel_count % 256 == 0:
             self._trace_event("nand-loop-accelerate", pc=pc, addr=dst, size=count, target=target)
         return True
@@ -5339,6 +5341,7 @@ class Bbk9588HwEmu:
             self.uc.reg_write(reg, value)
         self.uc.reg_write(UC_MIPS_REG_PC, target)
         self.nand_loop_accel_count += 1
+        self._record_nand_loop_event("program", pc, src, count, target, preview=data[:16].hex())
         if self.nand_loop_accel_count <= 32 or self.nand_loop_accel_count % 256 == 0:
             self._trace_event("nand-program-loop-accelerate", pc=pc, addr=src, size=count, target=target)
         return True
@@ -5373,9 +5376,39 @@ class Bbk9588HwEmu:
         self.uc.reg_write(UC_MIPS_REG_2, data[-1])
         self.uc.reg_write(UC_MIPS_REG_PC, target)
         self.nand_loop_accel_count += 1
+        self._record_nand_loop_event("program-branch", pc, src, len(data), target, preview=data[:16].hex())
         if self.nand_loop_accel_count <= 32 or self.nand_loop_accel_count % 256 == 0:
             self._trace_event("nand-program-branch-accelerate", pc=pc, addr=src, size=len(data), target=target)
         return True
+
+    def _record_nand_loop_event(
+        self,
+        mode: str,
+        pc: int,
+        addr: int,
+        size: int,
+        target: int,
+        *,
+        preview: str = "",
+    ) -> None:
+        row = {
+            "pc": f"0x{pc:08x}",
+            "mode": mode,
+            "addr": f"0x{addr:08x}",
+            "size": size,
+            "target": f"0x{target:08x}",
+            "page": f"0x{self.nand_current_page:x}",
+            "column": f"0x{self.nand_current_column:x}",
+            "read_index": f"0x{self.nand_read_index:x}",
+            "program_page": f"0x{self.nand_program_page:x}",
+            "program_column": f"0x{self.nand_program_column:x}",
+            "program_buffer_size": len(self.nand_program_buffer),
+            "preview": preview,
+            "count": self.nand_loop_accel_count,
+        }
+        self.nand_loop_events.append(row)
+        if len(self.nand_loop_events) > 128:
+            del self.nand_loop_events[0]
 
     def _trace_nand_latch_write(self, kind: str, address: int, value: int) -> None:
         pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF
@@ -6480,6 +6513,7 @@ class Bbk9588HwEmu:
                 "read_index": self.nand_read_index,
                 "data_window_read_count": self.nand_data_window_read_count,
                 "loop_accel_count": self.nand_loop_accel_count,
+                "recent_loop_events": self.nand_loop_events[-64:],
                 "program_buffer_size": len(self.nand_program_buffer),
                 "program_page": f"0x{self.nand_program_page:x}",
                 "program_column": f"0x{self.nand_program_column:x}",
