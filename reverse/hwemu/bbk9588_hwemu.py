@@ -489,6 +489,7 @@ class Bbk9588HwEmu:
         self.fat16_layout_cache: dict[str, int] | None = None
         self.nand_fat_sector0_cache: int | None = None
         self.dirent_copy_accel_count = 0
+        self.dirent_copy_events: list[dict[str, str | int]] = []
         self.logo_strip_blit_accel_count = 0
         self.free_scan_accel_count = 0
         self.surface_setpixel_accel_count = 0
@@ -4430,6 +4431,20 @@ class Bbk9588HwEmu:
         self.uc.mem_write(va_to_phys(dst), bytes(out))
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.dirent_copy_accel_count += 1
+        row = {
+            "pc": f"0x{pc:08x}",
+            "src": f"0x{src:08x}",
+            "dst": f"0x{dst:08x}",
+            "name_hex": bytes(out[:11]).hex(),
+            "attr": f"0x{out[0x0B]:02x}",
+            "cluster": f"0x{struct.unpack_from('<I', out, 0x14)[0]:08x}",
+            "size": f"0x{struct.unpack_from('<I', out, 0x1C)[0]:08x}",
+            "first_byte": f"0x{out[0]:02x}",
+            "count": self.dirent_copy_accel_count,
+        }
+        self.dirent_copy_events.append(row)
+        if len(self.dirent_copy_events) > 128:
+            del self.dirent_copy_events[0]
         return True
 
     def _handle_logo_strip_blit(self, pc: int) -> bool:
@@ -6493,6 +6508,10 @@ class Bbk9588HwEmu:
                 if self.fat16_layout_cache is None
                 else {key: f"0x{value:x}" for key, value in self.fat16_layout_cache.items()},
                 "recent_events": self.cluster_read_events[-64:],
+            },
+            "dirent_copy": {
+                "accel_count": self.dirent_copy_accel_count,
+                "recent_events": self.dirent_copy_events[-64:],
             },
             "dirent_copy_accel_count": self.dirent_copy_accel_count,
             "logo_strip_blit_accel_count": self.logo_strip_blit_accel_count,

@@ -642,6 +642,13 @@ make that loop interactive:
   model from an existing calibration checkpoint: `invalid = 0`, six accelerated
   cluster reads, two `miss-load` events, and three later `cache-hit` events from
   firmware buffers such as `0x8094a9c0` and `0x809489c0`.
+- `0x80175e40` normalizes a FAT directory entry into the firmware's internal
+  32-byte layout. The accelerator is a direct field-by-field translation of the
+  firmware routine, including the combined 32-bit cluster at output offset
+  `0x14` and the `0x05 -> 0xe5` first-byte conversion. Recent events now record
+  source/destination, name bytes, attributes, cluster, and file size. Probe
+  `build/hwemu_dirent_event_probe.json` reaches `invalid = 0` and records eight
+  accelerated copies, including `SYSTEM.CFG` at cluster `0x2312`.
 - refine LCD/framebuffer layout until the boot UI is visually coherent;
 - complete the application draw/commit path after direct BDA launch. The BDA
   startup path now reaches the repaint loop, but current framebuffer dumps from
