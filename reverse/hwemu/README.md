@@ -293,13 +293,14 @@ Latest useful trace:
 - Current fast-hook boundary for the raw-system menu path:
   `0x8012c3d0` / `0x8012c1bc` bulk-copy surface rectangles using the same
   source/destination buffers as the firmware surface vtable; `0x8012bf64`
-  folds firmware's colored horizontal span loop, and `0x8012b034` /
-  `0x8012b064` fold the adjacent 16-bit copy loops. `0x80006658` accelerates
-  the allocator's linear free-block lookup and resumes at the original hit/miss
-  branch. These are narrow equivalent loop/function accelerators. The remaining
-  non-equivalent areas to reduce are the logical-block filesystem hook and the
-  CP0 WAIT/interrupt return model. The raw-system menu interaction regression
-  no longer requires `--scheduler-tick-clamp` or
+  folds firmware's colored horizontal span loop; `0x8012bfe8` folds the
+  matching horizontal read span; and `0x8012b034` / `0x8012b064` fold adjacent
+  16-bit copy loops. `0x80006658` accelerates the allocator's linear free-block
+  lookup and resumes at the original hit/miss branch. These are narrow
+  equivalent loop/function accelerators. The remaining non-equivalent areas to
+  reduce are the logical-block filesystem hook and the CP0 WAIT/interrupt
+  return model. The raw-system menu interaction regression no longer requires
+  `--scheduler-tick-clamp` or
   `--resource-cache16-accelerator`.
 - `--launch-bda path[@idle_hit]` directly loads a native BDA tail at
   `0x81c00020`, copies the runtime table from `0x80281680` to `0x81c00000`,
@@ -589,9 +590,9 @@ make that loop interactive:
   lookups, and includes `mode=miss-load` events that populate real firmware
   cache buffers such as `0x809517c0` before later cache hits.
 - Surface diagnostics now include `mmio_snapshot.surface`, with counters for
-  `setpixel`, colored span, `hline`, rectangle block copy, and single-pixel
-  read accelerators plus rolling `recent_events` and `recent_events_by_mode`
-  lists.
+  `setpixel`, colored span, read span, `hline`, rectangle block copy, and
+  single-pixel read accelerators plus rolling `recent_events` and
+  `recent_events_by_mode` lists.
   Each event records the surface object, backing buffer, coordinates,
   dimensions, pitch, optional color, destination/source address, and whether
   LCD mirroring was enabled. `build/hwemu_surface_event_modes_probe.json`
@@ -613,9 +614,9 @@ make that loop interactive:
   `--resource-cache16-accelerator`;
   `0x800087c4`, `0x80007e08`, and `0x800080f0` advance through the normal
   wait/timer/scheduler path. Current passing run:
-  `build/hwemu_system_menu_span_accel2_summary.json`,
-  `build/hwemu_system_menu_span_accel2_press.png`, and
-  `build/hwemu_system_menu_span_accel2_release.png`; the release screenshot
+  `build/hwemu_system_menu_read_span_summary.json`,
+  `build/hwemu_system_menu_read_span_press.png`, and
+  `build/hwemu_system_menu_read_span_release.png`; the release screenshot
   shows the tools page with `Ver`, pointer, and `USB` icons. The summary now
   includes compact surface counts and verifies that the press phase retains
   per-mode draw samples. With the span accelerator, release can legitimately
