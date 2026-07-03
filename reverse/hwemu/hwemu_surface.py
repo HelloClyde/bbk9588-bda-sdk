@@ -16,12 +16,36 @@ from unicorn.mips_const import (
     UC_MIPS_REG_19,
     UC_MIPS_REG_20,
     UC_MIPS_REG_21,
+    UC_MIPS_REG_22,
+    UC_MIPS_REG_23,
     UC_MIPS_REG_29,
+    UC_MIPS_REG_30,
     UC_MIPS_REG_31,
     UC_MIPS_REG_PC,
 )
 
 from hwemu_utils import va_to_phys
+
+SURFACE_TRANSPARENT_BLIT_PCS = frozenset(
+    {
+        0x8012C46C,
+        0x8012C4C0,
+        0x8012C4C8,
+        0x8012C4D0,
+        0x8012C4D4,
+        0x8012C4D8,
+        0x8012C4DC,
+        0x8012C4E0,
+        0x8012C4E4,
+        0x8012C4E8,
+        0x8012C4F0,
+        0x8012C4F8,
+        0x8012C4FC,
+        0x8012C504,
+        0x8012C508,
+        0x8012C510,
+    }
+)
 
 
 class HwEmuSurfaceMixin:
@@ -226,7 +250,7 @@ class HwEmuSurfaceMixin:
             self._mirror_lcd_pixel_with_config(mirror_config, pc, x, y, color)
         self.uc.mem_write(va_to_phys(dest), struct.pack("<H", color))
         self._mark_framebuffer_dirty(pc, dest, 2, "surface-setpixel")
-        self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+        return_pc = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
         self.surface_setpixel_accel_count += 1
         self._record_surface_event(
             "setpixel",
@@ -241,6 +265,9 @@ class HwEmuSurfaceMixin:
             color=color,
             addr=dest,
         )
+        if return_pc in SURFACE_TRANSPARENT_BLIT_PCS and self._handle_surface_transparent_blit(return_pc):
+            return True
+        self.uc.reg_write(UC_MIPS_REG_PC, return_pc)
         return True
 
     def _handle_surface_hline(self, pc: int) -> bool:
@@ -528,5 +555,135 @@ class HwEmuSurfaceMixin:
         )
         if self.surface_block_write_accel_count <= 32 or self.surface_block_write_accel_count % 4096 == 0:
             self._trace_event("surface-block-write", pc=pc, addr=buffer_va, value=(x & 0xFFFF) | ((y & 0xFFFF) << 16), size=width * height)
+        return True
+
+    def _handle_surface_transparent_blit(self, pc: int) -> bool:
+        if not self.fast_hooks or pc not in SURFACE_TRANSPARENT_BLIT_PCS:
+            return False
+        sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+        at_entry = pc == 0x8012C46C
+        if at_entry:
+            surface = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
+            x = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
+            y = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
+            width = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
+            height = self._read_u32_va_safe(sp + 0x10)
+            src_va = self._read_u32_va_safe(sp + 0x14)
+            stride = self._read_u32_va_safe(sp + 0x18)
+            transparent = self._read_u32_va_safe(sp + 0x1C)
+        else:
+            surface = self.uc.reg_read(UC_MIPS_REG_30) & 0xFFFFFFFF
+            x = self.uc.reg_read(UC_MIPS_REG_23) & 0xFFFFFFFF
+            y = self.uc.reg_read(UC_MIPS_REG_18) & 0xFFFFFFFF
+            width = self.uc.reg_read(UC_MIPS_REG_22) & 0xFFFFFFFF
+            height = self.uc.reg_read(UC_MIPS_REG_20) & 0xFFFFFFFF
+            src_va = self.uc.reg_read(UC_MIPS_REG_19) & 0xFFFFFFFF
+            stride = self._read_u32_va_safe(sp + 0x58)
+            transparent = self.uc.reg_read(UC_MIPS_REG_21) & 0xFFFFFFFF
+        if height is None or src_va is None or stride is None or transparent is None:
+            return False
+        if width == 0 or height == 0 or width > 4096 or height > 4096:
+            return False
+        if stride < width * 2 or stride > 0x20000:
+            return False
+        if x & 0x80000000 or y & 0x80000000:
+            return False
+        surface_desc = self._surface_pitch_buffer(surface)
+        if surface_desc is None:
+            return False
+        pitch, surface_buffer = surface_desc
+        row_bytes = width * 2
+        if row_bytes > pitch:
+            return False
+        if not self._is_mapped_ram_va(src_va, (height - 1) * stride + row_bytes):
+            return False
+        first_dest = surface_buffer + y * pitch + x * 2
+        last_dest = surface_buffer + (y + height - 1) * pitch + x * 2
+        if not self._is_mapped_ram_va(first_dest, row_bytes) or not self._is_mapped_ram_va(last_dest, row_bytes):
+            return False
+
+        transparent &= 0xFFFF
+        mirror_config = self._lcd_mirror_config()
+        pixels_written = 0
+        for row in range(height):
+            src = src_va + row * stride
+            data = self._read_block_va_safe(src, row_bytes)
+            if data is None or len(data) != row_bytes:
+                return False
+            dest_row = surface_buffer + (y + row) * pitch + x * 2
+            span_start: int | None = None
+            for col in range(width):
+                color = struct.unpack_from("<H", data, col * 2)[0]
+                if color == transparent:
+                    if span_start is not None:
+                        span = data[span_start * 2 : col * 2]
+                        dest = dest_row + span_start * 2
+                        self.uc.mem_write(va_to_phys(dest), span)
+                        if mirror_config is not None:
+                            self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x + span_start, y + row, span)
+                        self._mark_framebuffer_dirty(pc, dest, len(span), "surface-transparent-blit")
+                        pixels_written += col - span_start
+                        span_start = None
+                    continue
+                if span_start is None:
+                    span_start = col
+            if span_start is not None:
+                span = data[span_start * 2 : row_bytes]
+                dest = dest_row + span_start * 2
+                self.uc.mem_write(va_to_phys(dest), span)
+                if mirror_config is not None:
+                    self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x + span_start, y + row, span)
+                self._mark_framebuffer_dirty(pc, dest, len(span), "surface-transparent-blit")
+                pixels_written += width - span_start
+
+        if at_entry:
+            self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+        else:
+            restore_slots = (
+                (UC_MIPS_REG_16, 0x18),
+                (UC_MIPS_REG_17, 0x1C),
+                (UC_MIPS_REG_18, 0x20),
+                (UC_MIPS_REG_19, 0x24),
+                (UC_MIPS_REG_20, 0x28),
+                (UC_MIPS_REG_21, 0x2C),
+                (UC_MIPS_REG_22, 0x30),
+                (UC_MIPS_REG_23, 0x34),
+                (UC_MIPS_REG_30, 0x38),
+            )
+            for reg, off in restore_slots:
+                value = self._read_u32_va_safe(sp + off)
+                if value is None:
+                    return False
+                self.uc.reg_write(reg, value)
+            ra = self._read_u32_va_safe(sp + 0x3C)
+            if ra is None or not (0x80000000 <= ra <= 0x81FFFFFF):
+                return False
+            self.uc.reg_write(UC_MIPS_REG_31, ra)
+            self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x40) & 0xFFFFFFFF)
+            self.uc.reg_write(UC_MIPS_REG_PC, ra)
+        self.surface_transparent_blit_accel_count += 1
+        self._record_surface_event(
+            "transparent-blit",
+            pc,
+            surface=surface,
+            buffer=surface_buffer,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            pitch=pitch,
+            color=transparent,
+            addr=src_va,
+        )
+        if self.surface_transparent_blit_accel_count <= 32 or self.surface_transparent_blit_accel_count % 4096 == 0:
+            self._trace_event(
+                "surface-transparent-blit",
+                pc=pc,
+                addr=src_va,
+                value=(x & 0xFFFF) | ((y & 0xFFFF) << 16),
+                size=pixels_written,
+                width=width,
+                height=height,
+            )
         return True
 

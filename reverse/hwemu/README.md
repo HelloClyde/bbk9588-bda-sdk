@@ -477,10 +477,13 @@ Latest useful trace:
   return model. The raw-system menu interaction regression no longer requires
   `--scheduler-tick-clamp` or
   `--resource-cache16-accelerator`.
+- `--legacy-direct-bda` enables the old direct-BDA diagnostic path. It is off
+  by default; full-system boot/menu runs should start apps through the firmware
+  loader and must not use the direct-BDA event/font/runtime shims.
 - `--launch-bda path[@idle_hit]` directly loads a native BDA tail at
   `0x81c00020`, copies the runtime table from `0x80281680` to `0x81c00000`,
   seeds the app display callback context normally prepared by `0x8012d20c`,
-  and jumps to the BDA entry. Current legacy regression:
+  and jumps to the BDA entry. It requires `--legacy-direct-bda`. Current legacy regression:
   `build/hwemu_launch_element_appidle_fb.json`, launching
   `应用\程序\元素周期表.bda@2`, reaches `0x81c00020`, passes the display
   callback dereference at `0x800d6a30`, and stops at the observed application
@@ -500,7 +503,8 @@ Latest useful trace:
 - `--bda-text-mode native|ascii-hook` controls direct-BDA text rendering.
   `ascii-hook` is the temporary visible 5x7 ASCII renderer used for smoke
   tests. `native` disables it and leaves the firmware font provider path
-  exposed for reverse engineering. In native mode, `0x8011a3c4` emits
+  exposed for reverse engineering. `ascii-hook` requires `--legacy-direct-bda`.
+  In native direct-BDA mode, `0x8011a3c4` emits
   `native-text-draw` events with the text pointer, x/y cursor, font object,
   provider, vtable, and metrics pointers.
 - `--bda-native-glyph-layout` selects the synthetic ASCII glyph buffer packing

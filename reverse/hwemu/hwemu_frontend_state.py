@@ -192,6 +192,10 @@ class FrontendState:
         self.job_total_steps = 0
         self.job_done_steps = 0
         self.job_chunk_steps = 0
+        self.job_last_slice_steps = 0
+        self.job_last_slice_timed_out = False
+        self.job_start_insn_count = 0
+        self.job_observed_insn_delta = 0
         self.job_started_at: float | None = None
         self.job_finished_at: float | None = None
         self.auto_calibration_stage = 0
@@ -277,10 +281,11 @@ class FrontendState:
                 app_idle_stop_hits=0,
                 nand_image=nand_image,
                 block_image=block_image,
-                readonly_nand_page_ranges=[DEFAULT_READONLY_NAND_RANGE],
+                readonly_nand_page_ranges=list(getattr(self.args, "readonly_nand_page_range", []) or []),
                 bda_text_mode="native",
                 bda_native_glyph_layout="rows-lsb-vscale2",
                 bda_native_raster_mode="firmware",
+                legacy_direct_bda=False,
                 scheduler_tick_clamp=self.args.scheduler_tick_clamp,
                 fast_hooks=not self.args.slow_global_code_hook,
                 nand_loop_accelerator=self.args.nand_loop_accelerator,
@@ -299,6 +304,10 @@ class FrontendState:
             self.job_total_steps = 0
             self.job_done_steps = 0
             self.job_chunk_steps = 0
+            self.job_last_slice_steps = 0
+            self.job_last_slice_timed_out = False
+            self.job_start_insn_count = 0
+            self.job_observed_insn_delta = 0
             self.job_started_at = None
             self.job_finished_at = None
             self.reset_at = time.time()
@@ -371,21 +380,31 @@ class FrontendState:
     def worker_active(self) -> bool:
         return self._worker_alive()
 
-    def _step_locked(self, steps: int, publish: bool = True, max_seconds: float | None = None) -> None:
+    def _step_locked(
+        self,
+        steps: int,
+        publish: bool = True,
+        max_seconds: float | None = None,
+        *,
+        clear_stop_reason: bool = True,
+    ) -> int:
         assert self.emu is not None
         self.running = True
-        self.emu.state.stop_reason = None
+        if clear_stop_reason:
+            self.emu.state.stop_reason = None
+        completed_steps = 0
         try:
             self.emu.run(max(1, steps), max_seconds=max_seconds, timeout_is_stop=max_seconds is None)
+            completed_steps = int(getattr(self.emu, "last_run_completed_steps", 0))
             self.last_error = None
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             self.emu.state.stop_reason = self.last_error
             self.cancel_run.set()
         finally:
-            if not publish:
-                return
-            self._publish_snapshot_locked()
+            if publish:
+                self._publish_snapshot_locked()
+        return completed_steps
 
     def _pending_touch_count_locked(self) -> int:
         with self.input_lock:
@@ -402,9 +421,16 @@ class FrontendState:
             self.cached_status["pending_touches"] = self._pending_touch_count_locked()
             self.cached_status["pending_keys"] = self._pending_key_count_locked()
 
+    def _update_job_observed_locked(self) -> int:
+        assert self.emu is not None
+        self.job_observed_insn_delta = max(0, int(self.emu.state.insn_count) - int(self.job_start_insn_count))
+        return self.job_observed_insn_delta
+
     def _auto_progress_locked(self) -> int:
         assert self.emu is not None
-        return int(self.job_done_steps) + int(self.emu.state.insn_count)
+        if self.job_started_at is not None:
+            return max(int(self.job_done_steps), self._update_job_observed_locked())
+        return int(self.emu.state.insn_count)
 
     def _apply_auto_calibration_locked(self) -> None:
         """Feed cold-boot waits with modeled controller-level touchscreen input."""
@@ -592,9 +618,16 @@ class FrontendState:
             self.job_total_steps = max(0, total_steps)
             self.job_done_steps = 0
             self.job_chunk_steps = max(1, chunk_steps)
+            self.job_last_slice_steps = 0
+            self.job_last_slice_timed_out = False
+            self.job_start_insn_count = int(self.emu.state.insn_count) if self.emu is not None else 0
+            self.job_observed_insn_delta = 0
             self.job_started_at = time.time()
             self.job_finished_at = None
             self.running = True
+            if self.emu is not None:
+                self.emu.state.stop_reason = None
+            self.last_error = None
             chunk = max(1, chunk_steps)
             self._publish_snapshot_locked()
 
@@ -614,15 +647,27 @@ class FrontendState:
                             slice_now = min(run_remaining, max(1, self.args.worker_slice_steps))
                             self._apply_pending_input_locked()
                             self._apply_auto_calibration_locked()
-                            self._step_locked(
+                            completed_steps = self._step_locked(
                                 slice_now,
                                 publish=False,
                                 max_seconds=float(getattr(self.args, "worker_slice_seconds", 0.5)),
+                                clear_stop_reason=False,
                             )
-                            self.job_done_steps += slice_now
-                            run_remaining -= slice_now
+                            completed_steps = max(0, min(slice_now, int(completed_steps)))
+                            self.job_last_slice_steps = completed_steps
+                            self.job_last_slice_timed_out = bool(
+                                getattr(self.emu, "last_run_timed_out", False)
+                            )
+                            self.job_done_steps += completed_steps
+                            self._update_job_observed_locked()
+                            run_remaining -= completed_steps
                             self._queue_dirty_frame_locked()
                             self._publish_snapshot_locked()
+                            if self.emu.state.stop_reason or self.last_error:
+                                self.cancel_run.set()
+                                run_remaining = 0
+                            elif completed_steps <= 0 or self.job_last_slice_timed_out:
+                                run_remaining = 0
                         time.sleep(0)
             except Exception as exc:
                 with self.lock:
@@ -804,6 +849,8 @@ class FrontendState:
         reset_elapsed = max(0.0, now - self.reset_at)
         job = None
         if self.job_name is not None:
+            if self.job_started_at is not None:
+                self._update_job_observed_locked()
             started_at = self.job_started_at
             finished_at = self.job_finished_at
             elapsed = None
@@ -828,6 +875,9 @@ class FrontendState:
                 "total_steps": self.job_total_steps,
                 "done_steps": self.job_done_steps,
                 "chunk_steps": self.job_chunk_steps,
+                "last_slice_steps": self.job_last_slice_steps,
+                "last_slice_timed_out": self.job_last_slice_timed_out,
+                "observed_insn_delta": self.job_observed_insn_delta,
                 "active": active,
                 "started_at": started_at,
                 "finished_at": finished_at,

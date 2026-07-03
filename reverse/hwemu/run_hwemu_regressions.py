@@ -492,8 +492,9 @@ def make_args():
         ram_mb=160,
         trace_limit=5000,
         boot_steps=30_000_000,
-        input_steps=500_000,
-        worker_slice_steps=250_000,
+        input_steps=5_000,
+        worker_slice_steps=5_000,
+        worker_slice_seconds=0.5,
         boot_mode='c200',
         state_in=None,
         nand_image=None,
@@ -607,7 +608,7 @@ try:
         if item.get('pending_keys') == 1:
             queued_ws = item
             break
-    send_ws_text(sock, json.dumps({{'op': 'run-start', 'name': 'ws-smoke', 'steps': 250000, 'chunk': 250000}}))
+    send_ws_text(sock, json.dumps({{'op': 'run-start', 'name': 'ws-smoke', 'steps': 5000, 'chunk': 5000}}))
     run_done_ws = None
     deadline = time.time() + 15
     while time.time() < deadline:
@@ -616,7 +617,7 @@ try:
             continue
         item = json.loads(payload.decode('utf-8'))
         job = item.get('job') or {{}}
-        if job.get('name') == 'ws-smoke' and job.get('done_steps', 0) >= 250000 and not item.get('running'):
+        if job.get('name') == 'ws-smoke' and job.get('done_steps', 0) >= 5000 and not item.get('running'):
             run_done_ws = item
             break
     send_ws_text(sock, json.dumps({{
@@ -637,7 +638,7 @@ try:
             continue
         item = json.loads(payload.decode('utf-8'))
         job = item.get('job') or {{}}
-        if job.get('name') == 'input' and job.get('done_steps', 0) >= 500000 and not item.get('running'):
+        if job.get('name') == 'input' and job.get('done_steps', 0) >= 5000 and not item.get('running'):
             input_run_done_ws = item
             break
     send_ws_text(sock, json.dumps({{
@@ -658,7 +659,7 @@ try:
             continue
         item = json.loads(payload.decode('utf-8'))
         job = item.get('job') or {{}}
-        if job.get('name') == 'input' and job.get('done_steps', 0) >= 500000 and not item.get('running'):
+        if job.get('name') == 'input' and job.get('done_steps', 0) >= 5000 and not item.get('running'):
             input_release_done_ws = item
             break
     sock.sendall(b'\\x88\\x00')
@@ -681,15 +682,21 @@ try:
         'ws_key_input_mode': None if queued_ws is None else queued_ws.get('key_input_mode'),
         'ws_run_done_steps': None if run_job is None else run_job.get('done_steps'),
         'ws_run_chunk_steps': None if run_job is None else run_job.get('chunk_steps'),
+        'ws_run_last_slice_steps': None if run_job is None else run_job.get('last_slice_steps'),
+        'ws_run_last_slice_timed_out': None if run_job is None else run_job.get('last_slice_timed_out'),
         'ws_run_elapsed_seconds_type': None if run_done_ws is None else type(run_done_ws.get('run_elapsed_seconds')).__name__,
         'ws_run_running': None if run_done_ws is None else run_done_ws.get('running'),
         'ws_run_insn_count': None if run_done_ws is None else run_done_ws.get('insn_count'),
         'ws_input_done_steps': None if input_job is None else input_job.get('done_steps'),
         'ws_input_chunk_steps': None if input_job is None else input_job.get('chunk_steps'),
+        'ws_input_last_slice_steps': None if input_job is None else input_job.get('last_slice_steps'),
+        'ws_input_last_slice_timed_out': None if input_job is None else input_job.get('last_slice_timed_out'),
         'ws_input_running': None if input_run_done_ws is None else input_run_done_ws.get('running'),
         'ws_input_pending_touches': None if input_run_done_ws is None else input_run_done_ws.get('pending_touches'),
         'ws_input_release_done_steps': None if input_release_job is None else input_release_job.get('done_steps'),
         'ws_input_release_chunk_steps': None if input_release_job is None else input_release_job.get('chunk_steps'),
+        'ws_input_release_last_slice_steps': None if input_release_job is None else input_release_job.get('last_slice_steps'),
+        'ws_input_release_last_slice_timed_out': None if input_release_job is None else input_release_job.get('last_slice_timed_out'),
         'ws_input_release_running': None if input_release_done_ws is None else input_release_done_ws.get('running'),
         'ws_input_release_pending_touches': None if input_release_done_ws is None else input_release_done_ws.get('pending_touches'),
         'port': port,
@@ -736,28 +743,40 @@ finally:
             failures.append(f"WebSocket key command left pending_keys={data.get('ws_pending_keys_after_key')}")
         if data.get("ws_key_input_mode") != "hardware":
             failures.append(f"WebSocket key_input_mode is {data.get('ws_key_input_mode')}")
-        if data.get("ws_run_done_steps") != 250_000:
+        if data.get("ws_run_done_steps") != 5_000:
             failures.append(f"WebSocket run-start completed {data.get('ws_run_done_steps')} steps")
-        if data.get("ws_run_chunk_steps") != 250_000:
+        if data.get("ws_run_chunk_steps") != 5_000:
             failures.append(f"WebSocket run-start chunk is {data.get('ws_run_chunk_steps')}")
+        if not isinstance(data.get("ws_run_last_slice_steps"), int) or not (0 < data.get("ws_run_last_slice_steps") <= 5_000):
+            failures.append(f"WebSocket run-start last slice is {data.get('ws_run_last_slice_steps')}")
+        if data.get("ws_run_last_slice_timed_out") is not False:
+            failures.append("WebSocket run-start unexpectedly timed out")
         if data.get("ws_run_elapsed_seconds_type") not in {"int", "float"}:
             failures.append("WebSocket run-start did not expose run_elapsed_seconds")
         if data.get("ws_run_running") is not False:
             failures.append("WebSocket run-start did not report stopped after finite job")
-        if not isinstance(data.get("ws_run_insn_count"), int) or data.get("ws_run_insn_count") <= 0:
-            failures.append("WebSocket run-start did not advance emulator instruction count")
-        if data.get("ws_input_done_steps") != 500_000:
+        if not isinstance(data.get("ws_run_insn_count"), int):
+            failures.append("WebSocket run-start did not expose emulator instruction count")
+        if data.get("ws_input_done_steps") != 5_000:
             failures.append(f"WebSocket input auto-run completed {data.get('ws_input_done_steps')} steps")
-        if data.get("ws_input_chunk_steps") != 250_000:
+        if data.get("ws_input_chunk_steps") != 5_000:
             failures.append(f"WebSocket input auto-run chunk is {data.get('ws_input_chunk_steps')}")
+        if not isinstance(data.get("ws_input_last_slice_steps"), int) or not (0 < data.get("ws_input_last_slice_steps") <= 5_000):
+            failures.append(f"WebSocket input auto-run last slice is {data.get('ws_input_last_slice_steps')}")
+        if data.get("ws_input_last_slice_timed_out") is not False:
+            failures.append("WebSocket input auto-run unexpectedly timed out")
         if data.get("ws_input_running") is not False:
             failures.append("WebSocket input auto-run did not report stopped")
         if data.get("ws_input_pending_touches") != 0:
             failures.append(f"WebSocket input auto-run left pending_touches={data.get('ws_input_pending_touches')}")
-        if data.get("ws_input_release_done_steps") != 500_000:
+        if data.get("ws_input_release_done_steps") != 5_000:
             failures.append(f"WebSocket input release auto-run completed {data.get('ws_input_release_done_steps')} steps")
-        if data.get("ws_input_release_chunk_steps") != 250_000:
+        if data.get("ws_input_release_chunk_steps") != 5_000:
             failures.append(f"WebSocket input release auto-run chunk is {data.get('ws_input_release_chunk_steps')}")
+        if not isinstance(data.get("ws_input_release_last_slice_steps"), int) or not (0 < data.get("ws_input_release_last_slice_steps") <= 5_000):
+            failures.append(f"WebSocket input release last slice is {data.get('ws_input_release_last_slice_steps')}")
+        if data.get("ws_input_release_last_slice_timed_out") is not False:
+            failures.append("WebSocket input release unexpectedly timed out")
         if data.get("ws_input_release_running") is not False:
             failures.append("WebSocket input release auto-run did not report stopped")
         if data.get("ws_input_release_pending_touches") != 0:

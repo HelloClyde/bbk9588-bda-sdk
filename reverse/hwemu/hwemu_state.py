@@ -137,6 +137,9 @@ class HwEmuStateMixin:
             "interrupt_return_pc": self.interrupt_return_pc,
             "interrupt_suppress_pc_once": self.interrupt_suppress_pc_once,
             "mmio_delay_branch_count": self.mmio_delay_branch_count,
+            "gui_timer_tick_count": self.gui_timer_tick_count,
+            "gui_timer_fire_count": self.gui_timer_fire_count,
+            "gui_timer_events": self.gui_timer_events[-128:],
             "scratch_alloc_va": self.scratch_alloc_va,
             "ram_z": zlib.compress(bytes(self.uc.mem_read(PHYS_RAM_BASE, self.ram_size)), level=1),
         }
@@ -251,6 +254,9 @@ class HwEmuStateMixin:
         irq_suppress = payload.get("interrupt_suppress_pc_once")
         self.interrupt_suppress_pc_once = None if irq_suppress is None else int(irq_suppress)
         self.mmio_delay_branch_count = int(payload.get("mmio_delay_branch_count", self.mmio_delay_branch_count))
+        self.gui_timer_tick_count = int(payload.get("gui_timer_tick_count", self.gui_timer_tick_count))
+        self.gui_timer_fire_count = int(payload.get("gui_timer_fire_count", self.gui_timer_fire_count))
+        self.gui_timer_events = list(payload.get("gui_timer_events", self.gui_timer_events))[-128:]
         self.scratch_alloc_va = int(payload.get("scratch_alloc_va", self.scratch_alloc_va))
 
     def regs(self) -> dict[str, str]:
@@ -506,6 +512,7 @@ class HwEmuStateMixin:
                 "read_span_accel_count": self.surface_read_span_accel_count,
                 "block_read_accel_count": self.surface_block_read_accel_count,
                 "block_write_accel_count": self.surface_block_write_accel_count,
+                "transparent_blit_accel_count": self.surface_transparent_blit_accel_count,
                 "pixel_read_count": self.surface_pixel_read_count,
                 "event_count": self.surface_event_count,
                 "recent_events": self.surface_events[-128:],
@@ -519,6 +526,7 @@ class HwEmuStateMixin:
             "surface_read_span_accel_count": self.surface_read_span_accel_count,
             "surface_block_read_accel_count": self.surface_block_read_accel_count,
             "surface_block_write_accel_count": self.surface_block_write_accel_count,
+            "surface_transparent_blit_accel_count": self.surface_transparent_blit_accel_count,
             "surface_pixel_read_count": self.surface_pixel_read_count,
             "free_scan_accel_count": self.free_scan_accel_count,
             "raster_loop_accel_count": self.raster_loop_accel_count,
@@ -759,6 +767,9 @@ class HwEmuStateMixin:
             "bda_event_poll_hits": self.bda_event_poll_hits,
             "bda_idle_empty_polls": self.bda_idle_empty_polls,
             "bda_idle_stop_polls": self.bda_idle_stop_polls,
+            "gui_timer_tick_count": self.gui_timer_tick_count,
+            "gui_timer_fire_count": self.gui_timer_fire_count,
+            "gui_timer_events": self.gui_timer_events[-128:],
             "bda_key_events": [
                 {
                     "code": event.code,
@@ -834,6 +845,9 @@ class HwEmuStateMixin:
         return {
             "wait_wake_count": self.wait_wake_count,
             "timer_tick_count": self.timer_tick_count,
+            "gui_timer_tick_count": self.gui_timer_tick_count,
+            "gui_timer_fire_count": self.gui_timer_fire_count,
+            "gui_timer_events": self.gui_timer_events[-32:],
             "scheduler_poll_count": self.scheduler_poll_count,
             "scheduler_dispatch_count": self.scheduler_dispatch_count,
             "tick_clamp_enabled": self.scheduler_tick_clamp,

@@ -17,6 +17,20 @@ from hwemu_frontend_state import (
 )
 
 
+def parse_page_range(value: str) -> tuple[int, int]:
+    if ":" not in value:
+        raise argparse.ArgumentTypeError("expected start:end")
+    start_text, end_text = value.split(":", 1)
+    try:
+        start = int(start_text, 0)
+        end = int(end_text, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if start < 0 or end <= start:
+        raise argparse.ArgumentTypeError("range must satisfy 0 <= start < end")
+    return start, end
+
+
 HTML = r"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -197,6 +211,7 @@ function renderStatus(s) {
     ['job elapsed', s.job ? formatElapsed(s.job.elapsed_seconds) : ''],
     ['job speed', s.job?.steps_per_second ? `${Math.round(s.job.steps_per_second)}/s` : ''],
     ['job chunk', s.job?.chunk_steps || ''],
+    ['last slice', s.job ? `${s.job.last_slice_steps || 0}${s.job.last_slice_timed_out ? ' timeout' : ''}` : ''],
     ['job steps', formatJobSteps(s.job)],
     ['stop', s.stop_reason || ''],
     ['insn', s.insn_count],
@@ -435,6 +450,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200", help="Frontend cold-boot path. c200 matches the passing menu regression.")
     ap.add_argument("--state-in", type=Path, help="Load an emulator checkpoint when the frontend resets.")
     ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
+    ap.add_argument(
+        "--readonly-nand-page-range",
+        type=parse_page_range,
+        action="append",
+        default=[],
+        help="Diagnostic: skip NAND program commits for a half-open page range start:end.",
+    )
     ap.add_argument(
         "--nand-loop-accelerator",
         dest="nand_loop_accelerator",

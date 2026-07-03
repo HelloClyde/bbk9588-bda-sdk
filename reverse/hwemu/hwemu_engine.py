@@ -72,6 +72,8 @@ from hwemu_defs import (
     MmioAccess,
     TraceState,
 )
+from hwemu_fastpaths import PORTRAIT_BLIT_LOOP_PCS
+from hwemu_surface import SURFACE_TRANSPARENT_BLIT_PCS
 from hwemu_utils import va_to_phys
 
 
@@ -94,7 +96,27 @@ FS_DIR_SCAN_CAPTURE_PCS = (
     0x80173F2C,
 )
 
+FS_DIR_SCAN_RETURN_PCS = frozenset(
+    {
+        0x801708C4,
+        0x8017159C,
+        0x801719F4,
+        0x80171A5C,
+        0x80171F14,
+        0x80172174,
+        0x80179D90,
+        0x8017A564,
+        0x8017A76C,
+        0x8017E400,
+    }
+)
+
 LFN_COPY_LOOP_PCS = (0x80174C9C, 0x80174CC0, 0x80174CE4)
+GUI_TIMER_TABLE_VA = 0x804A6B40
+GUI_TIMER_TABLE_SLOTS = 16
+GUI_TIMER_EVENT_OBJECT_OFFSET = 0xF0
+GUI_TIMER_EVENT_SLOT_OBJECTS_OFFSET = 0x20
+GUI_TIMER_EVENT_SLOT_IDS_OFFSET = 0x60
 
 
 class HwEmuEngineMixin:
@@ -126,12 +148,16 @@ class HwEmuEngineMixin:
                 hooks[pc] = callback
 
         add(0x800043A0, self._on_busy_delay_code)
+        add(0x800098C0, self._on_debug_print_stub_code)
         add(0x80058CB4, self._on_no_event_poll_code)
         add(0x8012BDF4, self._on_surface_setpixel_code, self.surface_pixel_accelerator)
         add(0x8012BEA4, self._on_surface_hline_code, self.surface_hline_accelerator)
         add(0x8012BF64, self._on_surface_color_span_code)
         add(0x8012BFE8, self._on_surface_read_span_code)
-        add(0x8012C920, self._on_portrait_blit_code)
+        for pc in SURFACE_TRANSPARENT_BLIT_PCS:
+            add(pc, self._on_surface_transparent_blit_code)
+        for pc in PORTRAIT_BLIT_LOOP_PCS:
+            add(pc, self._on_portrait_blit_code)
         add(0x800074A0, self._on_malloc_scan_code)
         add(0x80007900, self._on_zero_fill_delay_loop_code)
         add(0x80173908, self._on_stack_clear32_delay_loop_code)
@@ -163,6 +189,25 @@ class HwEmuEngineMixin:
             cycles = uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
             self._trace_event("busy-delay", pc=address, value=cycles, size=count)
 
+    def _on_debug_print_stub_code(self, uc, address: int, size: int, user_data) -> None:
+        sp = uc.reg_read(UC_MIPS_REG_SP) & 0xFFFFFFFF
+        for offset, reg in (
+            (0x04, UC_MIPS_REG_5),
+            (0x08, UC_MIPS_REG_6),
+            (0x0C, UC_MIPS_REG_7),
+        ):
+            target = (sp + offset) & 0xFFFFFFFF
+            if self._is_mapped_ram_va(target, 4):
+                self._write_u32_va(target, uc.reg_read(reg) & 0xFFFFFFFF)
+        uc.reg_write(UC_MIPS_REG_2, 0)
+        ra = uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
+        if self._looks_like_code_return(ra) and self._read_word_at_va(ra) is not None:
+            uc.reg_write(UC_MIPS_REG_PC, ra)
+            return
+        self.state.stop_reason = self.state.stop_reason or f"debug_print_bad_ra_0x{ra:08x}"
+        self._trace_event("debug-print-bad-ra", pc=address, target=ra)
+        uc.emu_stop()
+
     def _on_no_event_poll_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_no_event_poll, uc, address, size, user_data)
 
@@ -177,6 +222,9 @@ class HwEmuEngineMixin:
 
     def _on_surface_read_span_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_surface_read_span_loop, uc, address, size, user_data)
+
+    def _on_surface_transparent_blit_code(self, uc, address: int, size: int, user_data) -> None:
+        self._on_direct_fast_code(self._handle_surface_transparent_blit, uc, address, size, user_data)
 
     def _on_portrait_blit_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_portrait_blit_loop, uc, address, size, user_data)
@@ -212,6 +260,21 @@ class HwEmuEngineMixin:
             return
         self._on_code(uc, address, size, user_data)
 
+    def _find_fs_dir_scan_frame(self, sp: int) -> tuple[int, int] | None:
+        offsets = [0]
+        for step in range(4, 0x601, 4):
+            offsets.append(-step)
+            if step <= 0x200:
+                offsets.append(step)
+        for delta in offsets:
+            frame_sp = (sp + delta) & 0xFFFFFFFF
+            if not self._is_mapped_ram_va(frame_sp + 0xEC, 4):
+                continue
+            saved_ra = self._read_mem_va(frame_sp + 0xEC, 4) & 0xFFFFFFFF
+            if saved_ra in FS_DIR_SCAN_RETURN_PCS:
+                return frame_sp, saved_ra
+        return None
+
     def _on_store_delay_branch_code(self, uc, address: int, size: int, user_data) -> None:
         if self._handle_interrupt_return(address):
             return
@@ -220,6 +283,140 @@ class HwEmuEngineMixin:
         if self._handle_branch_with_mmio_delay(address):
             return
         self._on_code(uc, address, size, user_data)
+
+    def _find_gui_timer_event_slot(self, event_obj: int, owner_obj: int, timer_id: int) -> int | None:
+        if not self._is_mapped_ram_va(event_obj, GUI_TIMER_EVENT_SLOT_IDS_OFFSET + GUI_TIMER_TABLE_SLOTS * 4):
+            return None
+        for slot in range(GUI_TIMER_TABLE_SLOTS):
+            slot_obj = self._read_u32_va_safe(event_obj + GUI_TIMER_EVENT_SLOT_OBJECTS_OFFSET + slot * 4)
+            slot_id = self._read_u32_va_safe(event_obj + GUI_TIMER_EVENT_SLOT_IDS_OFFSET + slot * 4)
+            if slot_obj == owner_obj and slot_id == timer_id:
+                return slot
+        return None
+
+    def _record_gui_timer_event(
+        self,
+        *,
+        kind: str,
+        pc: int,
+        index: int,
+        entry: int,
+        owner_obj: int,
+        timer_id: int,
+        event_obj: int,
+        slot: int | None,
+        flags: int | None = None,
+    ) -> None:
+        row: dict[str, str | int] = {
+            "kind": kind,
+            "pc": f"0x{pc:08x}",
+            "index": index,
+            "entry": f"0x{entry:08x}",
+            "owner_obj": f"0x{owner_obj:08x}",
+            "timer_id": f"0x{timer_id:08x}",
+            "event_obj": f"0x{event_obj:08x}",
+            "slot": -1 if slot is None else slot,
+        }
+        if flags is not None:
+            row["flags"] = f"0x{flags:08x}"
+        self.gui_timer_events.append(row)
+        if len(self.gui_timer_events) > 128:
+            del self.gui_timer_events[0]
+
+    def _is_mapped_ram_va_or_phys(self, address: int, size: int = 1) -> bool:
+        if size < 0:
+            return False
+        phys = va_to_phys(address) if address >= RAM_BASE else address
+        return 0 <= phys and phys + size <= self.ram_size
+
+    def _is_known_device_span(self, address: int, size: int = 1) -> bool:
+        if size <= 0:
+            return False
+        start = self._canonical_mmio_address(address)
+        end = start + size
+        known_ranges = (
+            (0x10001000, 0x10001100),  # INTC
+            (0x10002000, 0x10002100),  # TCU
+            (0x10010000, 0x10010400),  # GPIO
+            (SADC_BASE, SADC_BASE + 0x100),
+            (0x13040000, 0x13040100),  # USB device controller
+            (EXT_BANK_BASE, EXT_BANK_BASE + 0x04),  # NAND data window
+            (EXT_BANK_BASE + 0x8000, EXT_BANK_BASE + 0x8100),  # NAND command latch
+            (EXT_BANK_BASE + 0x10000, EXT_BANK_BASE + 0x10100),  # NAND address latch
+        )
+        return any(start < high and end > low for low, high in known_ranges)
+
+    def _fix_repeated_frame_entry(self, pc: int, attr: str, frame_size: int) -> None:
+        sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+        ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
+        previous = getattr(self, attr, None)
+        if (
+            isinstance(previous, dict)
+            and previous.get("ra") == ra
+            and previous.get("sp") == ((sp + frame_size) & 0xFFFFFFFF)
+        ):
+            self.uc.reg_write(UC_MIPS_REG_29, previous["sp"] & 0xFFFFFFFF)
+            setattr(self, attr, None)
+            event = "repeat-entry-28-fix" if frame_size == 0x28 else "repeat-entry-frame-fix"
+            self._trace_event(event, pc=pc, sp=sp, target=ra, size=frame_size)
+            return
+        setattr(self, attr, {"sp": sp, "ra": ra})
+
+    def _fix_repeated_0x28_entry(self, pc: int, attr: str) -> None:
+        self._fix_repeated_frame_entry(pc, attr, 0x28)
+
+    def _service_gui_timer_entries(self, pc: int) -> None:
+        self.gui_timer_tick_count += 1
+        for index in range(GUI_TIMER_TABLE_SLOTS):
+            entry = self._read_u32_va_safe(GUI_TIMER_TABLE_VA + index * 4) or 0
+            if not self._is_mapped_ram_va(entry, 0x10):
+                continue
+            owner_obj = self._read_u32_va_safe(entry) or 0
+            timer_id = self._read_u32_va_safe(entry + 4) or 0
+            period = self._read_u32_va_safe(entry + 8) or 0
+            counter = self._read_u32_va_safe(entry + 0x0C) or 0
+            if not self._is_mapped_ram_va(owner_obj, GUI_TIMER_EVENT_OBJECT_OFFSET + 4):
+                continue
+
+            period = max(1, period)
+            counter = (counter + 1) & 0xFFFFFFFF
+            if counter < period:
+                self._write_u32_va(entry + 0x0C, counter)
+                continue
+
+            self._write_u32_va(entry + 0x0C, 0)
+            event_obj = self._read_u32_va_safe(owner_obj + GUI_TIMER_EVENT_OBJECT_OFFSET) or 0
+            slot = self._find_gui_timer_event_slot(event_obj, owner_obj, timer_id)
+            if slot is None:
+                self._record_gui_timer_event(
+                    kind="gui-timer-miss",
+                    pc=pc,
+                    index=index,
+                    entry=entry,
+                    owner_obj=owner_obj,
+                    timer_id=timer_id,
+                    event_obj=event_obj,
+                    slot=None,
+                )
+                continue
+
+            flags = self._read_u32_va_safe(event_obj) or 0
+            new_flags = flags | (1 << slot)
+            self._write_u32_va(event_obj, new_flags)
+            self.gui_timer_fire_count += 1
+            self._record_gui_timer_event(
+                kind="gui-timer-fire",
+                pc=pc,
+                index=index,
+                entry=entry,
+                owner_obj=owner_obj,
+                timer_id=timer_id,
+                event_obj=event_obj,
+                slot=slot,
+                flags=new_flags,
+            )
+            if self.gui_timer_fire_count <= 16 or self.gui_timer_fire_count % 256 == 0:
+                self._trace_event("gui-timer-fire", pc=pc, addr=event_obj, value=new_flags, size=slot)
 
     def _install_mem_hooks(self) -> None:
         # Do not install a global RAM MEM hook. Unicorn MIPS mishandles a
@@ -291,7 +488,8 @@ class HwEmuEngineMixin:
             self.uc.emu_stop()
 
     def _on_code(self, uc, address: int, size: int, user_data) -> None:
-        self._recover_bda_corrupt_pointer_registers(address)
+        if self.legacy_direct_bda:
+            self._recover_bda_corrupt_pointer_registers(address)
         if self.profile == "bbk9588-uboot" and self.fast_hooks:
             if address == 0x800043A0 and self._handle_busy_delay(address):
                 return
@@ -301,15 +499,17 @@ class HwEmuEngineMixin:
                 return
             if address == 0x8012BFE8 and self._handle_surface_read_span_loop(address):
                 return
+            if address == 0x8012C46C and self._handle_surface_transparent_blit(address):
+                return
             if address == 0x8012BEA4 and self._handle_surface_hline(address):
                 return
             if address == 0x8012C920 and self._handle_portrait_blit_loop(address):
                 return
             if address == 0x80058CB4 and self._handle_no_event_poll(address):
                 return
-        if self.profile == "bbk9588-uboot" and self._handle_bda_sdkinput_copy_branch(address):
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self._handle_bda_sdkinput_copy_branch(address):
             return
-        if self.profile == "bbk9588-uboot" and self._handle_bda_sdkinput_copy_loop(address):
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self._handle_bda_sdkinput_copy_loop(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_nand_data_loop_accelerator(address):
             return
@@ -359,6 +559,8 @@ class HwEmuEngineMixin:
             return
         if self.profile == "bbk9588-uboot" and self._handle_surface_read_span_loop(address):
             return
+        if self.profile == "bbk9588-uboot" and self._handle_surface_transparent_blit(address):
+            return
         if self.profile == "bbk9588-uboot" and self._handle_surface_setpixel(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_surface_hline(address):
@@ -377,7 +579,7 @@ class HwEmuEngineMixin:
             dst = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
             value = self.uc.reg_read(UC_MIPS_REG_5) & 0xFF
             size_bytes = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
-            if size_bytes <= 0x200000 and self._is_mapped_ram_va(dst, size_bytes):
+            if size_bytes <= 0x200000 and self._is_mapped_ram_va_or_phys(dst, size_bytes):
                 self.uc.mem_write(va_to_phys(dst), bytes([value]) * size_bytes)
                 self.uc.reg_write(UC_MIPS_REG_2, dst)
                 self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
@@ -387,13 +589,23 @@ class HwEmuEngineMixin:
             dst = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
             src = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
             size_bytes = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
-            if size_bytes <= 0x200000 and self._is_mapped_ram_va(dst, size_bytes) and self._is_mapped_ram_va(src, size_bytes):
-                data = self._read_block_va_safe(src, size_bytes)
+            if (
+                size_bytes <= 0x200000
+                and self._is_mapped_ram_va_or_phys(dst, size_bytes)
+            ):
+                data = None
+                if self._is_mapped_ram_va_or_phys(src, size_bytes):
+                    data = self._read_block_va_safe(src, size_bytes)
+                    event_name = "memcpy-bulk"
+                else:
+                    if not self._is_known_device_span(src, size_bytes):
+                        data = b"\xFF" * size_bytes
+                        event_name = "memcpy-fill-ff"
                 if data is not None:
                     self.uc.mem_write(va_to_phys(dst), data)
                     self.uc.reg_write(UC_MIPS_REG_2, dst)
                     self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-                    self._trace_event("memcpy-bulk", pc=address, addr=dst, value=src, size=size_bytes)
+                    self._trace_event(event_name, pc=address, addr=dst, value=src, size=size_bytes)
                     return
         self._compensate_repeated_stack_prologue(address)
         self._preexecute_jr_delay(address)
@@ -469,6 +681,7 @@ class HwEmuEngineMixin:
             return
         if self.profile == "bbk9588-uboot" and address == 0x800087C4:
             self.timer_tick_count += 1
+            self._service_gui_timer_entries(address)
         if self.profile == "bbk9588-uboot" and address == 0x80007E08:
             self.scheduler_poll_count += 1
             if self.scheduler_tick_clamp:
@@ -493,6 +706,13 @@ class HwEmuEngineMixin:
             self._capture_fs_dir_scan(address)
         if self.profile == "bbk9588-uboot" and address in FS_DIR_SCAN_BRANCH_PCS and self._handle_fs_dir_scan_branch(address):
             return
+        if self.profile == "bbk9588-uboot" and address == 0x80173504:
+            self._trace_event(
+                "fs-dir-scan-entry",
+                pc=address,
+                sp=self.uc.reg_read(UC_MIPS_REG_SP) & 0xFFFFFFFF,
+                target=self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
+            )
         if self.profile == "bbk9588-uboot" and address == 0x8001432C:
             v0 = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
             self.uc.reg_write(UC_MIPS_REG_17, v0)
@@ -528,6 +748,8 @@ class HwEmuEngineMixin:
                 self._trace_event("null-object-close", pc=address, target=target)
                 return
         if self.profile == "bbk9588-uboot" and address in {
+            0x80006688: 0x20,
+            0x80006834: 0x20,
             0x8000FEB4: 0x18,
             0x800100C8: 0x28,
             0x801802E8: 0x28,
@@ -536,6 +758,8 @@ class HwEmuEngineMixin:
             0x80184D08: 0x20,
         }:
             frame_size = {
+                0x80006688: 0x20,
+                0x80006834: 0x20,
                 0x8000FEB4: 0x18,
                 0x800100C8: 0x28,
                 0x801802E8: 0x28,
@@ -593,7 +817,7 @@ class HwEmuEngineMixin:
                 return
             if self._apply_firmware_key_sample(address):
                 return
-            if self._apply_bda_launch(address):
+            if self.legacy_direct_bda and self._apply_bda_launch(address):
                 return
             if self._apply_scheduled_calls(address):
                 return
@@ -612,7 +836,7 @@ class HwEmuEngineMixin:
                 self.state.stop_reason = "app_repaint_loop"
                 self.uc.emu_stop()
                 return
-            if not self.bda_app_active:
+            if not self.legacy_direct_bda or not self.bda_app_active:
                 return
             # Unicorn repeatedly lands back on this branch target after the
             # preceding bnez delay slot. Model this call-site explicitly:
@@ -633,32 +857,33 @@ class HwEmuEngineMixin:
             self.uc.reg_write(UC_MIPS_REG_PC, 0x800D35F0)
             return
         if self.profile == "bbk9588-uboot" and address == 0x800BC2E0:
-            if self.bda_initial_draw_context is not None:
-                ctx = self.bda_initial_draw_context
-                self.bda_initial_draw_context = None
-                self.uc.reg_write(UC_MIPS_REG_4, ctx["a0"])
-                self.uc.reg_write(UC_MIPS_REG_5, ctx["a1"])
-                self.uc.reg_write(UC_MIPS_REG_6, ctx["a2"])
-                self.uc.reg_write(UC_MIPS_REG_7, ctx["a3"])
-                self.uc.reg_write(UC_MIPS_REG_31, ctx["ra"])
-                self._trace_event("bda-initial-draw-return", pc=address, target=ctx["ra"])
-            elif self.bda_initial_draw_pending:
-                self.bda_initial_draw_pending = False
-                self.bda_initial_draw_context = {
-                    "a0": self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
-                    "a1": self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
-                    "a2": self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF,
-                    "a3": self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF,
-                    "ra": self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
-                }
-                self.uc.reg_write(UC_MIPS_REG_4, 0)
-                self.uc.reg_write(UC_MIPS_REG_5, 0)
-                self.uc.reg_write(UC_MIPS_REG_6, 0xEF)
-                self.uc.reg_write(UC_MIPS_REG_7, 0x13F)
-                self.uc.reg_write(UC_MIPS_REG_31, 0x800BC2E0)
-                self.uc.reg_write(UC_MIPS_REG_PC, 0x800D3800)
-                self._trace_event("bda-initial-draw-call", pc=address, target=0x800D3800)
-                return
+            if self.legacy_direct_bda:
+                if self.bda_initial_draw_context is not None:
+                    ctx = self.bda_initial_draw_context
+                    self.bda_initial_draw_context = None
+                    self.uc.reg_write(UC_MIPS_REG_4, ctx["a0"])
+                    self.uc.reg_write(UC_MIPS_REG_5, ctx["a1"])
+                    self.uc.reg_write(UC_MIPS_REG_6, ctx["a2"])
+                    self.uc.reg_write(UC_MIPS_REG_7, ctx["a3"])
+                    self.uc.reg_write(UC_MIPS_REG_31, ctx["ra"])
+                    self._trace_event("bda-initial-draw-return", pc=address, target=ctx["ra"])
+                elif self.bda_initial_draw_pending:
+                    self.bda_initial_draw_pending = False
+                    self.bda_initial_draw_context = {
+                        "a0": self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
+                        "a1": self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
+                        "a2": self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF,
+                        "a3": self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF,
+                        "ra": self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
+                    }
+                    self.uc.reg_write(UC_MIPS_REG_4, 0)
+                    self.uc.reg_write(UC_MIPS_REG_5, 0)
+                    self.uc.reg_write(UC_MIPS_REG_6, 0xEF)
+                    self.uc.reg_write(UC_MIPS_REG_7, 0x13F)
+                    self.uc.reg_write(UC_MIPS_REG_31, 0x800BC2E0)
+                    self.uc.reg_write(UC_MIPS_REG_PC, 0x800D3800)
+                    self._trace_event("bda-initial-draw-call", pc=address, target=0x800D3800)
+                    return
             surface = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
             red = self.uc.reg_read(UC_MIPS_REG_5) & 0xFF
             green = self.uc.reg_read(UC_MIPS_REG_6) & 0xFF
@@ -672,7 +897,7 @@ class HwEmuEngineMixin:
                 if self.rgb565_color_accel_count <= 16 or self.rgb565_color_accel_count % 4096 == 0:
                     self._trace_event("rgb565-color", pc=address, addr=surface, value=value, size=self.rgb565_color_accel_count)
                 return
-        if self.profile == "bbk9588-uboot" and address == 0x800D3634 and self.repaint_call_context:
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x800D3634 and self.repaint_call_context:
             # Return block for the explicit 0x800bd840 -> 0x800d35f0 call-site
             # above. The generic stack compensation can corrupt this narrow
             # frame, so restore the ABI-preserved registers and return address
@@ -687,19 +912,40 @@ class HwEmuEngineMixin:
             self._trace_event("app-repaint-return-fix", pc=address, target=ctx["ra"])
             self.uc.reg_write(UC_MIPS_REG_PC, ctx["ra"])
             return
+        if self.profile == "bbk9588-uboot" and address == 0x800CE928:
+            self._fix_repeated_0x28_entry(address, "ce928_entry_context")
         if self.profile == "bbk9588-uboot" and address == 0x800CE9F0:
+            self._fix_repeated_0x28_entry(address, "ce9f0_entry_context")
             self.window_close_context = {
                 "sp": self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF,
                 "ra": self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
             }
+        if self.profile == "bbk9588-uboot" and address == 0x800CE968:
+            # 0x800ce928's fast no-op path returns through
+            # "jr ra; addiu sp,sp,0x28". Unicorn can surface the return without
+            # the delay-slot stack restore, which corrupts BDA callers that
+            # immediately load their saved RA from the stack.
+            ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
+            if self._looks_like_code_return(ra):
+                sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+                self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x28) & 0xFFFFFFFF)
+                self.uc.reg_write(UC_MIPS_REG_PC, ra)
+                self.ce928_entry_context = None
+                self._trace_event("ce928-return-fix", pc=address, sp=sp, target=ra)
+                return
         if self.profile == "bbk9588-uboot" and address == 0x800CEA30 and self.window_close_context:
             ctx = self.window_close_context
             ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
             if ra == 0 and ctx["ra"] not in (0, 4):
-                self.uc.reg_write(UC_MIPS_REG_31, ctx["ra"])
-                self.uc.reg_write(UC_MIPS_REG_PC, ctx["ra"])
+                ra = ctx["ra"]
+                self.uc.reg_write(UC_MIPS_REG_31, ra)
+            if self._looks_like_code_return(ra):
+                sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+                self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x28) & 0xFFFFFFFF)
+                self.uc.reg_write(UC_MIPS_REG_PC, ra)
                 self.window_close_context = None
-                self._trace_event("window-close-return-fix", pc=address, target=ctx["ra"], sp=ctx["sp"])
+                self.ce9f0_entry_context = None
+                self._trace_event("window-close-return-fix", pc=address, target=ra, sp=sp)
                 return
             self.window_close_context = None
         if self.profile == "bbk9588-uboot" and address == 0x800E123C:
@@ -773,16 +1019,39 @@ class HwEmuEngineMixin:
                 self.uc.reg_write(UC_MIPS_REG_PC, ctx["ra"])
                 self._trace_event("display-event-return-fix", pc=address, target=ctx["ra"], bad_ra=ra)
                 return
+        if self.profile == "bbk9588-uboot" and address == 0x800DE150:
+            self._fix_repeated_0x28_entry(address, "de150_entry_context")
+        if self.profile == "bbk9588-uboot" and address == 0x800DE190:
+            self._fix_repeated_0x28_entry(address, "de190_entry_context")
+        if self.profile == "bbk9588-uboot" and address == 0x800DE1C8:
+            self._fix_repeated_0x28_entry(address, "de1c8_entry_context")
+        if self.profile == "bbk9588-uboot" and address in (0x800DE188, 0x800DE1C0, 0x800DE200):
+            attr = {
+                0x800DE188: "de150_entry_context",
+                0x800DE1C0: "de190_entry_context",
+                0x800DE200: "de1c8_entry_context",
+            }[address]
+            ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
+            if self._looks_like_code_return(ra):
+                sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
+                self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x28) & 0xFFFFFFFF)
+                self.uc.reg_write(UC_MIPS_REG_PC, ra)
+                setattr(self, attr, None)
+                self._trace_event("de-event-return-fix", pc=address, sp=sp, target=ra)
+                return
+        if self.profile == "bbk9588-uboot" and address == 0x81C0FA74:
+            if self._read_word_at_va(address) == 0x27BDFFE0:
+                self._fix_repeated_frame_entry(address, "bda_billing_entry_context", 0x20)
         if self.profile == "bbk9588-uboot" and address == 0x800B3950:
             self._seed_surface_dirty_rect(self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF, address)
         if self.profile == "bbk9588-uboot" and address in (0x800C0D40, 0x80119B50, 0x8011A3C4):
             self._trace_system_text_entry(address)
-        if self.profile == "bbk9588-uboot" and self.bda_text_mode == "ascii-hook" and address == 0x8011A3C4:
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "ascii-hook" and address == 0x8011A3C4:
             if self._draw_synthetic_glyph_for_bda_text(address):
                 return
-        if self.profile == "bbk9588-uboot" and self.bda_text_mode == "native" and address == 0x8011A3C4:
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "native" and address == 0x8011A3C4:
             self._trace_bda_native_text_draw(address)
-        if self.profile == "bbk9588-uboot" and address == 0x8011B054:
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x8011B054:
             sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
             glyph = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
             code: int | None = None
@@ -900,7 +1169,7 @@ class HwEmuEngineMixin:
                     x_pad=self._read_u32_va_safe(sp + 0x20) or 0,
                     y_flip=self._read_u32_va_safe(sp + 0x24) or 0,
                 )
-        if self.profile == "bbk9588-uboot" and self.bda_text_mode == "native" and address in {
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "native" and address in {
             0x8011B0CC,
             0x8011B20C,
             0x8011B25C,
@@ -953,7 +1222,7 @@ class HwEmuEngineMixin:
                 return
         if self.profile == "bbk9588-uboot" and address in (0x8000B25C, 0x8012CCF0, 0x8012CCFC):
             self._capture_event_queue_snapshot("event-queue-read-path", address)
-        if self.profile == "bbk9588-uboot" and address == 0x8012CCFC:
+        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x8012CCFC:
             event = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
             if event == 0:
                 self.bda_event_poll_hits += 1
@@ -1063,6 +1332,13 @@ class HwEmuEngineMixin:
                         return
                 else:
                     self.bda_idle_empty_polls = 0
+                if display_flags & 0x00000001:
+                    event_type = 0x144
+                    self._write_u32_va(0x80825840, display_flags & ~0x00000001)
+                    self._write_bda_synthetic_event(event, event_type)
+                    self.uc.reg_write(UC_MIPS_REG_2, event)
+                    self._trace_event("bda-timer-event", pc=address, addr=event, value=event_type, flags=display_flags)
+                    return
                 event_type = 0x03 if (display_flags & 0x70000000) else 0x00
                 self._write_bda_synthetic_event(event, event_type)
                 self.uc.reg_write(UC_MIPS_REG_2, event)
@@ -1256,15 +1532,17 @@ class HwEmuEngineMixin:
                 return
         if self.profile == "bbk9588-uboot" and address == 0x801737B8:
             # Deep FAT directory scanning can arrive at this large-frame
-            # epilogue with SP 0x20 bytes too low after Unicorn/repeat-prologue
-            # recovery. Prefer the adjacent valid frame only when the normal
-            # saved RA slot is clearly not a firmware return address.
+            # epilogue with SP shifted after Unicorn/repeat-prologue recovery.
+            # Use only the exact return PCs for this function's known JAL
+            # callers, so an unrelated stack word cannot become a fake return.
             sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
-            saved_ra = self._read_mem_va(sp + 0xEC, 4)
-            shifted_saved_ra = self._read_mem_va(sp + 0x10C, 4)
-            if not (0x80004000 <= saved_ra < 0x80900000) and (0x80004000 <= shifted_saved_ra < 0x80900000):
-                self._trace_event("stack-fix", pc=address, sp=sp, value=saved_ra, target=shifted_saved_ra)
-                self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x20) & 0xFFFFFFFF)
+            saved_ra = self._read_mem_va(sp + 0xEC, 4) if self._is_mapped_ram_va(sp + 0xEC, 4) else 0
+            if saved_ra not in FS_DIR_SCAN_RETURN_PCS:
+                frame = self._find_fs_dir_scan_frame(sp)
+                if frame is not None:
+                    frame_sp, frame_ra = frame
+                    self._trace_event("fs-dir-scan-stack-fix", pc=address, sp=sp, value=saved_ra, target=frame_ra, size=(frame_sp - sp) & 0xFFFFFFFF)
+                    self.uc.reg_write(UC_MIPS_REG_29, frame_sp)
         if self.profile == "bbk9588-uboot" and address in (
             0x80900F70,
             0x80900F78,
@@ -1805,7 +2083,7 @@ class HwEmuEngineMixin:
         return False
 
     def _recover_bda_corrupt_pointer_read(self, pc: int, address: int, size: int) -> bool:
-        if not self.bda_app_active or not self._is_bda_runtime_va(pc):
+        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_bda_runtime_va(pc):
             return False
         if self._is_mapped_ram_va(address, size):
             return False
@@ -1838,7 +2116,7 @@ class HwEmuEngineMixin:
         return True
 
     def _recover_bda_corrupt_pointer_registers(self, pc: int) -> None:
-        if not self.bda_app_active or not self._is_bda_runtime_va(pc):
+        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_bda_runtime_va(pc):
             return
         regs = self._reg_map()
         values = [(idx, reg, self.uc.reg_read(reg) & 0xFFFFFFFF) for idx, reg in enumerate(regs)]
@@ -1861,7 +2139,7 @@ class HwEmuEngineMixin:
             self._trace_event("bda-reg-pointer-recover", pc=pc, addr=reg_value, value=fixed, size=idx)
 
     def _handle_bda_sdkinput_copy_loop(self, pc: int) -> bool:
-        if not self.bda_app_active or pc != 0x81C0392C:
+        if not self.legacy_direct_bda or not self.bda_app_active or pc != 0x81C0392C:
             return False
         src_base = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
         idx = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
@@ -1880,7 +2158,7 @@ class HwEmuEngineMixin:
         return True
 
     def _handle_bda_sdkinput_copy_branch(self, pc: int) -> bool:
-        if not self.bda_app_active or pc != 0x81C038A0:
+        if not self.legacy_direct_bda or not self.bda_app_active or pc != 0x81C038A0:
             return False
         idx = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
         limit = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
@@ -1910,6 +2188,8 @@ class HwEmuEngineMixin:
         return True
 
     def _read_word_at_va(self, va: int) -> int | None:
+        if va & 0x3:
+            return None
         phys = va & 0x1FFFFFFF if va >= RAM_BASE else va
         try:
             return struct.unpack("<I", self.uc.mem_read(phys, 4))[0]
@@ -2087,9 +2367,6 @@ class HwEmuEngineMixin:
             pc = current_pc
         else:
             pc = self.state.last_pc
-            word_at_last = self._read_word_at_va(pc)
-            if word_at_last is not None and not self._is_recoverable_exception_word(word_at_last):
-                pc = self._next_recoverable_exception_pc(pc) or pc
         if self.profile == "bbk9588-uboot" and pc in (0x80010D88, 0x80010D90, 0x80010D9C, 0x80010DA8):
             target = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
             self.uc.reg_write(UC_MIPS_REG_PC, target)
@@ -2100,6 +2377,8 @@ class HwEmuEngineMixin:
             return True
         word = self._read_word_at_va(pc)
         if word is None:
+            return False
+        if not self._is_recoverable_exception_word(word):
             return False
         snapshot = self.recovery_reg_snapshots.get(pc)
         if snapshot is not None:
@@ -2199,6 +2478,29 @@ class HwEmuEngineMixin:
         if opcode == 0 and (word & 0x001FFFFF) == 0x00000008 and funct == 8:
             reg_map = self._reg_map()
             target = self.uc.reg_read(reg_map[rs]) & 0xFFFFFFFF
+            if not self._looks_like_code_return(target) or self._read_word_at_va(target) is None:
+                bad_sp = self.uc.reg_read(UC_MIPS_REG_SP) & 0xFFFFFFFF
+                self._trace_event("bad-jr-target", pc=pc, sp=bad_sp, target=target)
+                if self.profile == "bbk9588-uboot" and pc == 0x801737E4:
+                    sp = bad_sp
+                    found = 0
+                    for offset in range(0, 0x220, 4):
+                        addr = (sp + offset) & 0xFFFFFFFF
+                        if not self._is_mapped_ram_va(addr, 4):
+                            continue
+                        value = self._read_mem_va(addr, 4) & 0xFFFFFFFF
+                        if self._looks_like_code_return(value) and self._read_word_at_va(value) is not None:
+                            self._trace_event("fs-dir-scan-bad-jr-stack-candidate", pc=pc, sp=sp, addr=addr, value=value, size=offset)
+                            found += 1
+                            if found >= 12:
+                                break
+                self.uc.reg_write(UC_MIPS_REG_PC, pc)
+                self.state.stop_reason = self.state.stop_reason or f"bad_jr_target_0x{target:08x}"
+                if len(self.state.recoveries) < self.trace_limit:
+                    self.state.recoveries.append(
+                        f"bad-jr-target pc=0x{pc:08x} target=0x{target:08x} exc={exc}"
+                    )
+                return True
             if self.preexecuted_jr_delay_pc == pc:
                 delay = "preexecuted"
             else:
@@ -2217,6 +2519,9 @@ class HwEmuEngineMixin:
         # run so a long-lived emulator can continue in small frontend steps.
         if self.state.insn_count == 0:
             self.uc.reg_write(UC_MIPS_REG_SP, RAM_BASE + min(self.ram_size, 0x400000) - 0x100)
+        self.last_run_requested_steps = max(0, int(steps))
+        self.last_run_completed_steps = 0
+        self.last_run_timed_out = False
         remaining = steps
         deadline = None if max_seconds is None or max_seconds <= 0 else time.monotonic() + max_seconds
         if self.fast_hooks:
@@ -2240,10 +2545,14 @@ class HwEmuEngineMixin:
                     self.uc.emu_start(start_pc, 0, timeout=timeout_us, count=count)
                     ran = max(1, self.state.insn_count - before)
                     timed_out = deadline is not None and time.monotonic() >= deadline
-                    if self.fast_hooks and not self.internal_chunk_stop:
-                        remaining -= count
+                    if timed_out:
+                        self.last_run_timed_out = True
+                    if self.fast_hooks and not self.internal_chunk_stop and not timed_out:
+                        completed = count
                     else:
-                        remaining -= ran
+                        completed = min(count, ran)
+                    remaining -= completed
+                    self.last_run_completed_steps += completed
                     if timed_out:
                         if timeout_is_stop:
                             self.state.stop_reason = self.state.stop_reason or "max_seconds"
@@ -2252,9 +2561,19 @@ class HwEmuEngineMixin:
                         break
                 except UcError as exc:
                     ran = max(1, self.state.insn_count - before)
-                    remaining -= ran
+                    completed = min(count, ran)
+                    remaining -= completed
+                    self.last_run_completed_steps += completed
+                    timed_out = deadline is not None and time.monotonic() >= deadline
+                    if timed_out:
+                        self.last_run_timed_out = True
+                        if timeout_is_stop:
+                            self.state.stop_reason = self.state.stop_reason or "max_seconds"
+                        break
                     if not self._recover_exception(exc):
                         raise
+                    if self.state.stop_reason:
+                        break
         finally:
             self.pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF
         return self.state

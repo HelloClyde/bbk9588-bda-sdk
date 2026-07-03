@@ -172,9 +172,10 @@ class Bbk9588HwEmu(
         readonly_nand_page_ranges: list[tuple[int, int]] | None = None,
         block_image: Path | None = None,
         usb_connected: bool = False,
-        bda_text_mode: str = "ascii-hook",
+        bda_text_mode: str = "native",
         bda_native_glyph_layout: str = "rows-msb-vscale2",
         bda_native_raster_mode: str = "firmware",
+        legacy_direct_bda: bool = False,
         scheduler_tick_clamp: bool = False,
         fs_dir_scan_stop_samples: int = 0,
         fast_hooks: bool = False,
@@ -195,6 +196,16 @@ class Bbk9588HwEmu(
     ):
         if Uc is None:
             raise RuntimeError("unicorn is not installed")
+        direct_bda_requested = bool(
+            (bda_launches or [])
+            or (bda_key_events or [])
+            or (bda_events or [])
+            or (bda_touch_events or [])
+            or bda_text_mode == "ascii-hook"
+            or bda_native_raster_mode == "synth"
+        )
+        if direct_bda_requested and not legacy_direct_bda:
+            raise ValueError("legacy direct-BDA options require legacy_direct_bda=True")
         self.image = image
         self.base = base
         self.pc = pc
@@ -296,6 +307,7 @@ class Bbk9588HwEmu(
         self.bda_text_mode = bda_text_mode
         self.bda_native_glyph_layout = bda_native_glyph_layout
         self.bda_native_raster_mode = bda_native_raster_mode
+        self.legacy_direct_bda = legacy_direct_bda
         self.scheduler_tick_clamp = scheduler_tick_clamp
         self.fs_dir_scan_stop_samples = fs_dir_scan_stop_samples
         self.fast_hooks = fast_hooks
@@ -343,6 +355,7 @@ class Bbk9588HwEmu(
         self.surface_read_span_accel_count = 0
         self.surface_block_read_accel_count = 0
         self.surface_block_write_accel_count = 0
+        self.surface_transparent_blit_accel_count = 0
         self.surface_pixel_read_count = 0
         self.surface_event_count = 0
         self.surface_events: list[dict[str, str | int]] = []
@@ -364,6 +377,9 @@ class Bbk9588HwEmu(
         self.bda_idle_empty_polls = 0
         self.wait_wake_count = 0
         self.timer_tick_count = 0
+        self.gui_timer_tick_count = 0
+        self.gui_timer_fire_count = 0
+        self.gui_timer_events: list[dict[str, str | int]] = []
         self.tcu_enabled_mask = 0
         self.tcu_pending_mask = 0
         self.intc_pending_mask = 0
@@ -375,6 +391,15 @@ class Bbk9588HwEmu(
         self.interrupt_suppress_pc_once: int | None = None
         self.interrupt_deliveries: list[dict[str, str | int]] = []
         self.internal_chunk_stop = False
+        self.last_run_requested_steps = 0
+        self.last_run_completed_steps = 0
+        self.last_run_timed_out = False
+        self.ce928_entry_context: dict[str, int] | None = None
+        self.ce9f0_entry_context: dict[str, int] | None = None
+        self.de150_entry_context: dict[str, int] | None = None
+        self.de190_entry_context: dict[str, int] | None = None
+        self.de1c8_entry_context: dict[str, int] | None = None
+        self.bda_billing_entry_context: dict[str, int] | None = None
         self.scheduler_poll_count = 0
         self.scheduler_dispatch_count = 0
         self.task_events: list[dict[str, object]] = []
@@ -415,6 +440,8 @@ class Bbk9588HwEmu(
 
     def _looks_like_code_return(self, va: int) -> bool:
         va &= 0xFFFFFFFF
+        if va & 0x3:
+            return False
         if self.payload is not None and self.payload_addr <= va < self.payload_addr + self.payload_size:
             return True
         if self.payload is None:
@@ -596,7 +623,7 @@ class Bbk9588HwEmu(
         self._trace_event("bda-font-context", pc=pc, addr=0x80825A80, value=font, size=0x70)
 
     def _seed_surface_dirty_rect(self, surface: int, pc: int) -> None:
-        if not self.bda_app_active or not self._is_mapped_ram_va(surface, 0xC8):
+        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_mapped_ram_va(surface, 0xC8):
             return
         try:
             if self._read_mem_va(surface + 0x04, 4) != 0x82:
@@ -621,7 +648,7 @@ class Bbk9588HwEmu(
             return
 
     def _bda_text_draw_args(self) -> dict[str, int] | None:
-        if not self.bda_app_active:
+        if not self.legacy_direct_bda or not self.bda_app_active:
             return None
         sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
         a3 = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
@@ -875,6 +902,8 @@ class Bbk9588HwEmu(
         return pixels
 
     def _return_synthetic_event_from_bad_queue(self, pc: int) -> bool:
+        if not self.legacy_direct_bda:
+            return False
         src = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
         if src % 4 == 0:
             return False

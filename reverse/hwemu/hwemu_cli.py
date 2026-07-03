@@ -42,6 +42,7 @@ def apply_preset(ns: argparse.Namespace, argv: list[str]) -> None:
     if ns.preset != "direct-bda-msgbox":
         raise ValueError(f"unknown preset: {ns.preset}")
 
+    ns.legacy_direct_bda = True
     if not cli_option_provided(argv, "--image"):
         ns.image = find_workspace_file("u_boot_9588_4740.bin")
     if not cli_option_provided(argv, "--base"):
@@ -76,6 +77,8 @@ def apply_preset(ns: argparse.Namespace, argv: list[str]) -> None:
         ns.fb_width = 240
     if not cli_option_provided(argv, "--fb-height"):
         ns.fb_height = 320
+    if not cli_option_provided(argv, "--bda-text-mode"):
+        ns.bda_text_mode = "ascii-hook"
     if ns.bda_text_mode == "native" and not cli_option_provided(argv, "--bda-native-glyph-layout"):
         ns.bda_native_glyph_layout = "rows-lsb-vscale2"
     if not cli_option_provided(argv, "--fb-orientation"):
@@ -105,6 +108,25 @@ def apply_preset(ns: argparse.Namespace, argv: list[str]) -> None:
             ns.json_out = Path("build") / "hwemu_direct_bda_msgbox.json"
         if ns.fb_dump is None:
             ns.fb_dump = Path("build") / "hwemu_direct_bda_msgbox.png"
+
+
+def validate_legacy_direct_bda(ns: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    legacy_options: list[str] = []
+    if ns.launch_bda:
+        legacy_options.append("--launch-bda")
+    if ns.bda_key_event:
+        legacy_options.append("--bda-key-event")
+    if ns.bda_event:
+        legacy_options.append("--bda-event")
+    if ns.bda_touch_event:
+        legacy_options.append("--bda-touch-event")
+    if ns.bda_text_mode == "ascii-hook":
+        legacy_options.append("--bda-text-mode ascii-hook")
+    if ns.bda_native_raster_mode == "synth":
+        legacy_options.append("--bda-native-raster-mode synth")
+    if legacy_options and not ns.legacy_direct_bda:
+        joined = ", ".join(legacy_options)
+        parser.error(f"{joined} require --legacy-direct-bda; full-system mode does not run direct-BDA shims")
 
 
 def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int:
@@ -292,6 +314,15 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
         ),
     )
     ap.add_argument(
+        "--legacy-direct-bda",
+        action="store_true",
+        help=(
+            "Enable the legacy direct-BDA diagnostic path. Full-system mode "
+            "keeps this off so BDA event/font/runtime shims cannot affect apps "
+            "started by the real firmware loader."
+        ),
+    )
+    ap.add_argument(
         "--gui-key-event",
         type=parse_gui_key_event,
         action="append",
@@ -393,7 +424,7 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
     ap.add_argument("--quiet", action="store_true", help="Do not print the full JSON report to stdout.")
     ap.add_argument(
         "--bda-text-mode",
-        default="ascii-hook",
+        default="native",
         choices=["ascii-hook", "native"],
         help="Direct-BDA text handling. ascii-hook is temporary visible ASCII rendering; native leaves firmware font code alone.",
     )
@@ -551,6 +582,7 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
     )
     ns = ap.parse_args(argv)
     apply_preset(ns, argv)
+    validate_legacy_direct_bda(ns, ap)
     watch_ranges = list(ns.watch_va)
     if ns.watch_input_state:
         watch_ranges.append(parse_watch_range("input=0x80473f40:0x80"))
@@ -616,6 +648,7 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
             bda_text_mode=ns.bda_text_mode,
             bda_native_glyph_layout=ns.bda_native_glyph_layout,
             bda_native_raster_mode=ns.bda_native_raster_mode,
+            legacy_direct_bda=ns.legacy_direct_bda,
             scheduler_tick_clamp=ns.scheduler_tick_clamp,
             fs_dir_scan_stop_samples=ns.fs_dir_scan_stop_samples,
             fast_hooks=ns.fast_hooks,

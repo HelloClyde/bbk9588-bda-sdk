@@ -28,6 +28,27 @@ from unicorn.mips_const import (
 
 from hwemu_utils import va_to_phys
 
+PORTRAIT_BLIT_LOOP_PCS = frozenset(
+    {
+        0x8012C914,
+        0x8012C920,
+        0x8012C928,
+        0x8012C92C,
+        0x8012C930,
+        0x8012C934,
+        0x8012C938,
+        0x8012C93C,
+        0x8012C940,
+        0x8012C944,
+        0x8012C948,
+        0x8012C94C,
+        0x8012C954,
+        0x8012C958,
+        0x8012C95C,
+        0x8012C960,
+    }
+)
+
 
 class HwEmuFastpathMixin:
     def _read_c_string_bytes_va_safe(self, va: int, limit: int = 4096) -> bytes | None:
@@ -83,11 +104,31 @@ class HwEmuFastpathMixin:
             )
         return True
 
+    def _backing_sector_capacity(self) -> int | None:
+        if self.block_data is not None:
+            return len(self.block_data) // 512
+        if self.nand_data is None:
+            return None
+        sector0 = self._nand_fat_sector0_index()
+        if sector0 is None:
+            return None
+        sectors_per_page = self.nand_page_size // 512
+        stride = self.nand_page_size + self.nand_spare_size
+        if sectors_per_page <= 0 or stride <= 0:
+            return None
+        total_sectors = (len(self.nand_data) // stride) * sectors_per_page
+        if total_sectors <= sector0:
+            return None
+        return total_sectors - sector0
+
     def _handle_block_image_hook(self, pc: int) -> bool:
-        if self.block_data is None:
+        if self.block_data is None and self.nand_data is None:
             return False
         if pc == 0x80182D58:
-            value = len(self.block_data) & 0xFFFFFFFF
+            capacity = self._backing_sector_capacity()
+            if capacity is None:
+                return False
+            value = (capacity * 512) & 0xFFFFFFFF
             self.uc.reg_write(UC_MIPS_REG_2, value)
             self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
             self._trace_event("block-size-hook", pc=pc, value=value)
@@ -101,29 +142,43 @@ class HwEmuFastpathMixin:
         source_offset = offset * 512
         length = raw_length * 512
         ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
-        ok = source_offset <= len(self.block_data) and length <= len(self.block_data) - source_offset
+        capacity = self._backing_sector_capacity()
+        ok = capacity is not None and offset <= capacity and raw_length <= capacity - offset
         copied = 0
         dest_phys = va_to_phys(dest_va)
         op = "read" if pc == 0x80182A90 else "write"
         preview = ""
-        if ok and op == "read":
+        if ok and op == "read" and self.block_data is not None:
             data = bytes(self.block_data[source_offset : source_offset + length])
             self.uc.mem_write(dest_phys, data)
             result = 0
             copied = len(data)
             preview = data[:16].hex()
-        elif ok:
+        elif ok and op == "read":
+            chunks = [self._read_backing_sector(offset + index) for index in range(raw_length)]
+            if all(chunk is not None for chunk in chunks):
+                data = b"".join(chunk for chunk in chunks if chunk is not None)
+                self.uc.mem_write(dest_phys, data)
+                result = 0
+                copied = len(data)
+                preview = data[:16].hex()
+            else:
+                result = 0xFFFFFFFF
+        elif ok and op == "write":
             data = bytes(self.uc.mem_read(dest_phys, length))
-            self.block_data[source_offset : source_offset + length] = data
-            first_sector = source_offset // 512
-            sector_count = (length + 511) // 512
-            for index in range(sector_count):
-                sector = first_sector + index
-                start = sector * 512
-                self.block_sector_overrides[sector] = bytes(self.block_data[start : start + 512])
-            result = 0
-            copied = len(data)
             preview = data[:16].hex()
+            wrote = 0
+            for index in range(raw_length):
+                sector_data = data[index * 512 : (index + 1) * 512]
+                if len(sector_data) != 512 or not self._write_backing_sector(offset + index, sector_data):
+                    break
+                wrote += 1
+            if wrote == raw_length:
+                result = 0
+                copied = len(data)
+                self._invalidate_backing_cache_entries(offset, raw_length)
+            else:
+                result = 0xFFFFFFFF
         else:
             result = 0xFFFFFFFF
         row: dict[str, str | int] = {
@@ -145,8 +200,31 @@ class HwEmuFastpathMixin:
             del self.block_events[0]
         self.uc.reg_write(UC_MIPS_REG_2, result)
         self.uc.reg_write(UC_MIPS_REG_PC, ra)
-        self._trace_event("block-read-hook", pc=pc, addr=dest_va, value=offset, size=length)
+        self._trace_event("block-image-hook", pc=pc, addr=dest_va, value=offset, size=length)
         return True
+
+    def _invalidate_backing_cache_entries(self, first_sector: int, sector_count: int) -> None:
+        if sector_count <= 0:
+            return
+        last_sector = first_sector + sector_count - 1
+        for slot in range(8):
+            entry = 0x8086D180 + slot * 0x10
+            sector = self._read_u32_va_safe(entry)
+            if sector is None or not (first_sector <= sector <= last_sector):
+                continue
+            self._write_u32_va(entry, 0xFFFFFFFF)
+            self._write_u32_va(entry + 8, 0)
+            self._write_u32_va(entry + 0x0C, 0)
+
+        # The cluster cache is keyed by cluster, not sector. A write is rare
+        # compared with reads, so a full invalidation is simpler and safer.
+        for slot in range(4):
+            entry = 0x8086D200 + slot * 0x10
+            if self._read_u32_va_safe(entry) is None:
+                continue
+            self._write_u32_va(entry, 0)
+            self._write_u32_va(entry + 8, 0)
+            self._write_u32_va(entry + 0x0C, 0)
 
     def _fat16_layout_from_block_image(self) -> dict[str, int] | None:
         if self.block_data is None:
@@ -265,6 +343,11 @@ class HwEmuFastpathMixin:
     def _read_backing_sector(self, sector: int) -> bytes | None:
         if sector < 0:
             return None
+        override = self.block_sector_overrides.get(sector)
+        if override is not None:
+            if len(override) >= 512:
+                return bytes(override[:512])
+            return bytes(override).ljust(512, b"\x00")
         if self.block_data is not None:
             offset = sector * 512
             if offset + 512 <= len(self.block_data):
@@ -292,6 +375,52 @@ class HwEmuFastpathMixin:
         if off + 512 > len(page_data):
             return None
         return bytes(page_data[off : off + 512])
+
+    def _write_backing_sector(self, sector: int, data: bytes) -> bool:
+        if sector < 0 or len(data) != 512:
+            return False
+        if self.block_data is not None:
+            offset = sector * 512
+            if offset + 512 > len(self.block_data):
+                return False
+            self.block_data[offset : offset + 512] = data
+            self.block_sector_overrides[sector] = bytes(data)
+            return True
+
+        sector0 = self._nand_fat_sector0_index()
+        if sector0 is None or self.nand_data is None:
+            return False
+        relative = sector0 + sector
+        sectors_per_page = self.nand_page_size // 512
+        if relative < 0 or sectors_per_page <= 0:
+            return False
+        page = relative // sectors_per_page
+        sector_in_page = relative % sectors_per_page
+        stride = self.nand_page_size + self.nand_spare_size
+        page_offset = page * stride
+        override = self.nand_page_overrides.get(page)
+        if override is not None:
+            page_data = bytearray(override)
+        elif page_offset + stride <= len(self.nand_data):
+            page_data = bytearray(self.nand_data[page_offset : page_offset + stride])
+        elif page_offset + self.nand_page_size <= len(self.nand_data):
+            page_data = bytearray(self.nand_data[page_offset : page_offset + self.nand_page_size])
+        else:
+            page_data = bytearray(b"\xFF" * stride)
+        if len(page_data) < stride:
+            page_data.extend(b"\xFF" * (stride - len(page_data)))
+        off = sector_in_page * 512
+        if off + 512 > self.nand_page_size:
+            return False
+        page_data[off : off + 512] = data
+        self.block_sector_overrides[sector] = bytes(data)
+        self.nand_page_overrides[page] = bytes(page_data)
+        if not self._is_readonly_nand_page(page):
+            end_offset = page_offset + len(page_data)
+            if end_offset > len(self.nand_data):
+                self.nand_data.extend(b"\xFF" * (end_offset - len(self.nand_data)))
+            self.nand_data[page_offset:end_offset] = page_data
+        return True
 
     def _handle_fat16_cluster_read(self, pc: int) -> bool:
         if not self.fast_hooks or pc != 0x8017B4E0:
@@ -832,24 +961,24 @@ class HwEmuFastpathMixin:
         return True
 
     def _handle_portrait_blit_loop(self, pc: int) -> bool:
-        if not self.fast_hooks or pc != 0x8012C920:
+        if not self.fast_hooks or pc not in PORTRAIT_BLIT_LOOP_PCS:
             return False
         fb = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
-        row = self.uc.reg_read(UC_MIPS_REG_11) & 0xFFFFFFFF
-        col = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
-        dest_base = self.uc.reg_read(UC_MIPS_REG_8) & 0xFFFFFFFF
-        src_row_index = self.uc.reg_read(UC_MIPS_REG_10) & 0xFFFFFFFF
         src_base = self.uc.reg_read(UC_MIPS_REG_12) & 0xFFFFFFFF
+        if not self._is_mapped_ram_va(fb, 240 * 320 * 2):
+            fb = self._read_u32_va_safe(0x804A6C60) or 0
+        if not self._is_mapped_ram_va(src_base, 240 * 320 * 2):
+            src_base = 0x80825B90
         reverse = self._read_mem_va(0x804A6C64, 1) != 0
-        if row >= 320 or col >= 240:
-            return False
         if not self._is_mapped_ram_va(fb, 240 * 320 * 2):
             return False
-        for y in range(row, 320):
-            start_col = col if y == row else 0
-            src = (src_base + (src_row_index << 5) + start_col * 2) & 0xFFFFFFFF
-            count = 240 - start_col
-            byte_count = count * 2
+        if not self._is_mapped_ram_va(src_base, 240 * 320 * 2):
+            return False
+        dest_base = 0x12B10
+        src_row_index = 0
+        for _y in range(320):
+            src = (src_base + (src_row_index << 5)) & 0xFFFFFFFF
+            byte_count = 240 * 2
             data = self._read_block_va_safe(src, byte_count)
             if data is None or len(data) != byte_count:
                 return False
@@ -857,7 +986,7 @@ class HwEmuFastpathMixin:
                 dest = (fb + dest_base * 2) & 0xFFFFFFFF
                 data = b"".join(data[i : i + 2] for i in range(byte_count - 2, -2, -2))
             else:
-                dest = (fb + (dest_base + start_col) * 2) & 0xFFFFFFFF
+                dest = (fb + dest_base * 2) & 0xFFFFFFFF
             if not self._is_mapped_ram_va(dest, byte_count):
                 return False
             self.uc.mem_write(va_to_phys(dest), data)
@@ -865,7 +994,7 @@ class HwEmuFastpathMixin:
             dest_base = (dest_base - 240) & 0xFFFFFFFF
             src_row_index = (src_row_index + 15) & 0xFFFFFFFF
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-        self._trace_event("portrait-blit-loop", pc=pc, addr=fb, size=(320 - row) * 240, value=src_base)
+        self._trace_event("portrait-blit-loop", pc=pc, addr=fb, size=320 * 240, value=src_base)
         return True
 
     def _handle_cache_scan_tail(self, pc: int) -> bool:
@@ -1203,7 +1332,8 @@ class HwEmuFastpathMixin:
         self._write_u32_va(0x804BF490, 0)
         self._write_u32_va(0x804BF494, 0)
         if block_count == 0x800 and pages_per_block == 0x40:
-            self._write_u32_va(0x804BF464, 0x75200)
+            capacity = self._backing_sector_capacity()
+            self._write_u32_va(0x804BF464, (capacity or 0x75200) & 0xFFFFFFFF)
         self.uc.reg_write(UC_MIPS_REG_2, 0)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.ftl_scan_accel_count += 1

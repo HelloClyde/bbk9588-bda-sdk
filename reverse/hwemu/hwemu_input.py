@@ -301,6 +301,8 @@ class HwEmuInputMixin:
         return False
 
     def _apply_bda_launch(self, pc: int) -> bool:
+        if not self.legacy_direct_bda:
+            return False
         for launch in self.bda_launches:
             if launch.applied or launch.idle_hit != self.idle_loop_hits:
                 continue
@@ -361,6 +363,8 @@ class HwEmuInputMixin:
         return False
 
     def _capture_bda_launch_return(self, pc: int) -> None:
+        if not self.legacy_direct_bda:
+            return
         if pc != BDA_RETURN_PC:
             return
         for launch in self.bda_launches:

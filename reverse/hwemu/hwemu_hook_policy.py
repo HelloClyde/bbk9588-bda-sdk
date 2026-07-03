@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from hwemu_defs import BDA_RETURN_PC, KNOWN_C200_STORE_DELAY_BRANCH_PCS
+from hwemu_fastpaths import PORTRAIT_BLIT_LOOP_PCS
+from hwemu_surface import SURFACE_TRANSPARENT_BLIT_PCS
 
 
 BASE_FAST_CODE_HOOK_PCS = frozenset(
@@ -48,6 +50,8 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x80004CD4,
         0x80006BD0,
         0x80006BF8,
+        0x80006688,
+        0x80006834,
         0x800074A0,
         0x800098C0,
         0x8000C15C,
@@ -102,11 +106,20 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x800BC9CC,
         0x800BC2E0,
         0x800BD840,
+        0x800CE928,
+        0x800CE968,
         0x800CE9F0,
         0x800CEA30,
         0x800D3368,
         0x800D3634,
+        0x800DE150,
+        0x800DE188,
+        0x800DE190,
+        0x800DE1C0,
+        0x800DE1C8,
+        0x800DE200,
         0x800DE5BC,
+        0x81C0FA74,
         0x800E0D68,
         0x800E123C,
         0x800E1408,
@@ -114,7 +127,7 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x8001920C,
         0x8001925C,
         0x8012A6A8,
-        0x8012C920,
+        *PORTRAIT_BLIT_LOOP_PCS,
         0x80172840,
         0x8017B45C,
         0x8017B4E0,
@@ -125,6 +138,7 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x8012B064,
         0x8012BF64,
         0x8012BFE8,
+        *SURFACE_TRANSPARENT_BLIT_PCS,
         0x80173630,
         0x80173638,
         0x80173640,
@@ -132,6 +146,7 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x80173764,
         0x80173768,
         0x8017376C,
+        0x80173504,
         0x801737B8,
         0x80173F14,
         0x80173F1C,
@@ -179,7 +194,7 @@ class HwEmuHookPolicyMixin:
         pcs = set(self.trace_pcs)
         pcs.update(self.stop_pcs)
         pcs.update(call.return_pc for call in self.scheduled_calls)
-        if self.firmware_key_samples or self.touch_samples or self.bda_launches:
+        if self.firmware_key_samples or self.touch_samples or (self.legacy_direct_bda and self.bda_launches):
             pcs.add(BDA_RETURN_PC)
         if self.fast_hook_image_jals:
             pcs.update(self._image_jal_pcs())
