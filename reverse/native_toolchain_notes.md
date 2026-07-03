@@ -6,8 +6,22 @@ This is deliberately for native `*.bda`, not BB virtual-machine programs.
 
 - Most app files contain the standard startup signature at file offset `0x95f8`.
 - The startup stub is MIPS32 little-endian.
-- The system binary `C200.bin` copies 8 words from `0x80281680` to `0x81c00000`.
-  Those words point at small system/libgcc helper routines around `0x800ab370`.
+- The system binary `C200.bin` is loaded at `0x80004000`. Use that base when
+  converting virtual addresses to file offsets.
+- The system binary copies 8 words from `0x80281680` to `0x81c00000`.
+  These are the native BDA runtime table seeds, not static helper stubs.
+  Current values from the live C200 image are:
+
+```text
+0x81c00000 = 0x00000000
+0x81c00004 = 0x80280e60   GUI/window/control table
+0x81c00008 = 0x80280dd0   stream/file/resource table
+0x81c0000c = 0x80280c60   secondary system table
+0x81c00010 = 0x8028169c   memory table
+0x81c00014 = 0x80280d30   resource/DLX-related table used by startup
+0x81c00018 = 0x00000000
+0x81c0001c = 0x80058574
+```
 - The system then copies the native BDA code image to `0x81c00020` and calls it with `jalr`.
   The normal app entry mapping is therefore:
 

@@ -255,6 +255,7 @@ def validate_press(row: dict[str, object], expect_no_block: bool) -> list[str]:
     require(row.get("returncode") == 0, failures, "press emulator command failed")
     require(len(execution.get("invalid", [])) == 0, failures, "press recorded invalid accesses")
     require(trace_count(execution, "0x8001a8fc") >= 1, failures, "press did not reach touch IRQ path")
+    require(trace_count(execution, "0x8001ac40") >= 1, failures, "press did not reach SADC coordinate sampler")
     require(trace_count(execution, "0x8000b3dc") >= 1, failures, "press did not post GUI/input queue event")
     require(trace_count(execution, "0x800dd380") >= 1, failures, "press did not reach GUI dispatch")
     require(input_global(execution, "touch_flag_8048dd04") == "0x00000001", failures, "press did not leave touch-down flag set")

@@ -19,9 +19,9 @@ implement the model incrementally.
 ## Current Milestone
 
 The emulator can now cold-boot the real `C200.bin` from `0x80004000` with the
-combined raw NAND image, pass the two observed touchscreen calibration points,
-close the time-change dialog through the modeled touch controller, and reach the
-visible 240x320 portrait main menu.
+combined raw NAND image, pass the four C200 touchscreen calibration crosshair
+points, close the time-change dialog through the modeled touch controller, and
+reach the visible 240x320 portrait main menu.
 
 The current passing cold-boot regression is:
 
@@ -50,6 +50,83 @@ This is not yet a final minimal-hook emulator. The main remaining areas are the
 FTL/NAND write model, scheduler/timer/interrupt fidelity, and replacing broad
 diagnostic PC accelerators with either device behavior or documented equivalent
 loop/function accelerators.
+
+## Module Layout
+
+The emulator is split into small hardware-domain modules so the main harness can
+stay focused on memory mapping, hook dispatch, and run control:
+
+- `bbk9588_hwemu.py`: main `Bbk9588HwEmu` class, Unicorn setup, memory mapping,
+  profile seeding, and the legacy script entry point that forwards to
+  `hwemu_cli.py`.
+- `hwemu_cli.py`: command-line parser, presets, debug-report generation, and
+  framebuffer dump orchestration for `bbk9588_hwemu.py`.
+- `hwemu_defs.py`: constants and dataclasses shared by the emulator and tools.
+- `hwemu_utils.py`: parser helpers, address conversion, file lookup, and small
+  inspection utilities.
+- `hwemu_engine.py`: Unicorn hook installation, code/memory hook dispatch,
+  delay-slot helpers, exception recovery, MMIO observation, and the run loop.
+- `hwemu_hook_policy.py`: fast code-hook PC selection and image scans used to
+  keep diagnostic/accelerator hooks narrow when `--fast-hooks` is enabled.
+- `hwemu_state.py`: emulator checkpoint save/load plus diagnostic snapshots for
+  registers, MMIO, scheduler, input state, watch ranges, and BDA runtime data.
+- `hwemu_framebuffer.py`: RGB565 scanning, orientation, and PNG/PPM encoding.
+- `hwemu_surface.py`: firmware surface helpers, LCD mirroring, framebuffer dirty
+  tracking, and surface drawing accelerators.
+- `hwemu_input.py`: scheduled key/touch/controller events, BDA launch/event
+  helpers, and modeled touchscreen latch/global writes.
+- `hwemu_fastpaths.py`: behavior-preserving hot-path accelerators for block/FAT
+  access, resource cache copies, boot/logo blits, and tight memory loops.
+- `hwemu_devices.py`: MMIO-side device models, including NAND, SADC touch ADC,
+  USB status, LCD/blit status, UART, GPIO levels, and interrupt side effects.
+- `hwemu_interrupts.py`: TCU/periodic interrupt bookkeeping, pending IRQ
+  refresh, modeled WAIT-service dispatch, and interrupt return helpers.
+- `hwemu_tasks.py`: task-table snapshots, scheduler task-event capture, and
+  modeled task context save/restore helpers.
+- `hwemu_trace.py`: trace/event ring-buffer helpers, selected-PC snapshots,
+  call tracing, and blit descriptor capture.
+- `hwemu_frontend.py`: local HTTP/WebSocket frontend wrapper around one emulator
+  instance.
+- `hwemu_frontend_ws.py`: WebSocket handshake, frame encoding, and frame
+  decoding helpers shared by the frontend handler and regression tests.
+- `hwemu_frontend_server.py`: HTTP endpoints and WebSocket request loop for the
+  frontend server.
+- `hwemu_frontend_state.py`: long-lived frontend emulator state, background run
+  worker, input queues, frame cache, and frontend coordinate mapping.
+- `run_hwemu_regressions.py`: refactor regression wrapper covering syntax,
+  legacy CLI execution, and a menu-checkpoint framebuffer smoke. Use
+  `--menu-smoke` for the slower menu-touch interaction smoke.
+
+After refactors, run at least the syntax and short cold-boot regressions:
+
+```powershell
+python .\reverse\hwemu\run_hwemu_regressions.py
+
+python .\reverse\hwemu\bbk9588_hwemu.py `
+  --profile bbk9588-uboot `
+  --image ".\系统\数据\C200.bin" `
+  --base 0x80004000 `
+  --pc 0x80004000 `
+  --ram-mb 160 `
+  --json-out .\build\hwemu_refactor_short_boot.json `
+  --fb-dump .\build\hwemu_refactor_short_boot.png `
+  --max-seconds 5 `
+  --steps 180000000 `
+  --fast-hooks `
+  --nand-loop-accelerator `
+  --resource-cache16-accelerator `
+  --idle-stop-hits 30000 `
+  --no-block-image `
+  --nand-image .\build\bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin `
+  --trace-limit 1200 `
+  --fb-width 240 `
+  --fb-height 320 `
+  --quiet
+```
+
+Run regression wrappers serially in the same checkout. They share `__pycache__`
+and `build/hwemu_regression_summary.json`, so parallel runs on Windows can create
+spurious `py_compile` failures while the emulator cases themselves keep passing.
 
 ## Current Hardware Assumptions
 
@@ -83,18 +160,96 @@ python .\reverse\hwemu\hwemu_frontend.py --host 127.0.0.1 --port 9588
 Then open `http://127.0.0.1:9588/`. The frontend keeps one emulator instance
 alive, displays the current 240x320 RGB565 framebuffer, and exposes coarse
 step/run, key, and touch controls. The boot and continuous-run buttons use a
-background worker so the browser can keep polling status and refreshing the
-framebuffer while the CPU is running. Current input injection is still based on
-the observed C200 idle-loop sampler hooks, so it is useful for UI experiments
-but not yet a complete interrupt/timer model.
+background worker. Status and framebuffer updates are pushed over WebSocket;
+`/screen.png` remains only as a diagnostic fallback endpoint.
+
+The frontend disables `--auto-calibration` by default. When enabled, it is a
+controller-level cold-boot assist, not GUI-object injection: it feeds the four
+C200 calibration crosshair touches `(10,10)`, `(230,10)`, `(230,310)`, and
+`(10,310)`, then presses and releases the time-change dialog's `no` button at
+`(150,205)`. Mouse and touchscreen input are queued as FIFO down/up events.
+Browser-origin input uses
+`run:true`, so if no background worker is active the backend starts a short
+`input` worker instead of leaving the event stuck in the queue. A quick click
+still crosses at least one emulator timeslice between press and release. The
+browser sends rendered canvas coordinates (`display_x/display_y`) plus the
+current canvas size; the backend converts them to raw 240x320 touchscreen
+coordinates with the active framebuffer orientation. Direct scripts can keep
+using raw `x/y` touch coordinates through `/api/command` and `/api/touch`.
+
+The virtual keypad uses the C200 six-key scanner codes currently proven from
+the `0x8005cecc` dispatcher and hardware testing: `4 = up`, `5 = down`,
+`6 = left`, `7 = right`, `9 = cancel/back`, and `10 = confirm`. Frontend button
+and keyboard input now send separate down/up events over WebSocket. The default
+key delivery path is
+now `--key-input-mode hardware`: it changes modeled GPIO levels, latches the
+matching GPIO flag bit, asserts the JZ GPIO main IRQ, and lets the C200
+GPIO-subirq path call the real key ISR at `0x8001b620`. `sampler` and `both`
+remain diagnostic compatibility modes for comparing against the older
+`0x8005ce48` sampler probe.
+
+`--fast-hooks` now defaults to `--store-delay-branch-hooks known`, a verified
+C200 store-delay branch PC set collected from the cold-boot/menu regressions.
+This avoids registering every store-delay branch in `C200.bin` while keeping the
+currently exercised branch-delay recovery points. Use `--store-delay-branch-hooks
+all` as a diagnostic fallback when investigating a new path, or `off` to expose
+missing branch-delay/device modeling. The touchscreen ADC mapping is derived
+from C200's four calibration reference points rather than a screen-bias fudge.
+Recoverable-instruction register snapshots are recorded only after the fast
+store-delay branch handler declines a PC. Branches that are fully modeled in
+Python do not need a Unicorn exception-recovery snapshot; this keeps the verified
+cold-menu path from reading the full MIPS register file on every accelerated
+delay-slot branch.
+The verified portrait framebuffer blit is modeled a row at a time, including
+the 16-bit pixel reversal mode, so the framebuffer bytes match the per-pixel
+firmware loop without paying one Python callback/write per pixel. Surface LCD
+mirroring similarly reads the mirror configuration once per surface helper call
+and mirrors spans/blocks by row instead of re-reading the same globals for each
+pixel.
+The frontend also enables the verified NAND data-port loop accelerator by
+default; use `--no-nand-loop-accelerator` only for diagnostics.
 
 Useful frontend endpoints while debugging:
 
-- `POST /api/run-start?name=boot&steps=30000000&chunk=100000`
-- `POST /api/run-start?name=continuous&steps=0&chunk=100000`
+- `POST /api/run-start?name=boot&steps=6000000&chunk=250000`
+- `POST /api/run-start?name=continuous&steps=0&chunk=250000`
 - `POST /api/stop`
 - `POST /api/step?steps=250000`
-- `GET /screen.png`
+- `GET /api/status`
+- `GET /screen.png` (diagnostic fallback; the frontend canvas uses WebSocket frames)
+
+The status panel and `/api/status` report `reset_elapsed_seconds`,
+`run_elapsed_seconds`, and job step rate so cold-boot progress can be judged
+without polling a slow diagnostic endpoint.
+Frontend trace PCs run in count-only mode: the emulator still counts the
+calibration/input checkpoints needed by the UI and regressions, but it skips the
+per-hit register, stack, and pointed-memory snapshots reserved for CLI
+diagnostics.
+The same frontend hot-event suppression keeps surface draw counters but omits
+per-draw surface event dictionaries; CLI smoke/probe runs still keep the detailed
+per-mode surface diagnostics.
+The frontend input box defaults to `250000` steps per worker chunk, and
+`--worker-slice-steps` now defaults to the same value so the backend does not
+split each requested frontend chunk into many smaller status-publish slices.
+`run_hwemu_regressions.py` includes `frontend-http-ws-smoke`, which binds an
+ephemeral local HTTP server, checks `/api/status`, completes a WebSocket
+handshake, verifies that the first framebuffer arrives as a binary PNG frame
+over WS, sends a queued key command over WS, starts a finite 250000-step
+background job, and verifies display-coordinate touchscreen down/up events each
+trigger the short input worker and drain the touch queue.
+It also includes `frontend-cold-menu-smoke`, which starts from a fresh C200
+reset through the frontend worker, runs 6000000 steps in 250000-step chunks,
+and verifies that controller-level auto calibration reaches `done` with a
+visible main-menu-scale framebuffer. The same smoke then sends a hardware
+right-key press/release through the frontend state and verifies that the menu
+framebuffer changes while remaining nonblank, then sends a display-coordinate
+touch down/release pair to the bottom menu area. The touch check verifies IRQ12
+at `0x8001a8fc`, SADC coordinate sampling at `0x8001ac40`, GUI/input queue
+posting at `0x8000b3dc`, GUI dispatch at `0x800dd380`, and a changed
+framebuffer after the click.
+The generic `0x8008f9a4/0x8008fc50/0x8008fd80` window-touch handlers are still
+diagnostic trace points rather than required frontend assertions; the currently
+verified menu path changes through the lower GUI dispatch/surface redraw chain.
 
 Run the current U-Boot + C200 path:
 
@@ -217,7 +372,11 @@ Latest useful trace:
   Example: `--gpio-pulse 0x10010100:0x40000@2:1`.
 - `--key-pulse code@idle_hit[:reads]` injects one of the currently known
   active-low key scanner codes. Confirmed scanner codes are `4`, `5`, `6`,
-  `7`, `9`, and `10`.
+  `7`, `9`, and `10`. Static C200 evidence maps `4/5/6/7` to virtual-key
+  `0x26/0x28/0x25/0x27` (up/down/left/right). Code `9` is consumed as the
+  confirm/enter key in multiple scanner paths; code `10` is treated as the
+  remaining cancel/back key until a full hardware keyboard interrupt path can
+  prove a more precise label.
 - `--trace-pc addr` records hit counts and register snapshots for selected
   virtual PCs. This is useful for checking whether a firmware service path is
   reached without relying on the rolling `last_calls` buffer. The snapshot
@@ -559,7 +718,7 @@ make that loop interactive:
   checks the yes/no button rectangles and queues `event=0x66`, while
   `0x800ca8c0 -> 0x800cad20 -> 0x800cee94 -> 0x800d099c` handles the later
   release. `build/c200_modal_release_after_highlight.png` confirms that
-  releasing `(180,220)` after the button highlight closes the dialog and lands
+  releasing `(150,205)` after the button highlight closes the dialog and lands
   on the `查询典 / Searching` main menu.
 - `reverse/hwemu/run_time_dialog_to_menu_smoke.py` captures that dialog
   interaction as a hardware-touch regression. It starts from
@@ -570,7 +729,8 @@ make that loop interactive:
   button state before the release event.
 - `reverse/hwemu/run_cold_boot_to_menu_smoke.py` runs the current longest
   system regression: raw `C200.bin` at `0x80004000`, combined raw NAND, the
-  two observed calibration touches `(10,10)` and `(229,10)`, the time-change
+  four C200 calibration touches `(10,10)`, `(230,10)`, `(230,310)`, and
+  `(10,310)`, the time-change
   dialog `否` button, the visible main menu, and then an additional settle
   phase back to scheduler/input polling. Current archived run:
   `build/hwemu_cold_boot_to_menu_check3_summary.json` with final screenshot
@@ -634,6 +794,16 @@ make that loop interactive:
   bit 28, code `7` = GPIO B bit 27, code `6` = GPIO B bit 29, code `9` =
   GPIO C bit 27 (`0x10010200 & 0x08000000`), code `4` = GPIO D bit 21
   (`0x10010300 & 0x00200000`);
+- `run_hwemu_regressions.py` includes `key-controller-scan`, which drives key
+  code `7` through the GPIO controller state (`0x10010100 -> 0x70040000`) and
+  calls the real scanner at `0x8001b464`; the expected return is
+  `0x00000007`. Fast-hook mode now automatically hooks scheduled-call return
+  PCs so this diagnostic does not require a manual `--trace-pc 0x80008a8c`;
+- `run_hwemu_regressions.py` also includes `key-controller-irq`, which does not
+  call the scanner directly. It latches GPIOB bit27 at `0x10010180`, asserts
+  main IRQ 27, dispatches subirq `0x6b`, and verifies that WAIT-service reaches
+  the real key ISR `0x8001b620`. The resulting framebuffer moves from the
+  query dictionary menu item to the E-pets item in the current checkpoint;
 - the current key table is at `0x806c5d10`; nonzero entries observed at indices
   `7`, `8`, `9`, `62`, and `63`
 - the key pending state is a positive bitset, not active-low state. For example,

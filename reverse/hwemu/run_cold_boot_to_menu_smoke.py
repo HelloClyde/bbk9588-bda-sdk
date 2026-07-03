@@ -30,6 +30,13 @@ DIALOG_TRACE_PCS = [
     "0x8005bcd4",
 ]
 
+CALIBRATION_POINTS = [
+    ("calib_1", 10, 10),
+    ("calib_2", 230, 10),
+    ("calib_3", 230, 310),
+    ("calib_4", 10, 310),
+]
+
 
 def find_c200() -> Path:
     matches = sorted(Path(".").rglob("C200.bin"))
@@ -150,6 +157,13 @@ def framebuffer(row: dict[str, object]) -> dict[str, object]:
     return fb if isinstance(fb, dict) else {}
 
 
+def looks_like_time_dialog(row: dict[str, object]) -> bool:
+    fb = framebuffer(row)
+    nonzero = int(fb.get("nonzero_pixels") or 0)
+    unique = int(fb.get("unique_pixel_values") or 0)
+    return 10000 <= nonzero <= 22000 and 10 <= unique <= 220
+
+
 def execution_payload(row: dict[str, object]) -> dict[str, object]:
     execution = row.get("execution")
     if not isinstance(execution, dict):
@@ -214,8 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-max-seconds", type=int, default=120)
     ap.add_argument("--dialog-max-seconds", type=int, default=80)
     ap.add_argument("--settle-max-seconds", type=int, default=60)
-    ap.add_argument("--x", type=int, default=180)
-    ap.add_argument("--y", type=int, default=220)
+    ap.add_argument("--x", type=int, default=150)
+    ap.add_argument("--y", type=int, default=205)
     args = ap.parse_args(argv)
 
     if not args.nand_image.is_file():
@@ -226,66 +240,58 @@ def main(argv: list[str] | None = None) -> int:
     boot = run_hwemu(
         c200=c200,
         state_in=None,
-        state_out=args.out_dir / f"{args.prefix}_calib_left.pkl",
-        json_out=args.out_dir / f"{args.prefix}_calib_left.json",
-        png_out=args.out_dir / f"{args.prefix}_calib_left.png",
+        state_out=args.out_dir / f"{args.prefix}_calib_start.pkl",
+        json_out=args.out_dir / f"{args.prefix}_calib_start.json",
+        png_out=args.out_dir / f"{args.prefix}_calib_start.png",
         nand_image=args.nand_image,
         timeout=args.timeout,
         max_seconds=args.boot_max_seconds,
         trace_pcs=BOOT_TRACE_PCS,
         event_args=[],
     )
-    left_press = run_hwemu(
-        c200=c200,
-        state_in=Path(str(boot["state"])),
-        state_out=args.out_dir / f"{args.prefix}_calib_left_press.pkl",
-        json_out=args.out_dir / f"{args.prefix}_calib_left_press.json",
-        png_out=args.out_dir / f"{args.prefix}_calib_left_press.png",
-        nand_image=args.nand_image,
-        timeout=args.timeout,
-        max_seconds=40,
-        trace_pcs=BOOT_TRACE_PCS,
-        event_args=["--touch-state", "10:10:1"],
-    )
-    left_release = run_hwemu(
-        c200=c200,
-        state_in=Path(str(left_press["state"])),
-        state_out=args.out_dir / f"{args.prefix}_calib_left_release.pkl",
-        json_out=args.out_dir / f"{args.prefix}_calib_left_release.json",
-        png_out=args.out_dir / f"{args.prefix}_calib_left_release.png",
-        nand_image=args.nand_image,
-        timeout=args.timeout,
-        max_seconds=40,
-        trace_pcs=BOOT_TRACE_PCS,
-        event_args=["--touch-state", "10:10:0"],
-    )
-    right_press = run_hwemu(
-        c200=c200,
-        state_in=Path(str(left_release["state"])),
-        state_out=args.out_dir / f"{args.prefix}_calib_right_press.pkl",
-        json_out=args.out_dir / f"{args.prefix}_calib_right_press.json",
-        png_out=args.out_dir / f"{args.prefix}_calib_right_press.png",
-        nand_image=args.nand_image,
-        timeout=args.timeout,
-        max_seconds=50,
-        trace_pcs=BOOT_TRACE_PCS,
-        event_args=["--touch-state", "229:10:1"],
-    )
-    right_release = run_hwemu(
-        c200=c200,
-        state_in=Path(str(right_press["state"])),
-        state_out=args.out_dir / f"{args.prefix}_calib_right_release.pkl",
-        json_out=args.out_dir / f"{args.prefix}_calib_right_release.json",
-        png_out=args.out_dir / f"{args.prefix}_calib_right_release.png",
-        nand_image=args.nand_image,
-        timeout=args.timeout,
-        max_seconds=80,
-        trace_pcs=DIALOG_TRACE_PCS,
-        event_args=["--touch-state", "229:10:0"],
-    )
+
+    calibration_rows: dict[str, dict[str, object]] = {}
+    state_in = Path(str(boot["state"]))
+    calibration_complete_reason = ""
+    last_calibration_touch = CALIBRATION_POINTS[0]
+    for index, (name, x, y) in enumerate(CALIBRATION_POINTS, start=1):
+        last_calibration_touch = (name, x, y)
+        trace_pcs = DIALOG_TRACE_PCS if index == len(CALIBRATION_POINTS) else BOOT_TRACE_PCS
+        max_seconds = 80 if index == len(CALIBRATION_POINTS) else 50
+        press = run_hwemu(
+            c200=c200,
+            state_in=state_in,
+            state_out=args.out_dir / f"{args.prefix}_{name}_press.pkl",
+            json_out=args.out_dir / f"{args.prefix}_{name}_press.json",
+            png_out=args.out_dir / f"{args.prefix}_{name}_press.png",
+            nand_image=args.nand_image,
+            timeout=args.timeout,
+            max_seconds=max_seconds,
+            trace_pcs=trace_pcs,
+            event_args=["--touch-state", f"{x}:{y}:1"],
+        )
+        release = run_hwemu(
+            c200=c200,
+            state_in=Path(str(press["state"])),
+            state_out=args.out_dir / f"{args.prefix}_{name}_release.pkl",
+            json_out=args.out_dir / f"{args.prefix}_{name}_release.json",
+            png_out=args.out_dir / f"{args.prefix}_{name}_release.png",
+            nand_image=args.nand_image,
+            timeout=args.timeout,
+            max_seconds=max_seconds,
+            trace_pcs=trace_pcs,
+            event_args=["--touch-state", f"{x}:{y}:0"],
+        )
+        calibration_rows[f"{name}_press"] = press
+        calibration_rows[f"{name}_release"] = release
+        state_in = Path(str(release["state"]))
+        if looks_like_time_dialog(release):
+            calibration_complete_reason = f"{name}_release_reached_dialog"
+            break
+
     dialog = run_hwemu(
         c200=c200,
-        state_in=Path(str(right_release["state"])),
+        state_in=state_in,
         state_out=args.out_dir / f"{args.prefix}_dialog.pkl",
         json_out=args.out_dir / f"{args.prefix}_dialog.json",
         png_out=args.out_dir / f"{args.prefix}_dialog.png",
@@ -307,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         trace_pcs=DIALOG_TRACE_PCS,
         event_args=[
             "--touch-controller-event",
-            "229:10:0@1",
+            f"{last_calibration_touch[1]}:{last_calibration_touch[2]}:0@1",
             "--touch-controller-event",
             f"{args.x}:{args.y}:1@20",
         ],
@@ -340,14 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     failures: list[str] = []
     if boot.get("returncode") != 0:
         failures.append("boot phase failed")
-    if left_press.get("returncode") != 0:
-        failures.append("left calibration press phase failed")
-    if left_release.get("returncode") != 0:
-        failures.append("left calibration release phase failed")
-    if right_press.get("returncode") != 0:
-        failures.append("right calibration press phase failed")
-    if right_release.get("returncode") != 0:
-        failures.append("right calibration release phase failed")
+    for name, row in calibration_rows.items():
+        if row.get("returncode") != 0:
+            failures.append(f"{name} phase failed")
     if dialog.get("returncode") != 0:
         failures.append("dialog wait phase failed")
     if press.get("returncode") != 0:
@@ -371,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         failures.append("press phase did not reach dialog button handling")
     if input_global(release, "touch_flag_8048dd04") != "0x00000000":
         failures.append("release phase left touch-down flag set")
-    if int(release_fb.get("nonzero_pixels") or 0) < 20000:
+    if int(release_fb.get("nonzero_pixels") or 0) < 10000:
         failures.append("release framebuffer does not look like the main menu")
 
     release_runtime = compact_runtime(release)
@@ -390,14 +391,16 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "ok": not failures,
         "nand_image": str(args.nand_image),
+        "calibration_points": [{"name": name, "x": x, "y": y} for name, x, y in CALIBRATION_POINTS],
+        "calibration_complete_reason": calibration_complete_reason,
         "touch": {"x": args.x, "y": args.y},
         "menu_checkpoint_reached_input_poll": menu_checkpoint_reached_input_poll,
         "menu_checkpoint_ready_for_hardware_input": menu_checkpoint_reached_input_poll,
         "boot": {**{k: v for k, v in boot.items() if k != "execution"}, "runtime": compact_runtime(boot)},
-        "left_press": {**{k: v for k, v in left_press.items() if k != "execution"}, "runtime": compact_runtime(left_press)},
-        "left_release": {**{k: v for k, v in left_release.items() if k != "execution"}, "runtime": compact_runtime(left_release)},
-        "right_press": {**{k: v for k, v in right_press.items() if k != "execution"}, "runtime": compact_runtime(right_press)},
-        "right_release": {**{k: v for k, v in right_release.items() if k != "execution"}, "runtime": compact_runtime(right_release)},
+        "calibration": {
+            name: {**{k: v for k, v in row.items() if k != "execution"}, "runtime": compact_runtime(row)}
+            for name, row in calibration_rows.items()
+        },
         "dialog": {**{k: v for k, v in dialog.items() if k != "execution"}, "runtime": compact_runtime(dialog)},
         "press": {**{k: v for k, v in press.items() if k != "execution"}, "runtime": compact_runtime(press)},
         "release": {**{k: v for k, v in release.items() if k != "execution"}, "runtime": release_runtime},

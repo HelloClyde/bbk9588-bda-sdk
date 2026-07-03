@@ -141,8 +141,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prefix", default="hwemu_time_dialog_to_menu")
     ap.add_argument("--timeout", type=int, default=150)
     ap.add_argument("--max-seconds", type=int, default=80)
-    ap.add_argument("--x", type=int, default=180)
-    ap.add_argument("--y", type=int, default=220)
+    ap.add_argument("--x", type=int, default=150)
+    ap.add_argument("--y", type=int, default=205)
+    ap.add_argument("--stale-touch-x", type=int, default=10)
+    ap.add_argument("--stale-touch-y", type=int, default=310)
     args = ap.parse_args(argv)
 
     if not args.state_in.is_file():
@@ -163,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.max_seconds,
         event_args=[
             "--touch-controller-event",
-            "229:10:0@1",
+            f"{args.stale_touch_x}:{args.stale_touch_y}:0@1",
             "--touch-controller-event",
             f"{args.x}:{args.y}:1@20",
         ],
@@ -196,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         "ok": not failures,
         "state_in": str(args.state_in),
         "nand_image": str(args.nand_image),
+        "stale_touch_release": {"x": args.stale_touch_x, "y": args.stale_touch_y},
         "touch": {"x": args.x, "y": args.y},
         "press": {k: v for k, v in press.items() if k != "execution"},
         "release": {k: v for k, v in release.items() if k != "execution"},
