@@ -375,9 +375,9 @@ Path(r'{json_out}').write_text(json.dumps(out, indent=2), encoding='utf-8')
             if data.get("panel_cases", {}).get(name) != expected:
                 failures.append(f"{name} mapped to {data.get('panel_cases', {}).get(name)}, expected {expected}")
         expected_touch_cases = {
-            "rot180_visible_topleft": [239, 319],
-            "rot180_visible_bottomright": [0, 0],
-            "rot180_scaled_bottomright": [0, 0],
+            "rot180_visible_topleft": [0, 0],
+            "rot180_visible_bottomright": [239, 319],
+            "rot180_scaled_bottomright": [239, 319],
         }
         for name, expected in expected_touch_cases.items():
             if data.get("touch_cases", {}).get(name) != expected:
@@ -391,7 +391,7 @@ Path(r'{json_out}').write_text(json.dumps(out, indent=2), encoding='utf-8')
                 failures.append(
                     f"{name} mapped to {data.get('logical_to_visible_cases', {}).get(name)}, expected {expected}"
                 )
-        if data.get("queued") != [[239, 319, True], [0, 0, False]]:
+        if data.get("queued") != [[0, 0, True], [239, 319, False]]:
             failures.append(f"display touch command queued {data.get('queued')}")
         if data.get("hardware_touch_globals_unchanged") is not True:
             failures.append("hardware touch path wrote high-level firmware touch globals directly")
@@ -803,13 +803,13 @@ args = argparse.Namespace(
 )
 state = FrontendState(args)
 started = time.perf_counter()
-state.run_start('cold-menu-smoke', 6_000_000, 250_000)
+state.run_start('cold-menu-smoke', 15_000_000, 250_000)
 deadline = time.time() + 45
 snap = state.snapshot()
 while time.time() < deadline:
     snap = state.snapshot()
     job = snap.get('job') or {{}}
-    if job.get('done_steps', 0) >= 6_000_000 and not snap.get('running'):
+    if job.get('done_steps', 0) >= 15_000_000 and not snap.get('running'):
         break
     time.sleep(0.05)
 state.stop()
@@ -826,7 +826,7 @@ touch_irq_before = state.emu.trace_pc_counts.get(0x8001A8FC, 0)
 touch_adc_before = state.emu.trace_pc_counts.get(0x8001AC40, 0)
 touch_queue_before = state.emu.trace_pc_counts.get(0x8000B3DC, 0)
 touch_gui_before = state.emu.trace_pc_counts.get(0x800DD380, 0)
-touch_display = (220, 300)
+touch_display = (210, 287)
 touch_point = display_to_touch_point(touch_display[0], touch_display[1], 240, 320, 'rot180')
 state.command({{
     'op': 'touch',
@@ -891,7 +891,7 @@ Path({str(json_out)!r}).write_text(json.dumps(out, indent=2), encoding='utf-8')
     failures: list[str] = []
     if row["ok"] and json_out.is_file():
         data = json.loads(json_out.read_text(encoding="utf-8"))
-        if data.get("job_done_steps") != 6_000_000:
+        if data.get("job_done_steps") != 15_000_000:
             failures.append(f"frontend cold-menu job completed {data.get('job_done_steps')} steps")
         if data.get("job_chunk_steps") != 250_000:
             failures.append(f"frontend auto-calibration chunk is {data.get('job_chunk_steps')}")

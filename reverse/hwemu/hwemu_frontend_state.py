@@ -152,12 +152,11 @@ def display_to_touch_point(
     touch_height: int = 320,
 ) -> tuple[int, int]:
     """Map visible canvas coordinates to C200's touchscreen coordinate space."""
-    return display_to_raw_point(
+    return display_to_panel_point(
         display_x,
         display_y,
         display_width,
         display_height,
-        orientation,
         touch_width,
         touch_height,
     )
@@ -417,6 +416,11 @@ class FrontendState:
         progress = self._auto_progress_locked()
         stage = self.auto_calibration_stage
         in_touch_wait_helper = 0x80017B74 <= pc <= 0x80017BE4
+        if 0 < stage < len(AUTO_CALIBRATION_TARGETS) * 2 and stage % 2 == 0:
+            if self._auto_dialog_ready_locked(pc, progress):
+                self.auto_calibration_stage = len(AUTO_CALIBRATION_TARGETS) * 2
+                self.auto_calibration_last_stage_step = progress
+                stage = self.auto_calibration_stage
         if stage < len(AUTO_CALIBRATION_TARGETS) * 2:
             point_index = stage // 2
             target_x, target_y = AUTO_CALIBRATION_TARGETS[point_index]
@@ -427,7 +431,10 @@ class FrontendState:
                     self.auto_calibration_stage = stage + 1
                     self.auto_calibration_last_stage_step = progress
                 return
-            if self._auto_calibration_capture_seen_locked(point_index, pc):
+            if (
+                self._auto_calibration_capture_seen_locked(point_index, pc)
+                or progress != self.auto_calibration_last_stage_step
+            ):
                 self.emu.set_touch_controller_state(target_x, target_y, False, pc=pc)
                 self.auto_calibration_stage = stage + 1
                 self.auto_calibration_last_stage_step = progress
