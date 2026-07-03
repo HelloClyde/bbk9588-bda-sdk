@@ -463,7 +463,12 @@ class FrontendState:
         ):
             self.auto_calibration_stage = 10
             self.auto_calibration_last_stage_step = progress
-        elif stage == 10 and self._auto_dialog_press_handled_locked():
+        elif stage == 10 and (
+            self._auto_dialog_press_handled_locked()
+            or progress - self.auto_calibration_last_stage_step >= 500_000
+        ):
+            if not self._auto_dialog_press_handled_locked():
+                self.emu._trace_event("auto-dialog-release-timeout", pc=pc, value=progress)
             self.emu.set_touch_controller_state(dialog_x, dialog_y, False, pc=pc)
             self.auto_calibration_stage = 11
             self.auto_calibration_last_stage_step = progress

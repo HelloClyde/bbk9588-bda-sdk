@@ -137,6 +137,7 @@ class HwEmuEngineMixin:
         add(0x80173908, self._on_stack_clear32_delay_loop_code)
         add(0x80173C30, self._on_stack_clear32_delay_loop_code)
         add(0x8024227C, self._on_zero_pad_delay_loop_code)
+        add(0x81C0756C, self._on_bda_bounded_cstr_search_code)
         for pc in LFN_COPY_LOOP_PCS:
             add(pc, self._on_lfn_copy_code)
         for pc in FS_DIR_SCAN_BRANCH_PCS:
@@ -200,6 +201,9 @@ class HwEmuEngineMixin:
 
     def _on_zero_pad_delay_loop_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_zero_pad_delay_loop, uc, address, size, user_data)
+
+    def _on_bda_bounded_cstr_search_code(self, uc, address: int, size: int, user_data) -> None:
+        self._on_direct_fast_code(self._handle_bda_bounded_cstr_search, uc, address, size, user_data)
 
     def _on_fs_dir_scan_branch_code(self, uc, address: int, size: int, user_data) -> None:
         if address in FS_DIR_SCAN_CAPTURE_PCS:
@@ -320,6 +324,8 @@ class HwEmuEngineMixin:
         if self.profile == "bbk9588-uboot" and self._handle_busy_delay(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_resource_cache16_hit(address):
+            return
+        if self.profile == "bbk9588-uboot" and self._handle_bda_bounded_cstr_search(address):
             return
         if self.profile == "bbk9588-uboot" and self._handle_fat16_cluster_read(address):
             return

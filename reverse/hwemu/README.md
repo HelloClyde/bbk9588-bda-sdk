@@ -51,6 +51,19 @@ FTL/NAND write model, scheduler/timer/interrupt fidelity, and replacing broad
 diagnostic PC accelerators with either device behavior or documented equivalent
 loop/function accelerators.
 
+The current web-level app smoke can also cold-boot through the frontend, select
+the bundled Album app from the main carousel, launch it with the modeled key
+controller, and verify that the first JPEG thumbnail renders in the app's photo
+grid:
+
+```powershell
+python .\reverse\hwemu\run_album_web_smoke.py --prefix album_web_smoke_final
+```
+
+This path depends on the equivalent fastpath for Album's bounded C-string search
+helper at `0x81c0756c`; the original helper scans a large RAM window and is
+correct but too slow to run instruction-by-instruction in the web smoke.
+
 ## Module Layout
 
 The emulator is split into small hardware-domain modules so the main harness can
@@ -96,6 +109,9 @@ stay focused on memory mapping, hook dispatch, and run control:
 - `run_hwemu_regressions.py`: refactor regression wrapper covering syntax,
   legacy CLI execution, and a menu-checkpoint framebuffer smoke. Use
   `--menu-smoke` for the slower menu-touch interaction smoke.
+- `run_album_web_smoke.py`: frontend HTTP/WebSocket smoke that cold-boots,
+  selects the Album app, enters its grid, taps the first thumbnail, and writes a
+  report plus contact-sheet PNG into `build/`.
 
 After refactors, run at least the syntax and short cold-boot regressions:
 

@@ -30,6 +30,59 @@ from hwemu_utils import va_to_phys
 
 
 class HwEmuFastpathMixin:
+    def _read_c_string_bytes_va_safe(self, va: int, limit: int = 4096) -> bytes | None:
+        if not self._is_mapped_ram_va(va, 1):
+            return None
+        out = bytearray()
+        for offset in range(max(0, limit)):
+            data = self._read_block_va_safe((va + offset) & 0xFFFFFFFF, 1)
+            if data is None:
+                return None
+            value = data[0]
+            if value == 0:
+                return bytes(out)
+            out.append(value)
+        return None
+
+    def _handle_bda_bounded_cstr_search(self, pc: int) -> bool:
+        """Accelerate Album's bounded search helper without changing results."""
+        if not self.fast_hooks or pc != 0x81C0756C:
+            return False
+        haystack_va = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
+        needle_va = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
+        limit = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
+        if limit == 0 or limit > 0x02000000:
+            return False
+        if not self._is_mapped_ram_va(haystack_va, limit):
+            return False
+        needle = self._read_c_string_bytes_va_safe(needle_va, 4096)
+        if needle is None:
+            return False
+
+        if not needle:
+            result = haystack_va
+        else:
+            haystack = self._read_block_va_safe(haystack_va, limit)
+            if haystack is None:
+                return False
+            index = haystack.find(needle)
+            result = 0 if index < 0 else (haystack_va + index) & 0xFFFFFFFF
+
+        count = getattr(self, "bda_cstr_search_accel_count", 0) + 1
+        self.bda_cstr_search_accel_count = count
+        self.uc.reg_write(UC_MIPS_REG_2, result)
+        self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+        if count <= 16 or count % 1024 == 0:
+            self._trace_event(
+                "bda-cstr-search",
+                pc=pc,
+                addr=haystack_va,
+                value=needle_va,
+                size=limit,
+                result=result,
+            )
+        return True
+
     def _handle_block_image_hook(self, pc: int) -> bool:
         if self.block_data is None:
             return False
