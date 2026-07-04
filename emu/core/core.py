@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Early BBK 9588/JZ4740 hardware emulator harness.
 
 This is a hardware-level trace harness, not a BDA API shim. It loads a raw MIPS
@@ -65,12 +65,6 @@ except Exception:  # pragma: no cover - optional local dependency
 
 
 from emu.core.defs import (
-    ASCII_5X7_FONT,
-    BDA_DISPLAY_CALLBACK_TABLE,
-    BDA_ENTRY_SIG,
-    BDA_RUNTIME_ENTRY_VA,
-    BDA_RUNTIME_TABLE_DST,
-    BDA_RUNTIME_TABLE_SRC,
     EXT_BANK_BASE,
     EXT_BANK_KSEG1_BASE,
     EXT_BANK_SIZE,
@@ -97,10 +91,6 @@ from emu.core.defs import (
     MmioAccess,
     MmioLevel,
     MmioPulse,
-    ScheduledBdaEvent,
-    ScheduledBdaKeyEvent,
-    ScheduledBdaLaunch,
-    ScheduledBdaTouchEvent,
     ScheduledCall,
     ScheduledKeyControllerEvent,
     ScheduledPoke,
@@ -157,14 +147,10 @@ class Bbk9588HwEmu(
         mmio_pulses: list[MmioPulse] | None = None,
         firmware_key_samples: list[FirmwareKeySample] | None = None,
         touch_samples: list[TouchSample] | None = None,
-        bda_launches: list[ScheduledBdaLaunch] | None = None,
         gui_key_events: list[GuiKeyEvent] | None = None,
         gui_touch_events: list[GuiTouchEvent] | None = None,
         touch_controller_events: list[ScheduledTouchControllerEvent] | None = None,
         key_controller_events: list[ScheduledKeyControllerEvent] | None = None,
-        bda_key_events: list[ScheduledBdaKeyEvent] | None = None,
-        bda_events: list[ScheduledBdaEvent] | None = None,
-        bda_touch_events: list[ScheduledBdaTouchEvent] | None = None,
         trace_pcs: list[int] | None = None,
         trace_pc_detail: bool = True,
         stop_pcs: list[int] | None = None,
@@ -175,10 +161,6 @@ class Bbk9588HwEmu(
         readonly_nand_page_ranges: list[tuple[int, int]] | None = None,
         block_image: Path | None = None,
         usb_connected: bool = False,
-        bda_text_mode: str = "native",
-        bda_native_glyph_layout: str = "rows-msb-vscale2",
-        bda_native_raster_mode: str = "firmware",
-        legacy_direct_bda: bool = False,
         scheduler_tick_clamp: bool = False,
         fs_dir_scan_stop_samples: int = 0,
         fast_hooks: bool = False,
@@ -205,16 +187,6 @@ class Bbk9588HwEmu(
     ):
         if Uc is None:
             raise RuntimeError("unicorn is not installed")
-        direct_bda_requested = bool(
-            (bda_launches or [])
-            or (bda_key_events or [])
-            or (bda_events or [])
-            or (bda_touch_events or [])
-            or bda_text_mode == "ascii-hook"
-            or bda_native_raster_mode == "synth"
-        )
-        if direct_bda_requested and not legacy_direct_bda:
-            raise ValueError("legacy direct-BDA options require legacy_direct_bda=True")
         self.image = image
         self.base = base
         self.pc = pc
@@ -245,8 +217,6 @@ class Bbk9588HwEmu(
         self.touch_samples = touch_samples or []
         self.pending_touch_sample: TouchSample | None = None
         self.touch_sample_events: list[dict[str, str | int]] = []
-        self.bda_launches = bda_launches or []
-        self.bda_launch_events: list[dict[str, str | int]] = []
         self.gui_key_events = gui_key_events or []
         self.gui_key_event_log: list[dict[str, str | int]] = []
         self.gui_touch_events = gui_touch_events or []
@@ -258,12 +228,6 @@ class Bbk9588HwEmu(
         self.key_controller_events = key_controller_events or []
         self.key_controller_event_log: list[dict[str, str | int]] = []
         self.key_down_codes: set[int] = set()
-        self.bda_key_events = bda_key_events or []
-        self.bda_key_event_log: list[dict[str, str | int]] = []
-        self.bda_events = bda_events or []
-        self.bda_event_log: list[dict[str, str | int]] = []
-        self.bda_touch_events = bda_touch_events or []
-        self.bda_touch_event_log: list[dict[str, str | int]] = []
         self.trace_pcs = set(trace_pcs or [])
         self.trace_pc_detail = trace_pc_detail
         self.stop_pcs = set(stop_pcs or [])
@@ -321,21 +285,6 @@ class Bbk9588HwEmu(
         self.sadc_status_event = 0
         self.sadc_conversion_events_remaining = 0
         self.recent_sadc_accesses: list[dict[str, str | int]] = []
-        self.bda_text_mode = bda_text_mode
-        self.bda_native_glyph_layout = bda_native_glyph_layout
-        self.bda_native_glyph_rows_lsb = bda_native_glyph_layout.startswith("rows-lsb")
-        self.bda_native_glyph_cols_lsb = bda_native_glyph_layout.startswith("cols-lsb")
-        self.bda_native_glyph_cols_layout = bda_native_glyph_layout in {
-            "cols-msb-vscale2",
-            "cols-lsb-vscale2",
-            "cols-msb-vscale2-hscale2",
-            "cols-lsb-vscale2-hscale2",
-        }
-        self.bda_native_glyph_y_offset = 0 if bda_native_glyph_layout.endswith("-y0") else 1
-        self.bda_native_glyph_x_offset = 3 if "-x3" in bda_native_glyph_layout else 4
-        self.bda_native_glyph_x_scale = 2 if "-hscale2" in bda_native_glyph_layout else 1
-        self.bda_native_raster_mode = bda_native_raster_mode
-        self.legacy_direct_bda = legacy_direct_bda
         self.scheduler_tick_clamp = scheduler_tick_clamp
         self.fs_dir_scan_stop_samples = fs_dir_scan_stop_samples
         self.fast_hooks = fast_hooks
@@ -417,13 +366,10 @@ class Bbk9588HwEmu(
         self.recovery_reg_snapshots: dict[int, dict[str, int]] = {}
         self.recovery_snapshot_pc_cache: dict[int, bool] = {}
         self.mmio_delay_branch_count = 0
-        self.native_synthetic_glyph_code: int | None = None
         self.block_events: list[dict[str, str | int]] = []
         self.preexecuted_jr_delay_pc: int | None = None
         self.idle_loop_hits = 0
         self.app_idle_loop_hits = 0
-        self.bda_event_poll_hits = 0
-        self.bda_idle_empty_polls = 0
         self.wait_wake_count = 0
         self.timer_tick_count = 0
         self.gui_timer_tick_count = 0
@@ -479,11 +425,7 @@ class Bbk9588HwEmu(
         self.event_dispatch_contexts: list[dict[str, int]] = []
         self.object_callback_contexts: list[dict[str, int]] = []
         self.display_event_contexts: list[dict[str, int]] = []
-        self.synthetic_event_va: int | None = None
         self.event_queue_snapshots: list[dict[str, object]] = []
-        self.bda_initial_draw_pending = False
-        self.bda_initial_draw_context: dict[str, int] | None = None
-        self.bda_app_active = False
         self.state = TraceState(image=image, base=base, pc=pc, ram_size=ram_size)
         self.uc = Uc(UC_ARCH_MIPS, UC_MODE_32 | UC_MODE_LITTLE_ENDIAN)
         self._map_memory()
@@ -501,11 +443,11 @@ class Bbk9588HwEmu(
         if self.payload is None:
             if self.base <= va < self.base + self.image_size:
                 return True
-        return BDA_RUNTIME_ENTRY_VA <= va < 0x81D00000
-
-    def _is_bda_runtime_va(self, va: int) -> bool:
-        va &= 0xFFFFFFFF
-        return BDA_RUNTIME_ENTRY_VA <= va < 0x81D00000
+        # Native apps loaded by the real firmware execute from this RAM window.
+        # This is not the removed direct-BDA diagnostic loader.
+        if 0x81C00000 <= va < 0x81D00000:
+            return True
+        return False
 
     def _map_memory(self) -> None:
         data = self.image.read_bytes()
@@ -607,163 +549,6 @@ class Bbk9588HwEmu(
         # 0x80182d58 returns it directly and 0x80182bf4 checks reads against it.
         self._write_u32_va(0x804BF464, len(self.block_data))
 
-    def _init_bda_display_context(self, pc: int) -> None:
-        """Seed the app display callback globals normally prepared by C200.
-
-        Direct diagnostic BDA launch skips the menu-side initializer at
-        0x8012d20c. Native apps can immediately call widget/display helpers
-        that dereference 0x8047409c, so reproduce the small set of global
-        writes needed before entering the BDA runtime.
-        """
-        self._init_bda_font_context(pc)
-        current = self._read_mem_va(0x8047409C, 4) & 0xFFFFFFFF
-        if current == BDA_DISPLAY_CALLBACK_TABLE:
-            return
-
-        self._write_u32_va(0x8047409C, BDA_DISPLAY_CALLBACK_TABLE)
-        self._write_u32_va(0x804740A0, 0)
-        self._write_u32_va(0x804740A4, 0)
-        # Normal startup writes this callback at 0x800dbe64. Direct BDA launch
-        # can enter repaint without running that initializer.
-        self._write_u32_va(0x8082584C, 0x800DCFE0)
-        if self._read_mem_va(0x80825850, 4) == 0:
-            event_ring = self._scratch_alloc(0x1C * 0x10)
-            self._write_u32_va(0x80825850, event_ring)
-            self._write_u32_va(0x80825854, 0x10)
-            self._write_u32_va(0x80825858, 0)
-            self._write_u32_va(0x8082585C, 0)
-
-        # 0x8012d20c also caches an inset rectangle from the active display
-        # descriptor at 0x80474030. If the descriptor is already live, mirror
-        # those derived values; otherwise keep the 240x320 portrait defaults.
-        try:
-            display_desc = self._read_mem_va(0x80474030, 4) & 0xFFFFFFFF
-            width = (self._read_mem_va(display_desc + 0x0C, 4) - 2) & 0xFFFFFFFF if display_desc else 0xEE
-            height = (self._read_mem_va(display_desc + 0x10, 4) - 2) & 0xFFFFFFFF if display_desc else 0x13E
-        except Exception:
-            width = 0xEE
-            height = 0x13E
-
-        self._write_u32_va(0x804A6C98, 0)
-        self._write_u32_va(0x804A6CA0, 0)
-        self._write_u32_va(0x804A6CA4, width)
-        self._write_u32_va(0x804A6CA8, 0)
-        self._write_u32_va(0x804A6CAC, height)
-        self._write_u32_va(0x804A6CB0, 0)
-        self._trace_event("bda-display-context", pc=pc, addr=0x8047409C, value=BDA_DISPLAY_CALLBACK_TABLE, size=4)
-
-    def _init_bda_font_context(self, pc: int) -> None:
-        """Seed the default UI font context used by window repaint paths.
-
-        The normal firmware font/resource initializer at 0x80129690 expects
-        resource paths that are not yet modeled by the FAT/block hooks. Direct
-        BDA launch still reaches widget repaint code that dereferences the
-        default context at 0x80825a80, so provide a minimal font object using
-        the firmware's own font vtable and simple 16x16 metrics.
-        """
-        try:
-            if self._read_mem_va(0x80825AC0, 4) != 0:
-                return
-        except Exception:
-            return
-
-        font = self._scratch_alloc(0x70)
-        metrics = self._scratch_alloc(0x18)
-        provider = self._scratch_alloc(0x40)
-        provider_name = self._scratch_alloc(0x04)
-        self.uc.mem_write(va_to_phys(provider_name), b"SGM\x00")
-        self._write_u32_va(metrics + 0x08, 16)
-        self._write_u32_va(metrics + 0x0C, 16)
-        self._write_u32_va(metrics + 0x14, 256)
-        self._write_u32_va(provider + 0x0C, provider_name)
-        self._write_u32_va(provider + 0x14, 0x8012A6A8)
-        self._write_u32_va(provider + 0x18, 0x8012A6A8)
-        self._write_u32_va(provider + 0x1C, 0x8012A6A8)
-        self._write_u32_va(font + 0x58, 0x803AF0B0)
-        self._write_u32_va(font + 0x5C, provider)
-        self._write_u32_va(font + 0x68, metrics)
-
-        self._write_u32_va(0x80825AB8, 16)
-        self._write_u32_va(0x80825AC0, font)
-        self._write_u32_va(0x80825AC4, 0)
-        self._trace_event("bda-font-context", pc=pc, addr=0x80825A80, value=font, size=0x70)
-
-    def _seed_surface_dirty_rect(self, surface: int, pc: int) -> None:
-        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_mapped_ram_va(surface, 0xC8):
-            return
-        try:
-            if self._read_mem_va(surface + 0x04, 4) != 0x82:
-                return
-            dirty = surface + 0xB0
-            if self._read_mem_va(dirty + 0x10, 4) != 0:
-                return
-            node = self._scratch_alloc(0x14)
-            self._write_u32_va(node + 0x00, 0)
-            self._write_u32_va(node + 0x04, 0)
-            self._write_u32_va(node + 0x08, 0xEF)
-            self._write_u32_va(node + 0x0C, 0x13F)
-            self._write_u32_va(node + 0x10, 0)
-            self._write_u32_va(dirty + 0x00, 0)
-            self._write_u32_va(dirty + 0x04, 0)
-            self._write_u32_va(dirty + 0x08, 0xEF)
-            self._write_u32_va(dirty + 0x0C, 0x13F)
-            self._write_u32_va(dirty + 0x10, node)
-            self._write_u32_va(dirty + 0x14, node)
-            self._trace_event("surface-dirty-seed", pc=pc, addr=dirty, value=node, size=0x14)
-        except Exception:
-            return
-
-    def _bda_text_draw_args(self) -> dict[str, int] | None:
-        if not self.legacy_direct_bda or not self.bda_app_active:
-            return None
-        sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
-        a3 = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
-        try:
-            y_ptr = self._read_mem_va(sp + 0x10, 4) & 0xFFFFFFFF
-            text_ptr = self._read_mem_va(sp + 0x1C, 4) & 0xFFFFFFFF
-            text_len = self._read_mem_va(sp + 0x20, 4) & 0xFFFFFFFF
-            x = self._read_mem_va(a3, 4) & 0xFFFFFFFF
-            y = self._read_mem_va(y_ptr, 4) & 0xFFFFFFFF
-            ch = self._read_mem_va(text_ptr, 1) & 0xFF
-        except Exception:
-            return None
-        if text_len == 0:
-            return None
-        if x > 0x1000 or y > 0x1000:
-            return None
-        return {
-            "sp": sp,
-            "x_ptr": a3,
-            "y_ptr": y_ptr,
-            "text_ptr": text_ptr,
-            "text_len": text_len,
-            "x": x,
-            "y": y,
-            "ch": ch,
-        }
-
-    def _trace_bda_native_text_draw(self, pc: int) -> None:
-        args = self._bda_text_draw_args()
-        if args is None:
-            return
-        font = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
-        vtable = self._read_u32_va_safe(font + 0x58) or 0
-        provider = self._read_u32_va_safe(font + 0x5C) or 0
-        metrics = self._read_u32_va_safe(font + 0x68) or 0
-        self._trace_event(
-            "native-text-draw",
-            pc=pc,
-            addr=args["text_ptr"],
-            value=args["ch"],
-            size=args["text_len"],
-            x=args["x"],
-            y=args["y"],
-            font=font,
-            vtable=vtable,
-            provider=provider,
-            metrics=metrics,
-        )
-
     def _trace_system_text_entry(self, pc: int) -> None:
         sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
         a0 = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
@@ -821,177 +606,6 @@ class Bbk9588HwEmu(
                 pass
         self.state.events.append(row)
         self._trim_events()
-
-    def _draw_synthetic_glyph_for_bda_text(self, pc: int) -> bool:
-        """Render a temporary ASCII glyph for direct-BDA smoke tests."""
-        args = self._bda_text_draw_args()
-        if args is None:
-            return False
-        a3 = args["x_ptr"]
-        text_ptr = args["text_ptr"]
-        text_len = args["text_len"]
-        x = args["x"]
-        y = args["y"]
-        ch = args["ch"]
-
-        # Dialog text often uses a cursor baseline; keep the marker in bounds.
-        draw_x = max(0, min(239, int(x)))
-        draw_y = max(0, min(319, int(y)))
-        if draw_y + 8 >= 320:
-            draw_y = max(0, 319 - 8)
-        if draw_x + 6 >= 240:
-            draw_x = max(0, 239 - 6)
-
-        color = 0xFFFF
-        glyph_key = chr(ch).upper() if 0x20 <= ch < 0x7F else "?"
-        rows = ASCII_5X7_FONT.get(glyph_key)
-        if rows is None:
-            rows = (0x1F, 0x01, 0x02, 0x04, 0x04, 0, 0x04)
-        pixels = []
-        for row, bits in enumerate(rows):
-            for col in range(5):
-                if bits & (1 << (4 - col)):
-                    pixels.append((draw_x + col, draw_y + row))
-
-        for base in (0x80825B90, 0xA1F82000):
-            for px, py in pixels:
-                addr = base + ((py * 240 + px) << 1)
-                try:
-                    self._write_mem_va(addr, 2, color)
-                except Exception:
-                    pass
-        try:
-            self._write_u32_va(a3, min(239, x + 6))
-        except Exception:
-            pass
-        self._trace_event(
-            "synthetic-glyph",
-            pc=pc,
-            addr=text_ptr,
-            value=ch,
-            size=text_len,
-            x=draw_x,
-            y=draw_y,
-        )
-        self.uc.reg_write(UC_MIPS_REG_2, 0)
-        self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-        return True
-
-    def _ascii_glyph_16x16_1bpp(self, code: int) -> bytes:
-        glyph_key = chr(code).upper() if 0x20 <= code < 0x7F else "?"
-        rows = ASCII_5X7_FONT.get(glyph_key)
-        if rows is None:
-            rows = (0x1F, 0x01, 0x02, 0x04, 0x04, 0, 0x04)
-        out = bytearray(0x20)
-        rows_lsb = self.bda_native_glyph_rows_lsb
-
-        def set_pixel(x: int, y: int) -> None:
-            if not (0 <= x < 16 and 0 <= y < 16):
-                return
-            bit = x if rows_lsb else 15 - x
-            row_bits = (out[y * 2] << 8) | out[y * 2 + 1]
-            row_bits |= 1 << bit
-            out[y * 2] = (row_bits >> 8) & 0xFF
-            out[y * 2 + 1] = row_bits & 0xFF
-
-        if self.bda_native_glyph_cols_layout:
-            col_bits = [0] * 16
-            x_scale = self.bda_native_glyph_x_scale
-            x_offset = 3 if x_scale == 2 else 4
-            for src_y, bits in enumerate(rows):
-                for sy in (0, 1):
-                    dst_y = 1 + src_y * 2 + sy
-                    for src_x in range(5):
-                        if bits & (1 << (4 - src_x)):
-                            for sx in range(x_scale):
-                                dst_x = x_offset + src_x * x_scale + sx
-                                if 0 <= dst_x < 16:
-                                    col_bits[dst_x] |= 1 << (15 - dst_y)
-            for x, bits in enumerate(col_bits):
-                idx = x * 2
-                if self.bda_native_glyph_cols_lsb:
-                    bits = int(f"{bits:016b}"[::-1], 2)
-                out[idx] = (bits >> 8) & 0xFF
-                out[idx + 1] = bits & 0xFF
-            return bytes(out)
-
-        y_offset = self.bda_native_glyph_y_offset
-        x_offset = self.bda_native_glyph_x_offset
-        x_scale = self.bda_native_glyph_x_scale
-        for src_y, bits in enumerate(rows):
-            for sy in (0, 1):
-                dst_y = y_offset + src_y * 2 + sy
-                for src_x in range(5):
-                    if not (bits & (1 << (4 - src_x))):
-                        continue
-                    for sx in range(x_scale):
-                        dst_x = x_offset + src_x * x_scale + sx
-                        set_pixel(dst_x, dst_y)
-        return bytes(out)
-
-    def _draw_ascii_glyph_to_raster_surface(
-        self,
-        dst: int,
-        stride: int,
-        code: int,
-        fg: int,
-        bg: int = 0,
-        opaque: bool = False,
-    ) -> int:
-        glyph_key = chr(code).upper() if 0x20 <= code < 0x7F else "?"
-        rows = ASCII_5X7_FONT.get(glyph_key)
-        if rows is None:
-            rows = (0x1F, 0x01, 0x02, 0x04, 0x04, 0, 0x04)
-        if opaque:
-            for y in range(16):
-                for x in range(16):
-                    self._write_mem_va((dst + y * stride + x * 2) & 0xFFFFFFFF, 2, bg & 0xFFFF)
-        pixels = 0
-        for src_y, bits in enumerate(rows):
-            for sy in (0, 1):
-                y = 1 + src_y * 2 + sy
-                for src_x in range(5):
-                    if not (bits & (1 << (4 - src_x))):
-                        continue
-                    for sx in (0, 1):
-                        x = 3 + src_x * 2 + sx
-                        self._write_mem_va((dst + y * stride + x * 2) & 0xFFFFFFFF, 2, fg & 0xFFFF)
-                        pixels += 1
-        return pixels
-
-    def _return_synthetic_event_from_bad_queue(self, pc: int) -> bool:
-        if not self.legacy_direct_bda:
-            return False
-        src = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
-        if src % 4 == 0:
-            return False
-        queue = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
-        if self.synthetic_event_va is None:
-            self.synthetic_event_va = self._scratch_alloc(0x20)
-        event = self.synthetic_event_va
-        self._write_u32_va(event + 0x00, 0)
-        self._write_u32_va(event + 0x04, 0x0A)
-        self._write_u32_va(event + 0x08, 0)
-        self._write_u32_va(event + 0x0C, 0)
-
-        sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
-        status_ptr = self.uc.reg_read(UC_MIPS_REG_19) & 0xFFFFFFFF
-        try:
-            self._write_mem_va(status_ptr, 1, 0x0A)
-            self._write_u32_va(queue + 0x18, 0)
-        except Exception:
-            pass
-        ra = self._read_mem_va(sp + 0x20, 4) & 0xFFFFFFFF
-        self.uc.reg_write(UC_MIPS_REG_19, self._read_mem_va(sp + 0x1C, 4) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_18, self._read_mem_va(sp + 0x18, 4) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_17, self._read_mem_va(sp + 0x14, 4) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_16, self._read_mem_va(sp + 0x10, 4) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_31, ra)
-        self.uc.reg_write(UC_MIPS_REG_29, (sp + 0x28) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_2, event)
-        self._trace_event("event-queue-bad-read", pc=pc, addr=src, value=queue, size=4)
-        self.uc.reg_write(UC_MIPS_REG_PC, ra)
-        return True
 
     def _read_block_va_safe(self, va: int, size: int) -> bytes | None:
         try:
@@ -1239,4 +853,3 @@ class Bbk9588HwEmu(
         # call site to the same zero-return result for this trace path.
         self._write_u32_va(0x800A88E8, 0x00001021)  # move v0,zero
         self._write_u32_va(0x800A88EC, 0x00000000)  # nop
-

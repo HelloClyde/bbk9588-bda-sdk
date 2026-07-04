@@ -1,4 +1,4 @@
-﻿"""Input, scheduled event, and touchscreen helpers for the BBK 9588 emulator."""
+"""Input, scheduled event, and touchscreen helpers for the BBK 9588 emulator."""
 
 from __future__ import annotations
 
@@ -15,17 +15,9 @@ from unicorn.mips_const import (
 )
 
 from emu.core.defs import (
-    BDA_ENTRY_SIG,
-    BDA_RETURN_PC,
-    BDA_RUNTIME_ENTRY_VA,
-    BDA_RUNTIME_TABLE_DST,
-    BDA_RUNTIME_TABLE_SRC,
     GPIO_FLAG_OFFSET,
     GPIO_KEY_CODE_BITS,
     GPIO_KEY_IDLE_LEVELS,
-    ScheduledBdaEvent,
-    ScheduledBdaKeyEvent,
-    ScheduledBdaTouchEvent,
     TOUCH_ADC_SCREEN_X_BIAS,
     TOUCH_ADC_SCREEN_Y_BIAS,
     TOUCH_CALIBRATION_REFERENCE_POINTS,
@@ -35,7 +27,6 @@ from emu.core.defs import (
     gpio_main_irq_for_port,
     gpio_port_for_addr,
 )
-from emu.tools.utils import va_to_phys
 
 
 class HwEmuInputMixin:
@@ -299,90 +290,6 @@ class HwEmuInputMixin:
             self._trace_event("touch-coords", pc=pc, addr=x_ptr, value=(x & 0xFFFF) | (y << 16), size=4)
             return True
         return False
-
-    def _apply_bda_launch(self, pc: int) -> bool:
-        if not self.legacy_direct_bda:
-            return False
-        for launch in self.bda_launches:
-            if launch.applied or launch.idle_hit != self.idle_loop_hits:
-                continue
-            data = launch.path.read_bytes()
-            entry_off = data.find(BDA_ENTRY_SIG)
-            if entry_off < 0:
-                launch.applied = True
-                self.bda_launch_events.append(
-                    {
-                        "event": "launch-error",
-                        "pc": f"0x{pc:08x}",
-                        "idle_hit": launch.idle_hit,
-                        "path": str(launch.path),
-                        "error": "native-entry-signature-not-found",
-                    }
-                )
-                self._trace_event("bda-launch-error", pc=pc, addr=0, value=0)
-                continue
-
-            payload = data[entry_off:]
-            dst_phys = va_to_phys(BDA_RUNTIME_ENTRY_VA)
-            if dst_phys + len(payload) > self.ram_size:
-                raise ValueError(f"BDA payload does not fit RAM: {launch.path} size=0x{len(payload):x}")
-
-            table = self.uc.mem_read(va_to_phys(BDA_RUNTIME_TABLE_SRC), 0x20)
-            self.uc.mem_write(va_to_phys(BDA_RUNTIME_TABLE_DST), bytes(table))
-            self.uc.mem_write(dst_phys, payload)
-            self._init_bda_display_context(pc)
-            self.bda_app_active = True
-            self.bda_initial_draw_pending = True
-            self.bda_initial_draw_context = None
-            launch.entry_offset = entry_off
-            launch.loaded_size = len(payload)
-            launch.applied = True
-
-            self.uc.reg_write(UC_MIPS_REG_4, 0)
-            self.uc.reg_write(UC_MIPS_REG_5, 0)
-            self.uc.reg_write(UC_MIPS_REG_6, 0)
-            self.uc.reg_write(UC_MIPS_REG_7, 0)
-            self.uc.reg_write(UC_MIPS_REG_SP, self.call_stack & 0xFFFFFFFF)
-            self.uc.reg_write(UC_MIPS_REG_31, BDA_RETURN_PC)
-            self.uc.reg_write(UC_MIPS_REG_PC, BDA_RUNTIME_ENTRY_VA)
-            row = {
-                "event": "launch",
-                "pc": f"0x{pc:08x}",
-                "idle_hit": launch.idle_hit,
-                "path": str(launch.path),
-                "entry_offset": f"0x{entry_off:x}",
-                "runtime_entry": f"0x{BDA_RUNTIME_ENTRY_VA:08x}",
-                "runtime_file_base": f"0x{(BDA_RUNTIME_ENTRY_VA - entry_off) & 0xFFFFFFFF:08x}",
-                "loaded_size": f"0x{len(payload):x}",
-                "return_pc": f"0x{BDA_RETURN_PC:08x}",
-                "sp": f"0x{self.call_stack & 0xFFFFFFFF:08x}",
-            }
-            self.bda_launch_events.append(row)
-            self._trace_event("bda-launch", pc=pc, addr=BDA_RUNTIME_ENTRY_VA, value=entry_off, size=len(payload))
-            return True
-        return False
-
-    def _capture_bda_launch_return(self, pc: int) -> None:
-        if not self.legacy_direct_bda:
-            return
-        if pc != BDA_RETURN_PC:
-            return
-        for launch in self.bda_launches:
-            if not launch.applied or launch.returned:
-                continue
-            launch.returned = True
-            self.bda_launch_events.append(
-                {
-                    "event": "return",
-                    "pc": f"0x{pc:08x}",
-                    "path": str(launch.path),
-                    "v0": f"0x{self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF:08x}",
-                    "sp": f"0x{self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF:08x}",
-                    "ra": f"0x{self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF:08x}",
-                }
-            )
-            self._trace_event("bda-return", pc=pc, addr=BDA_RUNTIME_ENTRY_VA, value=self.uc.reg_read(UC_MIPS_REG_2), size=4)
-            return
 
     def _apply_gui_key_events(self, pc: int) -> bool:
         for event in self.gui_key_events:
@@ -667,33 +574,6 @@ class HwEmuInputMixin:
         self._trace_event("gui-ring-pump", pc=pc, addr=record_va, value=event, size=record_size)
         return True
 
-    def _next_bda_key_event_due(self) -> ScheduledBdaKeyEvent | None:
-        for event in self.bda_key_events:
-            if not event.applied and event.event_hit == self.bda_event_poll_hits:
-                return event
-        return None
-
-    def _next_bda_event_due(self) -> ScheduledBdaEvent | None:
-        for event in self.bda_events:
-            if not event.applied and event.event_hit == self.bda_event_poll_hits:
-                return event
-        return None
-
-    def _next_bda_touch_event_due(self) -> ScheduledBdaTouchEvent | None:
-        for event in self.bda_touch_events:
-            if not event.applied and event.event_hit == self.bda_event_poll_hits:
-                return event
-        return None
-
-    def _has_pending_future_bda_key_event(self) -> bool:
-        return any((not event.applied) and event.event_hit > self.bda_event_poll_hits for event in self.bda_key_events)
-
-    def _has_pending_future_bda_event(self) -> bool:
-        return any((not event.applied) and event.event_hit > self.bda_event_poll_hits for event in self.bda_events)
-
-    def _has_pending_future_bda_touch_event(self) -> bool:
-        return any((not event.applied) and event.event_hit > self.bda_event_poll_hits for event in self.bda_touch_events)
-
     def _write_touch_globals(self, x: int, y: int, down: bool) -> None:
         x = max(0, min(239, x))
         y = max(0, min(319, y))
@@ -804,16 +684,3 @@ class HwEmuInputMixin:
             raw_x=raw_x,
             raw_y=raw_y,
         )
-
-    def _write_bda_synthetic_event(
-        self,
-        event_va: int,
-        event_type: int,
-        word0: int = 0,
-        word2: int = 0,
-        word3: int = 0,
-    ) -> None:
-        self._write_u32_va(event_va + 0x00, word0 & 0xFFFFFFFF)
-        self._write_u32_va(event_va + 0x04, event_type & 0xFFFFFFFF)
-        self._write_u32_va(event_va + 0x08, word2 & 0xFFFFFFFF)
-        self._write_u32_va(event_va + 0x0C, word3 & 0xFFFFFFFF)

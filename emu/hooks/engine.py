@@ -1,4 +1,4 @@
-﻿"""Unicorn execution hooks and run loop for the BBK 9588 emulator."""
+"""Unicorn execution hooks and run loop for the BBK 9588 emulator."""
 
 from __future__ import annotations
 
@@ -229,7 +229,7 @@ class HwEmuEngineMixin:
             add(pc, self._on_portrait_blit_code)
         add(0x800074A0, self._on_malloc_scan_code)
         add(0x800AC388, self._on_raster_copy_code)
-        add(0x800BC2E0, self._on_rgb565_color_code, not self.legacy_direct_bda)
+        add(0x800BC2E0, self._on_rgb565_color_code)
         add(0x80007900, self._on_zero_fill_delay_loop_code)
         add(0x80173908, self._on_stack_clear32_delay_loop_code)
         add(0x80173C30, self._on_stack_clear32_delay_loop_code)
@@ -461,8 +461,6 @@ class HwEmuEngineMixin:
         if self._apply_touch_sample(address):
             return
         if self._apply_firmware_key_sample(address):
-            return
-        if self.legacy_direct_bda and self._apply_bda_launch(address):
             return
         if self._apply_scheduled_calls(address):
             return
@@ -941,9 +939,6 @@ class HwEmuEngineMixin:
     def _service_irq_from_bda_poll(self, pc: int) -> bool:
         if self.profile != "bbk9588-uboot" or pc not in BDA_IRQ_POLL_PCS:
             return False
-        if not getattr(self, "completed_step_timer", False):
-            self._set_completed_step_timer_source(True, pc=pc, reason="bda-poll")
-            self.bda_poll_step_timer_enable_count += 1
 
         if self.next_tcu_irq_insn is None or (self.tcu_enabled_mask & 0x3) == 0:
             return False
@@ -1128,8 +1123,6 @@ class HwEmuEngineMixin:
         if getattr(self, "hot_path_stats", False):
             counts = self.on_code_dispatch_counts
             counts[address] = int(counts.get(address, 0)) + 1
-        if self.legacy_direct_bda:
-            self._recover_bda_corrupt_pointer_registers(address)
         if self.profile == "bbk9588-uboot" and self.fast_hooks:
             if address == 0x800043A0 and self._handle_busy_delay(address):
                 return
@@ -1149,20 +1142,6 @@ class HwEmuEngineMixin:
                 return
             if address in BDA_IRQ_POLL_PCS and self._service_irq_from_bda_poll(address):
                 return
-        if (
-            self.profile == "bbk9588-uboot"
-            and self.legacy_direct_bda
-            and address == 0x81C038A0
-            and self._handle_bda_sdkinput_copy_branch(address)
-        ):
-            return
-        if (
-            self.profile == "bbk9588-uboot"
-            and self.legacy_direct_bda
-            and address == 0x81C0392C
-            and self._handle_bda_sdkinput_copy_loop(address)
-        ):
-            return
         if (
             self.profile == "bbk9588-uboot"
             and address
@@ -1277,7 +1256,6 @@ class HwEmuEngineMixin:
         self._capture_scheduled_call_return(address)
         self._capture_firmware_key_sample_return(address)
         self._capture_touch_sample_return(address)
-        self._capture_bda_launch_return(address)
         if self.profile == "bbk9588-uboot" and address == 0x8001A3A0:
             count = int(getattr(self, "touch_coord_entry_trace_count", 0))
             if count < 64:
@@ -1473,8 +1451,6 @@ class HwEmuEngineMixin:
                 return
             if self._apply_firmware_key_sample(address):
                 return
-            if self.legacy_direct_bda and self._apply_bda_launch(address):
-                return
             if self._apply_scheduled_calls(address):
                 return
             if self._apply_gui_ring_pump(address):
@@ -1492,54 +1468,8 @@ class HwEmuEngineMixin:
                 self.state.stop_reason = "app_repaint_loop"
                 self.uc.emu_stop()
                 return
-            if not self.legacy_direct_bda or not self.bda_app_active:
-                return
-            # Unicorn repeatedly lands back on this branch target after the
-            # preceding bnez delay slot. Model this call-site explicitly:
-            #   800bd840: move a1,t1
-            #   800bd844: jal  0x800d35f0
-            #   800bd848: move a0,s1
-            self.uc.reg_write(UC_MIPS_REG_5, self.uc.reg_read(UC_MIPS_REG_9) & 0xFFFFFFFF)
-            self.uc.reg_write(UC_MIPS_REG_4, self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF)
-            self.uc.reg_write(UC_MIPS_REG_31, 0x800BD84C)
-            self.repaint_call_context = {
-                "sp": self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF,
-                "s0": self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF,
-                "s1": self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF,
-                "ra": 0x800BD84C,
-            }
-            if self.app_idle_loop_hits == 1:
-                self._trace_event("app-repaint-call-fix", pc=address, target=0x800D35F0)
-            self.uc.reg_write(UC_MIPS_REG_PC, 0x800D35F0)
             return
         if self.profile == "bbk9588-uboot" and address == 0x800BC2E0:
-            if self.legacy_direct_bda:
-                if self.bda_initial_draw_context is not None:
-                    ctx = self.bda_initial_draw_context
-                    self.bda_initial_draw_context = None
-                    self.uc.reg_write(UC_MIPS_REG_4, ctx["a0"])
-                    self.uc.reg_write(UC_MIPS_REG_5, ctx["a1"])
-                    self.uc.reg_write(UC_MIPS_REG_6, ctx["a2"])
-                    self.uc.reg_write(UC_MIPS_REG_7, ctx["a3"])
-                    self.uc.reg_write(UC_MIPS_REG_31, ctx["ra"])
-                    self._trace_event("bda-initial-draw-return", pc=address, target=ctx["ra"])
-                elif self.bda_initial_draw_pending:
-                    self.bda_initial_draw_pending = False
-                    self.bda_initial_draw_context = {
-                        "a0": self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
-                        "a1": self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
-                        "a2": self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF,
-                        "a3": self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF,
-                        "ra": self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
-                    }
-                    self.uc.reg_write(UC_MIPS_REG_4, 0)
-                    self.uc.reg_write(UC_MIPS_REG_5, 0)
-                    self.uc.reg_write(UC_MIPS_REG_6, 0xEF)
-                    self.uc.reg_write(UC_MIPS_REG_7, 0x13F)
-                    self.uc.reg_write(UC_MIPS_REG_31, 0x800BC2E0)
-                    self.uc.reg_write(UC_MIPS_REG_PC, 0x800D3800)
-                    self._trace_event("bda-initial-draw-call", pc=address, target=0x800D3800)
-                    return
             surface = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
             red = self.uc.reg_read(UC_MIPS_REG_5) & 0xFF
             green = self.uc.reg_read(UC_MIPS_REG_6) & 0xFF
@@ -1553,21 +1483,6 @@ class HwEmuEngineMixin:
                 if self.rgb565_color_accel_count <= 16 or self.rgb565_color_accel_count % 4096 == 0:
                     self._trace_event("rgb565-color", pc=address, addr=surface, value=value, size=self.rgb565_color_accel_count)
                 return
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x800D3634 and self.repaint_call_context:
-            # Return block for the explicit 0x800bd840 -> 0x800d35f0 call-site
-            # above. The generic stack compensation can corrupt this narrow
-            # frame, so restore the ABI-preserved registers and return address
-            # from the saved call context.
-            ctx = self.repaint_call_context
-            self.repaint_call_context = None
-            self.uc.reg_write(UC_MIPS_REG_16, ctx["s0"])
-            self.uc.reg_write(UC_MIPS_REG_17, ctx["s1"])
-            self.uc.reg_write(UC_MIPS_REG_31, ctx["ra"])
-            self.uc.reg_write(UC_MIPS_REG_29, ctx["sp"])
-            self.uc.reg_write(UC_MIPS_REG_2, self.uc.reg_read(UC_MIPS_REG_3) & 0xFFFFFFFF)
-            self._trace_event("app-repaint-return-fix", pc=address, target=ctx["ra"])
-            self.uc.reg_write(UC_MIPS_REG_PC, ctx["ra"])
-            return
         if self.profile == "bbk9588-uboot" and self.legacy_return_fixes and address == 0x800CE928:
             self._fix_repeated_0x28_entry(address, "ce928_entry_context")
         if self.profile == "bbk9588-uboot" and self.legacy_return_fixes and address == 0x800CE9F0:
@@ -1698,163 +1613,8 @@ class HwEmuEngineMixin:
         if self.profile == "bbk9588-uboot" and self.legacy_return_fixes and address == 0x81C0FA74:
             if self._read_word_at_va(address) == 0x27BDFFE0:
                 self._fix_repeated_frame_entry(address, "bda_billing_entry_context", 0x20)
-        if self.profile == "bbk9588-uboot" and address == 0x800B3950:
-            self._seed_surface_dirty_rect(self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF, address)
         if self.profile == "bbk9588-uboot" and address in (0x800C0D40, 0x80119B50, 0x8011A3C4):
             self._trace_system_text_entry(address)
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "ascii-hook" and address == 0x8011A3C4:
-            if self._draw_synthetic_glyph_for_bda_text(address):
-                return
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "native" and address == 0x8011A3C4:
-            self._trace_bda_native_text_draw(address)
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x8011B054:
-            sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
-            glyph = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
-            code: int | None = None
-            if self.bda_app_active and not self._is_mapped_ram_va(glyph, 1) and self._is_mapped_ram_va(0x80825AD0, 0x48):
-                if glyph < 0x4000:
-                    code = (glyph // 0x20) & 0xFF
-                    self.native_synthetic_glyph_code = code
-                    glyph_data = self._ascii_glyph_16x16_1bpp(code)
-                    self.uc.mem_write(va_to_phys(0x80825AD0), glyph_data)
-                    self.uc.mem_write(va_to_phys(0x80825AF0), glyph_data)
-                else:
-                    code = 0
-                self.uc.reg_write(UC_MIPS_REG_6, 0x80825AD0)
-                width = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-                height = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
-                mode = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
-                dst = self._read_u32_va_safe(sp + 0x10) or 0
-                bg = self._read_u32_va_safe(sp + 0x14) or 0
-                fg = self._read_u32_va_safe(sp + 0x18) or 0
-                opaque = bool(self._read_u32_va_safe(sp + 0x1C) or 0)
-                x_pad = self._read_u32_va_safe(sp + 0x20) or 0
-                y_flip = self._read_u32_va_safe(sp + 0x24) or 0
-                stride = (mode * (width + x_pad + y_flip)) & 0xFFFFFFFF
-                self._trace_event(
-                    "font-glyph-buffer-recover",
-                    pc=address,
-                    addr=glyph,
-                    value=0x80825AD0,
-                    size=code,
-                    width=width,
-                    height=height,
-                    mode=mode,
-                )
-                if (
-                    self.bda_text_mode == "native"
-                    and self.bda_native_raster_mode == "synth"
-                    and dst
-                    and width == 16
-                    and height == 16
-                    and mode == 2
-                    and 0x20 <= code < 0x7F
-                    and self._is_mapped_ram_va(dst, max(stride, 32) * 16)
-                ):
-                    pixels = self._draw_ascii_glyph_to_raster_surface(dst, stride or 32, code, fg, bg, opaque)
-                    self.uc.reg_write(UC_MIPS_REG_2, stride or 32)
-                    self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-                    self._trace_event(
-                        "native-glyph-raster-synth",
-                        pc=address,
-                        addr=dst,
-                        value=code,
-                        size=pixels,
-                        stride=stride or 32,
-                        fg=fg,
-                        bg=bg,
-                        opaque=int(opaque),
-                    )
-                    return
-            elif (
-                self.bda_app_active
-                and self.bda_text_mode == "native"
-                and glyph in (0x80825AD0, 0x80825AF0)
-                and self.native_synthetic_glyph_code is not None
-            ):
-                code = self.native_synthetic_glyph_code
-                width = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-                height = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
-                mode = self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF
-                dst = self._read_u32_va_safe(sp + 0x10) or 0
-                bg = self._read_u32_va_safe(sp + 0x14) or 0
-                fg = self._read_u32_va_safe(sp + 0x18) or 0
-                opaque = bool(self._read_u32_va_safe(sp + 0x1C) or 0)
-                x_pad = self._read_u32_va_safe(sp + 0x20) or 0
-                y_flip = self._read_u32_va_safe(sp + 0x24) or 0
-                stride = (mode * (width + x_pad + y_flip)) & 0xFFFFFFFF
-                if (
-                    dst
-                    and width == 16
-                    and height == 16
-                    and mode == 2
-                    and 0x20 <= code < 0x7F
-                    and self._is_mapped_ram_va(dst, max(stride, 32) * 16)
-                ):
-                    pixels = self._draw_ascii_glyph_to_raster_surface(dst, stride or 32, code, fg, bg, opaque)
-                else:
-                    pixels = 0
-                self._trace_event(
-                    "native-glyph-raster-synth-repeat",
-                    pc=address,
-                    addr=dst,
-                    value=code,
-                    size=pixels,
-                    stride=stride or 32,
-                    fg=fg,
-                    bg=bg,
-                    opaque=int(opaque),
-                )
-                if self.bda_native_raster_mode == "synth":
-                    self.uc.reg_write(UC_MIPS_REG_2, stride or 32)
-                    self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
-                    return
-            if self.bda_text_mode == "native":
-                self._trace_event(
-                    "native-glyph-raster-entry",
-                    pc=address,
-                    a0=self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
-                    a1=self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
-                    a2=self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF,
-                    a3=self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF,
-                    sp=sp,
-                    dst=self._read_u32_va_safe(sp + 0x10) or 0,
-                    bg=self._read_u32_va_safe(sp + 0x14) or 0,
-                    fg=self._read_u32_va_safe(sp + 0x18) or 0,
-                    opaque=self._read_u32_va_safe(sp + 0x1C) or 0,
-                    x_pad=self._read_u32_va_safe(sp + 0x20) or 0,
-                    y_flip=self._read_u32_va_safe(sp + 0x24) or 0,
-                )
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and self.bda_text_mode == "native" and address in {
-            0x8011B0CC,
-            0x8011B20C,
-            0x8011B25C,
-        }:
-            sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
-            s0 = self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF
-            s1 = self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF
-            s3 = self.uc.reg_read(UC_MIPS_REG_19) & 0xFFFFFFFF
-            s4 = self.uc.reg_read(UC_MIPS_REG_20) & 0xFFFFFFFF
-            self._trace_event(
-                "native-text-raster-path",
-                pc=address,
-                a0=self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
-                a1=self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
-                a2=self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF,
-                a3=self.uc.reg_read(UC_MIPS_REG_7) & 0xFFFFFFFF,
-                s0=s0,
-                s1=s1,
-                s3=s3,
-                s4=s4,
-                sp=sp,
-                s0_w04=self._read_u32_va_safe(s0 + 0x04) or 0,
-                s0_w34=self._read_u32_va_safe(s0 + 0x34) or 0,
-                s0_w38=self._read_u32_va_safe(s0 + 0x38) or 0,
-                s0_w40=self._read_u32_va_safe(s0 + 0x40) or 0,
-                s0_w48=self._read_u32_va_safe(s0 + 0x48) or 0,
-                s1_w14=self._read_u32_va_safe(s1 + 0x14) or 0,
-                s1_w18=self._read_u32_va_safe(s1 + 0x18) or 0,
-            )
         if self.profile == "bbk9588-uboot" and address == 0x800B7350:
             target = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
             s1 = self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF
@@ -1874,131 +1634,8 @@ class HwEmuEngineMixin:
             return
         if self.profile == "bbk9588-uboot" and address == 0x8000B2C8:
             self._capture_event_queue_snapshot("event-queue-before-pop-read", address)
-            if self._return_synthetic_event_from_bad_queue(address):
-                return
         if self.profile == "bbk9588-uboot" and address in (0x8000B25C, 0x8012CCF0, 0x8012CCFC):
             self._capture_event_queue_snapshot("event-queue-read-path", address)
-        if self.profile == "bbk9588-uboot" and self.legacy_direct_bda and address == 0x8012CCFC:
-            event = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
-            if event == 0:
-                self.bda_event_poll_hits += 1
-                if self.synthetic_event_va is None:
-                    self.synthetic_event_va = self._scratch_alloc(0x20)
-                event = self.synthetic_event_va
-                bda_key = self._next_bda_key_event_due()
-                if bda_key is not None:
-                    self.bda_idle_empty_polls = 0
-                    self._write_bda_synthetic_event(event, bda_key.event_type, bda_key.code)
-                    bda_key.applied = True
-                    row = {
-                        "event": "bda-key",
-                        "pc": f"0x{address:08x}",
-                        "event_hit": bda_key.event_hit,
-                        "code": bda_key.code,
-                        "event_type": bda_key.event_type,
-                        "event_va": f"0x{event:08x}",
-                    }
-                    self.bda_key_event_log.append(row)
-                    self.uc.reg_write(UC_MIPS_REG_2, event)
-                    self._trace_event(
-                        "bda-key-event",
-                        pc=address,
-                        addr=event,
-                        value=(bda_key.event_type << 8) | (bda_key.code & 0xFF),
-                        size=4,
-                    )
-                    return
-                bda_touch = self._next_bda_touch_event_due()
-                if bda_touch is not None:
-                    self.bda_idle_empty_polls = 0
-                    self._write_touch_globals(bda_touch.x, bda_touch.y, bda_touch.down)
-                    self._write_bda_synthetic_event(
-                        event,
-                        bda_touch.event_type,
-                        (bda_touch.x & 0xFFFF) | ((bda_touch.y & 0xFFFF) << 16),
-                        int(bda_touch.down),
-                        0,
-                    )
-                    bda_touch.applied = True
-                    row = {
-                        "event": "bda-touch",
-                        "pc": f"0x{address:08x}",
-                        "event_hit": bda_touch.event_hit,
-                        "event_type": bda_touch.event_type,
-                        "x": bda_touch.x,
-                        "y": bda_touch.y,
-                        "down": int(bda_touch.down),
-                        "event_va": f"0x{event:08x}",
-                    }
-                    self.bda_touch_event_log.append(row)
-                    self.uc.reg_write(UC_MIPS_REG_2, event)
-                    self._trace_event(
-                        "bda-touch-event",
-                        pc=address,
-                        addr=event,
-                        value=(bda_touch.x & 0xFFFF) | ((bda_touch.y & 0xFFFF) << 16),
-                        size=0x10,
-                    )
-                    return
-                bda_event = self._next_bda_event_due()
-                if bda_event is not None:
-                    self.bda_idle_empty_polls = 0
-                    self._write_bda_synthetic_event(
-                        event,
-                        bda_event.event_type,
-                        bda_event.word0,
-                        bda_event.word2,
-                        bda_event.word3,
-                    )
-                    bda_event.applied = True
-                    row = {
-                        "event": "bda-event",
-                        "pc": f"0x{address:08x}",
-                        "event_hit": bda_event.event_hit,
-                        "event_type": bda_event.event_type,
-                        "word0": f"0x{bda_event.word0 & 0xFFFFFFFF:08x}",
-                        "word2": f"0x{bda_event.word2 & 0xFFFFFFFF:08x}",
-                        "word3": f"0x{bda_event.word3 & 0xFFFFFFFF:08x}",
-                        "event_va": f"0x{event:08x}",
-                    }
-                    self.bda_event_log.append(row)
-                    self.uc.reg_write(UC_MIPS_REG_2, event)
-                    self._trace_event(
-                        "bda-event",
-                        pc=address,
-                        addr=event,
-                        value=bda_event.event_type,
-                        size=0x10,
-                    )
-                    return
-                display_flags = self._read_u32_va_safe(0x80825840) or 0
-                if (
-                    self.bda_app_active
-                    and self.bda_initial_draw_context is None
-                    and display_flags == 0
-                    and not self._has_pending_future_bda_key_event()
-                    and not self._has_pending_future_bda_event()
-                    and not self._has_pending_future_bda_touch_event()
-                ):
-                    self.bda_idle_empty_polls += 1
-                    if self.bda_idle_empty_polls >= self.bda_idle_stop_polls:
-                        self.state.stop_reason = "bda_event_idle"
-                        self._trace_event("bda-event-idle", pc=address, value=self.bda_idle_empty_polls)
-                        self.uc.emu_stop()
-                        return
-                else:
-                    self.bda_idle_empty_polls = 0
-                if display_flags & 0x00000001:
-                    event_type = 0x144
-                    self._write_u32_va(0x80825840, display_flags & ~0x00000001)
-                    self._write_bda_synthetic_event(event, event_type)
-                    self.uc.reg_write(UC_MIPS_REG_2, event)
-                    self._trace_event("bda-timer-event", pc=address, addr=event, value=event_type, flags=display_flags)
-                    return
-                event_type = 0x03 if (display_flags & 0x70000000) else 0x00
-                self._write_bda_synthetic_event(event, event_type)
-                self.uc.reg_write(UC_MIPS_REG_2, event)
-                self._trace_event("event-null-fix", pc=address, addr=event, value=event_type, flags=display_flags)
         if self.profile == "bbk9588-uboot" and address in (
             0x80010D70,
             0x80010D7C,
@@ -2798,116 +2435,9 @@ class HwEmuEngineMixin:
             kind = "fetch_unmapped"
         else:
             kind = f"invalid_{access}"
-        if access == UC_MEM_READ_UNMAPPED and self._recover_bda_corrupt_pointer_read(pc, address, size):
-            return True
         if len(self.state.invalid) < self.trace_limit:
             self.state.invalid.append(MmioAccess(pc=pc, kind=kind, addr=address, size=size, value=value))
         return False
-
-    def _recover_bda_corrupt_pointer_read(self, pc: int, address: int, size: int) -> bool:
-        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_bda_runtime_va(pc):
-            return False
-        if self._is_mapped_ram_va(address, size):
-            return False
-
-        regs = self._reg_map()
-        values = [(idx, reg, self.uc.reg_read(reg) & 0xFFFFFFFF) for idx, reg in enumerate(regs)]
-        bad_regs = [
-            (idx, reg)
-            for idx, reg, reg_value in values
-            if 4 <= idx <= 7 and reg_value != 0 and reg_value == (address & 0xFFFFFFFF)
-        ]
-        if not bad_regs:
-            return False
-
-        low16 = address & 0xFFFF
-        candidates = [
-            reg_value
-            for _, _, reg_value in values
-            if reg_value != address
-            and (reg_value & 0xFFFF) == low16
-            and self._is_mapped_ram_va(reg_value, size)
-            and self._is_bda_runtime_va(reg_value)
-        ]
-        if not candidates:
-            return False
-        fixed = candidates[0]
-        for _, reg in bad_regs:
-            self.uc.reg_write(reg, fixed)
-        self._trace_event("bda-pointer-recover", pc=pc, addr=address, value=fixed, size=size)
-        return True
-
-    def _recover_bda_corrupt_pointer_registers(self, pc: int) -> None:
-        if not self.legacy_direct_bda or not self.bda_app_active or not self._is_bda_runtime_va(pc):
-            return
-        regs = self._reg_map()
-        values = [(idx, reg, self.uc.reg_read(reg) & 0xFFFFFFFF) for idx, reg in enumerate(regs)]
-        for idx, reg, reg_value in values:
-            if not (4 <= idx <= 7) or reg_value == 0 or self._is_mapped_ram_va(reg_value, 1):
-                continue
-            low16 = reg_value & 0xFFFF
-            candidates = [
-                other_value
-                for other_idx, _, other_value in values
-                if other_idx != idx
-                and (other_value & 0xFFFF) == low16
-                and self._is_mapped_ram_va(other_value, 1)
-                and self._is_bda_runtime_va(other_value)
-            ]
-            if not candidates:
-                continue
-            fixed = candidates[0]
-            self.uc.reg_write(reg, fixed)
-            self._trace_event("bda-reg-pointer-recover", pc=pc, addr=reg_value, value=fixed, size=idx)
-
-    def _handle_bda_sdkinput_copy_loop(self, pc: int) -> bool:
-        if not self.legacy_direct_bda or not self.bda_app_active or pc != 0x81C0392C:
-            return False
-        src_base = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-        idx = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
-        dst_cursor = self.uc.reg_read(UC_MIPS_REG_3) & 0xFFFFFFFF
-        src = (src_base + idx) & 0xFFFFFFFF
-        if idx > 0x100 or not self._is_bda_runtime_va(src_base) or not self._is_mapped_ram_va(src, 1):
-            return False
-        try:
-            ch = self._read_mem_va(src, 1) & 0xFF
-        except Exception:
-            return False
-        self.uc.reg_write(UC_MIPS_REG_3, (dst_cursor + 1) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_6, ch)
-        self.uc.reg_write(UC_MIPS_REG_PC, 0x81C03934)
-        self._trace_event("bda-copy-loop-fix", pc=pc, addr=src, value=ch, size=idx)
-        return True
-
-    def _handle_bda_sdkinput_copy_branch(self, pc: int) -> bool:
-        if not self.legacy_direct_bda or not self.bda_app_active or pc != 0x81C038A0:
-            return False
-        idx = self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF
-        limit = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
-        if idx == limit:
-            target = 0x81C038A8
-            self.uc.reg_write(UC_MIPS_REG_PC, target)
-            self._trace_event("bda-copy-branch-fix", pc=pc, value=idx, size=limit, target=target)
-            return True
-
-        src_base = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-        dst_cursor = self.uc.reg_read(UC_MIPS_REG_3) & 0xFFFFFFFF
-        src = (src_base + idx) & 0xFFFFFFFF
-        dst_cursor = (dst_cursor + 1) & 0xFFFFFFFF
-        dst = (dst_cursor + 0x0A) & 0xFFFFFFFF
-        if idx > 0x100 or not self._is_bda_runtime_va(src_base) or not self._is_mapped_ram_va(src, 1):
-            return False
-        try:
-            ch = self._read_mem_va(src, 1) & 0xFF
-            self._write_mem_va(dst, 1, ch)
-        except Exception:
-            return False
-        self.uc.reg_write(UC_MIPS_REG_2, (idx + 1) & 0xFFFFFFFF)
-        self.uc.reg_write(UC_MIPS_REG_3, dst_cursor)
-        self.uc.reg_write(UC_MIPS_REG_6, ch)
-        self.uc.reg_write(UC_MIPS_REG_PC, 0x81C038A0)
-        self._trace_event("bda-copy-branch-fix", pc=pc, addr=src, value=ch, size=idx, target=dst)
-        return True
 
     def _read_word_at_va(self, va: int) -> int | None:
         if va & 0x3:
@@ -3306,4 +2836,3 @@ class HwEmuEngineMixin:
         finally:
             self.pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF
         return self.state
-

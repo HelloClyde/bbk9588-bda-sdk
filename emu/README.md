@@ -224,7 +224,6 @@ python .\emu\tools\inspect_combined_nand_fat.py `
 - 调度器、timer、中断时序仍需要继续校准。
 - 部分快速路径仍是等价加速，需要逐步用更精确的设备行为替换。
 - 字体和 surface/LCD 提交流程仍有视觉细节差异。
-- 旧的 direct-BDA 诊断只作为历史研究上下文保留；当前行为测试必须通过 Web 后端。
 
 ## 开发约束
 

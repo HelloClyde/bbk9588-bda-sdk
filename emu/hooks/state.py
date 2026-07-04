@@ -1,4 +1,4 @@
-﻿"""State persistence and diagnostic snapshots for the BBK 9588 emulator."""
+"""State persistence and diagnostic snapshots for the BBK 9588 emulator."""
 
 from __future__ import annotations
 
@@ -763,18 +763,6 @@ class HwEmuStateMixin:
             ],
             "key_controller_event_log": self.key_controller_event_log,
             "key_down_codes": sorted(self.key_down_codes),
-            "bda_launches": [
-                {
-                    "path": str(launch.path),
-                    "idle_hit": launch.idle_hit,
-                    "applied": launch.applied,
-                    "returned": launch.returned,
-                    "entry_offset": None if launch.entry_offset is None else f"0x{launch.entry_offset:x}",
-                    "loaded_size": f"0x{launch.loaded_size:x}",
-                }
-                for launch in self.bda_launches
-            ],
-            "bda_launch_events": self.bda_launch_events,
             "gui_key_events": [
                 {
                     "code": event.code,
@@ -784,46 +772,9 @@ class HwEmuStateMixin:
                 for event in self.gui_key_events
             ],
             "gui_key_event_log": self.gui_key_event_log,
-            "bda_event_poll_hits": self.bda_event_poll_hits,
-            "bda_idle_empty_polls": self.bda_idle_empty_polls,
-            "bda_idle_stop_polls": self.bda_idle_stop_polls,
             "gui_timer_tick_count": self.gui_timer_tick_count,
             "gui_timer_fire_count": self.gui_timer_fire_count,
             "gui_timer_events": self.gui_timer_events[-128:],
-            "bda_key_events": [
-                {
-                    "code": event.code,
-                    "event_type": event.event_type,
-                    "event_hit": event.event_hit,
-                    "applied": event.applied,
-                }
-                for event in self.bda_key_events
-            ],
-            "bda_key_event_log": self.bda_key_event_log,
-            "bda_events": [
-                {
-                    "event_type": event.event_type,
-                    "event_hit": event.event_hit,
-                    "word0": f"0x{event.word0 & 0xFFFFFFFF:08x}",
-                    "word2": f"0x{event.word2 & 0xFFFFFFFF:08x}",
-                    "word3": f"0x{event.word3 & 0xFFFFFFFF:08x}",
-                    "applied": event.applied,
-                }
-                for event in self.bda_events
-            ],
-            "bda_event_log": self.bda_event_log,
-            "bda_touch_events": [
-                {
-                    "x": event.x,
-                    "y": event.y,
-                    "down": int(event.down),
-                    "event_type": event.event_type,
-                    "event_hit": event.event_hit,
-                    "applied": event.applied,
-                }
-                for event in self.bda_touch_events
-            ],
-            "bda_touch_event_log": self.bda_touch_event_log,
             "trace_pc": {
                 "counts": {f"0x{pc:08x}": count for pc, count in sorted(self.trace_pc_counts.items())},
                 "recent_hits": self.trace_pc_hits[-128:],
@@ -1004,4 +955,3 @@ class HwEmuStateMixin:
         except Exception as exc:
             out["key_table_error"] = f"{type(exc).__name__}: {exc}"
         return out
-

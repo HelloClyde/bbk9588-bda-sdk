@@ -1,4 +1,4 @@
-﻿"""Parsing, inspection, and address helpers for the BBK 9588 hardware emulator."""
+"""Parsing, inspection, and address helpers for the BBK 9588 hardware emulator."""
 
 from __future__ import annotations
 
@@ -21,10 +21,6 @@ from emu.core.defs import (
     MmioAccess,
     MmioLevel,
     MmioPulse,
-    ScheduledBdaEvent,
-    ScheduledBdaKeyEvent,
-    ScheduledBdaLaunch,
-    ScheduledBdaTouchEvent,
     ScheduledCall,
     ScheduledKeyControllerEvent,
     ScheduledPoke,
@@ -238,18 +234,6 @@ def parse_key_controller_event(text: str) -> ScheduledKeyControllerEvent:
     return ScheduledKeyControllerEvent(code=code, down=down, idle_hit=idle_hit)
 
 
-def parse_bda_launch(text: str) -> ScheduledBdaLaunch:
-    spec = text
-    idle_hit = 1
-    if "@" in spec:
-        spec, hit_s = spec.rsplit("@", 1)
-        idle_hit = int(hit_s, 0)
-    path = Path(spec)
-    if idle_hit <= 0:
-        raise argparse.ArgumentTypeError("idle_hit must be positive")
-    return ScheduledBdaLaunch(path=path, idle_hit=idle_hit)
-
-
 def parse_gui_key_event(text: str) -> GuiKeyEvent:
     if "@" not in text:
         raise argparse.ArgumentTypeError("GUI key event must be code@idle_hit")
@@ -279,71 +263,6 @@ def parse_gui_touch_event(text: str) -> GuiTouchEvent:
     if idle_hit <= 0:
         raise argparse.ArgumentTypeError("idle_hit must be positive")
     return GuiTouchEvent(x=x, y=y, down=down, idle_hit=idle_hit)
-
-
-def parse_bda_key_event(text: str) -> ScheduledBdaKeyEvent:
-    if "@" not in text:
-        raise argparse.ArgumentTypeError("BDA key event must be code[:event_type]@event_hit")
-    body, hit_s = text.split("@", 1)
-    parts = body.split(":")
-    if not 1 <= len(parts) <= 2:
-        raise argparse.ArgumentTypeError("BDA key event must be code[:event_type]@event_hit")
-    code = int(parts[0], 0)
-    event_type = int(parts[1], 0) if len(parts) == 2 else 9
-    event_hit = int(hit_s, 0)
-    if not 0 <= code <= 0xFF:
-        raise argparse.ArgumentTypeError("BDA key code must fit in one byte")
-    if not 0 <= event_type <= 0xFF:
-        raise argparse.ArgumentTypeError("BDA event type must fit in one byte")
-    if event_hit <= 0:
-        raise argparse.ArgumentTypeError("event_hit must be positive")
-    return ScheduledBdaKeyEvent(code=code, event_hit=event_hit, event_type=event_type)
-
-
-def parse_bda_event(text: str) -> ScheduledBdaEvent:
-    if "@" not in text:
-        raise argparse.ArgumentTypeError("BDA event must be event_type[:word0[:word2[:word3]]]@event_hit")
-    body, hit_s = text.split("@", 1)
-    parts = body.split(":")
-    if not 1 <= len(parts) <= 4:
-        raise argparse.ArgumentTypeError("BDA event must be event_type[:word0[:word2[:word3]]]@event_hit")
-    event_type = int(parts[0], 0)
-    words = [0, 0, 0]
-    for idx, value_s in enumerate(parts[1:]):
-        words[idx] = int(value_s, 0)
-    event_hit = int(hit_s, 0)
-    if not 0 <= event_type <= 0xFF:
-        raise argparse.ArgumentTypeError("BDA event type must fit in one byte")
-    if event_hit <= 0:
-        raise argparse.ArgumentTypeError("event_hit must be positive")
-    return ScheduledBdaEvent(
-        event_type=event_type,
-        word0=words[0],
-        word2=words[1],
-        word3=words[2],
-        event_hit=event_hit,
-    )
-
-
-def parse_bda_touch_event(text: str) -> ScheduledBdaTouchEvent:
-    if "@" not in text:
-        raise argparse.ArgumentTypeError("BDA touch event must be x:y:down[:event_type]@event_hit")
-    body, hit_s = text.split("@", 1)
-    parts = body.split(":")
-    if not 3 <= len(parts) <= 4:
-        raise argparse.ArgumentTypeError("BDA touch event must be x:y:down[:event_type]@event_hit")
-    x = int(parts[0], 0)
-    y = int(parts[1], 0)
-    down = bool(int(parts[2], 0))
-    event_type = int(parts[3], 0) if len(parts) == 4 else (4 if down else 5)
-    event_hit = int(hit_s, 0)
-    if not (0 <= x < 240 and 0 <= y < 320):
-        raise argparse.ArgumentTypeError("BDA touch coordinates must be inside 240x320 portrait screen")
-    if not 0 <= event_type <= 0xFF:
-        raise argparse.ArgumentTypeError("BDA touch event type must fit in one byte")
-    if event_hit <= 0:
-        raise argparse.ArgumentTypeError("event_hit must be positive")
-    return ScheduledBdaTouchEvent(x=x, y=y, down=down, event_type=event_type, event_hit=event_hit)
 
 
 def parse_mmio_level(text: str) -> MmioLevel:
@@ -413,5 +332,3 @@ def find_workspace_file(name: str) -> Path:
     if not matches:
         raise FileNotFoundError(f"could not find {name!r} under current workspace")
     return matches[0]
-
-

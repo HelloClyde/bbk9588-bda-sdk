@@ -1,4 +1,4 @@
-﻿"""Frontend emulator state and input/frame queues for the BBK 9588 web UI."""
+"""Frontend emulator state and input/frame queues for the BBK 9588 web UI."""
 
 from __future__ import annotations
 
@@ -376,10 +376,6 @@ class FrontendState:
                 nand_image=nand_image,
                 block_image=block_image,
                 readonly_nand_page_ranges=list(getattr(self.args, "readonly_nand_page_range", []) or []),
-                bda_text_mode="native",
-                bda_native_glyph_layout="rows-lsb-vscale2",
-                bda_native_raster_mode="firmware",
-                legacy_direct_bda=False,
                 scheduler_tick_clamp=self.args.scheduler_tick_clamp,
                 fast_hooks=not self.args.slow_global_code_hook,
                 nand_loop_accelerator=self.args.nand_loop_accelerator,
@@ -1764,5 +1760,3 @@ class FrontendState:
                 return self._build_snapshot_locked(detail="full")
         with self.status_lock:
             return dict(self.cached_status)
-
-

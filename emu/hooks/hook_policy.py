@@ -1,8 +1,8 @@
-﻿"""Code-hook selection policy for the BBK 9588 emulator."""
+"""Code-hook selection policy for the BBK 9588 emulator."""
 
 from __future__ import annotations
 
-from emu.core.defs import BDA_IRQ_POLL_PCS, BDA_RETURN_PC, KNOWN_C200_STORE_DELAY_BRANCH_PCS, NATIVE_SAFE_STORE_DELAY_BRANCH_PCS
+from emu.core.defs import BDA_IRQ_POLL_PCS, KNOWN_C200_STORE_DELAY_BRANCH_PCS, NATIVE_SAFE_STORE_DELAY_BRANCH_PCS
 from emu.hooks.fastpaths import PORTRAIT_BLIT_LOOP_PCS
 from emu.hooks.surface import SURFACE_TRANSPARENT_BLIT_PCS
 
@@ -191,8 +191,8 @@ class HwEmuHookPolicyMixin:
         pcs = set(self.trace_pcs)
         pcs.update(self.stop_pcs)
         pcs.update(call.return_pc for call in self.scheduled_calls)
-        if self.firmware_key_samples or self.touch_samples or (self.legacy_direct_bda and self.bda_launches):
-            pcs.add(BDA_RETURN_PC)
+        if self.firmware_key_samples or self.touch_samples:
+            pcs.add(0x80008A8C)
         if self.fast_hook_image_jals:
             pcs.update(self._image_jal_pcs())
         pcs.update(self._store_delay_branch_hook_pcs())
