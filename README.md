@@ -1,4 +1,4 @@
-# BBK 9588 Native BDA SDK and Toolchain
+﻿# BBK 9588 Native BDA SDK and Toolchain
 
 An experimental native `*.bda` SDK and build toolchain for the BBK / Bubugao
 9588 learning device, with reverse-engineering notes used to discover the app
@@ -22,7 +22,7 @@ The project currently covers:
 ```text
 reverse/                 Python build/reverse-engineering tools
 reverse/examples/        Freestanding C/ASM BDA probe sources
-reverse/hwemu/           Hardware emulator, frontend, NAND helpers, smoke tests
+emu/                     Hardware emulator app, frontend, hooks, tools, tests
 reverse/sdk/             Experimental native SDK header and API notes
 reverse/reports/         Per-BDA analysis reports and indexes
 tools/                   Toolchain notes and local install/cache location
@@ -58,9 +58,9 @@ Hardware-confirmed highlights:
 See [reverse/sdk/README.md](reverse/sdk/README.md) for SDK details and
 [reverse/native_toolchain_notes.md](reverse/native_toolchain_notes.md) for the
 toolchain notes. The hardware emulator lives in
-[reverse/hwemu/](reverse/hwemu/) with its own
-[README](reverse/hwemu/README.md), frontend, NAND image helpers, and smoke-test
-entry points.
+[emu/](emu/) with its own
+[README](emu/README.md), `app.py` frontend entry point, hook modules, NAND image
+helpers, and smoke-test entry points.
 
 ## Setup
 
