@@ -561,6 +561,7 @@ class HwEmuInputMixin:
                 gpio |= 0x40000000
             self.gpio_idle_levels[addr] = gpio & 0xFFFFFFFF
             self.mmio_read_levels.pop(addr, None)
+            self._sync_gpio_data_backing(addr)
             row_levels[addr] = gpio & 0xFFFFFFFF
 
         irq_info: dict[str, str | int] | None = None
@@ -749,6 +750,8 @@ class HwEmuInputMixin:
         own calibration matrix converts them to logical coordinates at
         0x807f7116/7118 and 0x80370fc8/0x80370fcc.
         """
+        if pc is None:
+            pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF
         x = max(0, min(239, x))
         y = max(0, min(319, y))
         raw_x, raw_y = self._touch_panel_to_adc(x, y)
@@ -768,10 +771,13 @@ class HwEmuInputMixin:
         else:
             self.sadc_conversion_events_remaining = 0
             self.sadc_status_event = (self.sadc_status_event & ~0x14) | 0x08
-            # The calibration path waits on the low-level touch completion
-            # flag set by C200's touch release ISR at 0x80017758.
-            self._write_mem_va(0x80477D84, 1, 1)
-            self._write_u32_va(0x80362794, 0x28)
+            if 0x80017000 <= pc <= 0x80019300:
+                # The calibration path waits on the low-level touch completion
+                # flag set by C200's touch release ISR at 0x80017758. Keep this
+                # seed scoped to calibration; it is not a raw controller state.
+                self._write_mem_va(0x80477D84, 1, 1)
+                self._write_u32_va(0x80362794, 0x28)
+        self._sync_sadc_status_backing()
         self._write_touch_latch(raw_x, raw_y, down)
         last_addr = TOUCH_PEN_GPIO_ADDR
         last_gpio = 0
@@ -783,11 +789,10 @@ class HwEmuInputMixin:
                 gpio |= bit
             self.gpio_idle_levels[addr] = gpio & 0xFFFFFFFF
             self.mmio_read_levels.pop(addr, None)
+            self._sync_gpio_data_backing(addr)
             last_addr = addr
             last_gpio = gpio & 0xFFFFFFFF
         self.intc_pending_mask |= 1 << 12
-        if pc is None:
-            pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF
         self._trace_event(
             "touch-controller-state",
             pc=pc,

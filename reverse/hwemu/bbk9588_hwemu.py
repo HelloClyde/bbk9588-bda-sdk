@@ -191,8 +191,12 @@ class Bbk9588HwEmu(
         font_helper_accelerator: bool = False,
         gui_ring_pump: bool = False,
         repeat_prologue_mode: str = "off",
+        epilogue_jr_fix_mode: str = "off",
+        legacy_return_fixes: bool = False,
+        completed_step_timer: bool = False,
         suppress_hot_events: bool = False,
         block_hook: bool = True,
+        run_internal_chunk_steps: int | None = None,
     ):
         if Uc is None:
             raise RuntimeError("unicorn is not installed")
@@ -293,7 +297,14 @@ class Bbk9588HwEmu(
         self.block_image = block_image
         self.block_data = bytearray(block_image.read_bytes()) if block_image is not None else None
         self.block_sector_overrides: dict[int, bytes] = {}
+        self.backing_sector_cache: dict[int, bytes] = {}
+        self.backing_sector_cache_limit = 8192
+        self.backing_sector_cache_hits = 0
+        self.backing_sector_cache_misses = 0
+        self.backing_sector_cache_evictions = 0
         self.usb_connected = usb_connected
+        self.mmio_alias_cache: dict[int, int | None] = {}
+        self.mmio_backing_u32_values: dict[int, int] = {}
         self.recent_udc_accesses: list[dict[str, str | int]] = []
         self.touch_x = 0
         self.touch_y = 0
@@ -306,6 +317,17 @@ class Bbk9588HwEmu(
         self.recent_sadc_accesses: list[dict[str, str | int]] = []
         self.bda_text_mode = bda_text_mode
         self.bda_native_glyph_layout = bda_native_glyph_layout
+        self.bda_native_glyph_rows_lsb = bda_native_glyph_layout.startswith("rows-lsb")
+        self.bda_native_glyph_cols_lsb = bda_native_glyph_layout.startswith("cols-lsb")
+        self.bda_native_glyph_cols_layout = bda_native_glyph_layout in {
+            "cols-msb-vscale2",
+            "cols-lsb-vscale2",
+            "cols-msb-vscale2-hscale2",
+            "cols-lsb-vscale2-hscale2",
+        }
+        self.bda_native_glyph_y_offset = 0 if bda_native_glyph_layout.endswith("-y0") else 1
+        self.bda_native_glyph_x_offset = 3 if "-x3" in bda_native_glyph_layout else 4
+        self.bda_native_glyph_x_scale = 2 if "-hscale2" in bda_native_glyph_layout else 1
         self.bda_native_raster_mode = bda_native_raster_mode
         self.legacy_direct_bda = legacy_direct_bda
         self.scheduler_tick_clamp = scheduler_tick_clamp
@@ -336,11 +358,16 @@ class Bbk9588HwEmu(
         self.ftl_scan_accel_count = 0
         self.no_event_poll_accel_count = 0
         self.busy_delay_accel_count = 0
+        self.busy_delay_static_patch = False
         self.nand_loop_events: list[dict[str, str | int]] = []
         self.resource_cache16_accel_count = 0
         self.resource_cache16_events: list[dict[str, str | int]] = []
         self.cluster_read_accel_count = 0
         self.cluster_read_events: list[dict[str, str | int]] = []
+        self.block_io_accel_count = 0
+        self.block_read_wrapper_accel_count = 0
+        self.file_read_loop_accel_count = 0
+        self.file_read_loop_events: list[dict[str, str | int]] = []
         self.fat16_layout_cache: dict[str, int] | None = None
         self.nand_fat_sector0_cache: int | None = None
         self.dirent_copy_accel_count = 0
@@ -365,6 +392,14 @@ class Bbk9588HwEmu(
         self.raster_loop_accel_count = 0
         self.glyph_mask_loop_accel_count = 0
         self.repeat_prologue_mode = repeat_prologue_mode
+        self.epilogue_jr_fix_mode = epilogue_jr_fix_mode
+        self.legacy_return_fixes = bool(legacy_return_fixes)
+        self.completed_step_timer = bool(completed_step_timer)
+        self.run_internal_chunk_steps = (
+            max(1, int(run_internal_chunk_steps))
+            if run_internal_chunk_steps is not None and int(run_internal_chunk_steps) > 0
+            else None
+        )
         self.recovery_reg_snapshots: dict[int, dict[str, int]] = {}
         self.recovery_snapshot_pc_cache: dict[int, bool] = {}
         self.mmio_delay_branch_count = 0
@@ -380,9 +415,13 @@ class Bbk9588HwEmu(
         self.gui_timer_tick_count = 0
         self.gui_timer_fire_count = 0
         self.gui_timer_events: list[dict[str, str | int]] = []
+        self.bda_poll_timer_service_count = 0
+        self.bda_poll_irq_service_count = 0
+        self.bda_poll_step_timer_enable_count = 0
         self.tcu_enabled_mask = 0
         self.tcu_pending_mask = 0
         self.intc_pending_mask = 0
+        self.timer_insn_count = 0
         self.tcu_period_insn = 5_000
         self.next_tcu_irq_insn: int | None = None
         self.irq24_period_insn = 1_000
@@ -417,6 +456,7 @@ class Bbk9588HwEmu(
         self.framebuffer_dirty_seq = 0
         self.framebuffer_dirty_last: dict[str, str | int] | None = None
         self.framebuffer_dirty_last_raw: tuple[int, int, int, int, str] | None = None
+        self.framebuffer_dirty_callback = None
         self.blit_events: list[dict[str, str | int]] = []
         self.uart_bytes = bytearray()
         self.uart_writes: list[dict[str, str | int]] = []
@@ -496,11 +536,17 @@ class Bbk9588HwEmu(
         self.uc.mem_write(phys, struct.pack("<I", value & 0xFFFFFFFF))
 
     def _mmio_alias_for_phys(self, pa: int) -> int | None:
+        cached = self.mmio_alias_cache.get(pa, ...)
+        if cached is not ...:
+            return cached
         if PHYS_MMIO_BASE <= pa < PHYS_MMIO_BASE + MMIO_SIZE:
-            return MMIO_BASE + (pa - PHYS_MMIO_BASE)
-        if EXT_BANK_BASE <= pa < EXT_BANK_BASE + EXT_BANK_SIZE:
-            return EXT_BANK_KSEG1_BASE + (pa - EXT_BANK_BASE)
-        return None
+            alias = MMIO_BASE + (pa - PHYS_MMIO_BASE)
+        elif EXT_BANK_BASE <= pa < EXT_BANK_BASE + EXT_BANK_SIZE:
+            alias = EXT_BANK_KSEG1_BASE + (pa - EXT_BANK_BASE)
+        else:
+            alias = None
+        self.mmio_alias_cache[pa] = alias
+        return alias
 
     def _canonical_mmio_address(self, address: int) -> int:
         if MMIO_BASE <= address < MMIO_BASE + MMIO_SIZE:
@@ -510,9 +556,15 @@ class Bbk9588HwEmu(
         return address
 
     def _write_u32_phys(self, pa: int, value: int) -> None:
-        data = struct.pack("<I", value & 0xFFFFFFFF)
-        self.uc.mem_write(pa, data)
+        value &= 0xFFFFFFFF
         alias = self._mmio_alias_for_phys(pa)
+        if alias is not None:
+            cache = self.mmio_backing_u32_values
+            if cache.get(pa) == value:
+                return
+            cache[pa] = value
+        data = struct.pack("<I", value)
+        self.uc.mem_write(pa, data)
         if alias is not None:
             self.uc.mem_write(alias, data)
 
@@ -817,29 +869,21 @@ class Bbk9588HwEmu(
         if rows is None:
             rows = (0x1F, 0x01, 0x02, 0x04, 0x04, 0, 0x04)
         out = bytearray(0x20)
-        layout = self.bda_native_glyph_layout
+        rows_lsb = self.bda_native_glyph_rows_lsb
 
         def set_pixel(x: int, y: int) -> None:
             if not (0 <= x < 16 and 0 <= y < 16):
                 return
-            if layout.startswith("rows-lsb"):
-                bit = x
-            else:
-                bit = 15 - x
+            bit = x if rows_lsb else 15 - x
             row_bits = (out[y * 2] << 8) | out[y * 2 + 1]
             row_bits |= 1 << bit
             out[y * 2] = (row_bits >> 8) & 0xFF
             out[y * 2 + 1] = row_bits & 0xFF
 
-        if layout in {
-            "cols-msb-vscale2",
-            "cols-lsb-vscale2",
-            "cols-msb-vscale2-hscale2",
-            "cols-lsb-vscale2-hscale2",
-        }:
+        if self.bda_native_glyph_cols_layout:
             col_bits = [0] * 16
-            x_scale = 2 if "-hscale2" in layout else 1
-            x_offset = 3 if "-hscale2" in layout else 4
+            x_scale = self.bda_native_glyph_x_scale
+            x_offset = 3 if x_scale == 2 else 4
             for src_y, bits in enumerate(rows):
                 for sy in (0, 1):
                     dst_y = 1 + src_y * 2 + sy
@@ -851,15 +895,15 @@ class Bbk9588HwEmu(
                                     col_bits[dst_x] |= 1 << (15 - dst_y)
             for x, bits in enumerate(col_bits):
                 idx = x * 2
-                if layout.startswith("cols-lsb"):
+                if self.bda_native_glyph_cols_lsb:
                     bits = int(f"{bits:016b}"[::-1], 2)
                 out[idx] = (bits >> 8) & 0xFF
                 out[idx + 1] = bits & 0xFF
             return bytes(out)
 
-        y_offset = 0 if layout.endswith("-y0") else 1
-        x_offset = 3 if "-x3" in layout else 4
-        x_scale = 2 if "-hscale2" in layout else 1
+        y_offset = self.bda_native_glyph_y_offset
+        x_offset = self.bda_native_glyph_x_offset
+        x_scale = self.bda_native_glyph_x_scale
         for src_y, bits in enumerate(rows):
             for sy in (0, 1):
                 dst_y = y_offset + src_y * 2 + sy
@@ -1163,6 +1207,13 @@ class Bbk9588HwEmu(
         self._write_u32_va(0x8033C0BC, 0x00000010)  # bpp/mode
         self._write_u32_va(0x8033C0E4, 0xA1F81000)
         self._write_u32_va(0x8033C0E8, 0xA1F82000)
+        if self.fast_hooks and 0x800043A0 not in self.trace_pcs and 0x800043A0 not in self.stop_pcs:
+            # 0x800043a0 is a calibrated software delay. It has no MMIO or
+            # stateful side effects, so the fast-hooks path can return
+            # natively instead of entering Python for every delay call.
+            self._write_u32_va(0x800043A0, 0x03E00008)  # jr ra
+            self._write_u32_va(0x800043A4, 0x00000000)  # nop
+            self.busy_delay_static_patch = True
         # This helper's mode=0x10 path is an immediate zero return, but Unicorn
         # repeatedly faults between the caller's jal and this large-stack entry,
         # leaking 0x418 bytes per call. Patch it into the equivalent early

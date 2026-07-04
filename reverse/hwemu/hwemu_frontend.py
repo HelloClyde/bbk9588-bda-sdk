@@ -126,6 +126,9 @@ let ws = null;
 let continuousActive = false;
 let pointerActive = false;
 let activePointerId = null;
+let currentOrientation = 'rot180';
+let rgb565Lut = null;
+let rawImageData = null;
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -184,9 +187,10 @@ function formatElapsed(seconds) {
 function formatJobSteps(job) {
   if (!job) return '';
   const total = job.total_steps || 'inf';
-  return `${job.done_steps}/${total}`;
+  return `${job.observed_insn_delta ?? 0}/${job.requested_done_steps ?? job.done_steps}/${total}`;
 }
 function renderStatus(s) {
+  currentOrientation = s.orientation || currentOrientation;
   autoBootEl.checked = Boolean(s.auto_calibration);
   const rows = [
     ['running', s.running],
@@ -196,21 +200,31 @@ function renderStatus(s) {
     ['orientation', s.orientation || ''],
     ['key mode', s.key_input_mode || ''],
     ['fast hooks', s.fast_hooks],
+    ['step timer', `${s.completed_step_timer ? 'completed' : 'hook'}${s.completed_step_timer_after_auto_boot ? ':auto' : ''}`],
     ['res cache', s.resource_cache16],
     ['auto boot', `${s.auto_calibration ? 'on' : 'off'}:${s.auto_calibration_stage_label || s.auto_calibration_stage || 0}`],
     ['touch queue', s.pending_touches ?? 0],
     ['key queue', s.pending_keys ?? 0],
+    ['input wake', s.input_wake_count ?? 0],
     ['busy delay', s.busy_delay_accel ?? 0],
+    ['busy patch', s.busy_delay_static_patch ? 'on' : 'off'],
     ['ftl scan', s.ftl_scan_accel ?? 0],
     ['cache scan', s.cache_scan_tail_accel ?? 0],
     ['hot logs', s.suppressed_hot_events ?? 0],
     ['poll accel', s.no_event_poll_accel ?? 0],
+    ['frame hook', s.frame_push?.hook_count ?? 0],
+    ['frame queued', `${s.frame_push?.queued_count ?? 0}/${s.queued_frames ?? 0}`],
+    ['frame throttle', s.frame_push?.throttle_count ?? 0],
+    ['frame replace', s.frame_push?.replace_count ?? 0],
+    ['frame drop', s.frame_push?.drop_count ?? 0],
     ['job', s.job?.name || ''],
     ['job mode', s.job?.mode || ''],
     ['job status', s.job?.status || ''],
     ['job elapsed', s.job ? formatElapsed(s.job.elapsed_seconds) : ''],
     ['job speed', s.job?.steps_per_second ? `${Math.round(s.job.steps_per_second)}/s` : ''],
+    ['req speed', s.job?.requested_steps_per_second ? `${Math.round(s.job.requested_steps_per_second)}/s` : ''],
     ['job chunk', s.job?.chunk_steps || ''],
+    ['run slice', s.run_internal_chunk_steps || ''],
     ['last slice', s.job ? `${s.job.last_slice_steps || 0}${s.job.last_slice_timed_out ? ' timeout' : ''}` : ''],
     ['job steps', formatJobSteps(s.job)],
     ['stop', s.stop_reason || ''],
@@ -230,21 +244,127 @@ function renderStatus(s) {
   eventsEl.textContent = JSON.stringify((s.events || []).slice(-12), null, 2);
 }
 async function refresh() { renderStatus(await api('/api/status')); }
+function ensureScreenSize(width, height) {
+  if (screen.width !== width || screen.height !== height) {
+    screen.width = width;
+    screen.height = height;
+    screenCtx.imageSmoothingEnabled = false;
+    rawImageData = null;
+  }
+}
+function reusableImageData(width, height) {
+  if (!rawImageData || rawImageData.width !== width || rawImageData.height !== height) {
+    rawImageData = screenCtx.createImageData(width, height);
+  }
+  return rawImageData;
+}
+function outputSizeForRaw(width, height, orientation) {
+  if (orientation === 'cw90' || orientation === 'ccw90') return [height, width];
+  return [width, height];
+}
+function ensureRgb565Lut() {
+  if (rgb565Lut) return rgb565Lut;
+  const r = new Uint8Array(65536);
+  const g = new Uint8Array(65536);
+  const b = new Uint8Array(65536);
+  for (let px = 0; px < 65536; px++) {
+    r[px] = Math.round(((px >> 11) & 0x1f) * 255 / 31);
+    g[px] = Math.round(((px >> 5) & 0x3f) * 255 / 63);
+    b[px] = Math.round((px & 0x1f) * 255 / 31);
+  }
+  rgb565Lut = {r, g, b};
+  return rgb565Lut;
+}
+function drawRawRgb565Frame(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 20) return false;
+  const bytes = new Uint8Array(buffer);
+  const magic = [0x42, 0x42, 0x4b, 0x52, 0x41, 0x57, 0x31, 0x00];
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[i] !== magic[i]) return false;
+  }
+  const view = new DataView(buffer);
+  const width = view.getUint16(12, true);
+  const height = view.getUint16(14, true);
+  const stride = view.getUint16(16, true);
+  const format = view.getUint16(18, true);
+  if (format !== 1 || width <= 0 || height <= 0 || stride < width) return false;
+  const raw = new Uint8Array(buffer, 20);
+  if (raw.length < stride * height * 2) return false;
+  const [outW, outH] = outputSizeForRaw(width, height, currentOrientation);
+  ensureScreenSize(outW, outH);
+  const image = reusableImageData(outW, outH);
+  const out = image.data;
+  const lut = ensureRgb565Lut();
+  let outIndex = 0;
+  if (currentOrientation === 'rot180') {
+    for (let y = 0; y < height; y++) {
+      let i = ((height - 1 - y) * stride + (width - 1)) * 2;
+      for (let x = 0; x < width; x++, i -= 2) {
+        const px = raw[i] | (raw[i + 1] << 8);
+        out[outIndex++] = lut.r[px];
+        out[outIndex++] = lut.g[px];
+        out[outIndex++] = lut.b[px];
+        out[outIndex++] = 255;
+      }
+    }
+  } else if (!currentOrientation || currentOrientation === 'none') {
+    for (let y = 0; y < height; y++) {
+      let i = y * stride * 2;
+      for (let x = 0; x < width; x++, i += 2) {
+        const px = raw[i] | (raw[i + 1] << 8);
+        out[outIndex++] = lut.r[px];
+        out[outIndex++] = lut.g[px];
+        out[outIndex++] = lut.b[px];
+        out[outIndex++] = 255;
+      }
+    }
+  } else {
+    for (let y = 0; y < outH; y++) {
+      for (let x = 0; x < outW; x++) {
+        let sx = x;
+        let sy = y;
+        if (currentOrientation === 'hflip') {
+          sx = width - 1 - x;
+        } else if (currentOrientation === 'vflip') {
+          sy = height - 1 - y;
+        } else if (currentOrientation === 'cw90') {
+          sx = y;
+          sy = height - 1 - x;
+        } else if (currentOrientation === 'ccw90') {
+          sx = width - 1 - y;
+          sy = x;
+        }
+        const i = (sy * stride + sx) * 2;
+        const px = raw[i] | (raw[i + 1] << 8);
+        out[outIndex++] = lut.r[px];
+        out[outIndex++] = lut.g[px];
+        out[outIndex++] = lut.b[px];
+        out[outIndex++] = 255;
+      }
+    }
+  }
+  screenCtx.putImageData(image, 0, 0);
+  return true;
+}
+async function drawPngFrame(data) {
+  const blob = data instanceof Blob ? data : new Blob([data], {type:'image/png'});
+  const bitmap = await createImageBitmap(blob);
+  ensureScreenSize(bitmap.width, bitmap.height);
+  screenCtx.drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+}
 function connectWs() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.binaryType = 'blob';
+  ws.binaryType = 'arraybuffer';
   ws.onopen = () => stopPolling();
   ws.onmessage = async ev => {
+    if (ev.data instanceof ArrayBuffer) {
+      if (!drawRawRgb565Frame(ev.data)) await drawPngFrame(ev.data);
+      return;
+    }
     if (ev.data instanceof Blob) {
-      const bitmap = await createImageBitmap(ev.data);
-      if (screen.width !== bitmap.width || screen.height !== bitmap.height) {
-        screen.width = bitmap.width;
-        screen.height = bitmap.height;
-        screenCtx.imageSmoothingEnabled = false;
-      }
-      screenCtx.drawImage(bitmap, 0, 0);
-      bitmap.close?.();
+      await drawPngFrame(ev.data);
       return;
     }
     try { renderStatus(JSON.parse(ev.data)); } catch (err) { console.error(err); }
@@ -267,6 +387,25 @@ async function step() {
   const n = Number(stepsEl.value || 250000);
   wsSend({op:'step', steps:n});
 }
+function requestStop() {
+  wsSend({op:'stop'});
+  setTimeout(async () => {
+    try {
+      const status = await api('/api/status');
+      if (!status.running) {
+        renderStatus(status);
+        return;
+      }
+      renderStatus(await api('/api/command', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({op:'stop'})
+      }));
+    } catch (err) {
+      console.error(err);
+    }
+  }, 1200);
+}
 document.getElementById('boot').onclick = async () => {
   const n = Number(stepsEl.value || 250000);
   setContinuousActive(true);
@@ -284,7 +423,7 @@ document.getElementById('auto').onclick = () => {
   const n = Number(stepsEl.value || 250000);
   if (continuousActive) {
     setContinuousActive(false);
-    wsSend({op:'stop'});
+    requestStop();
     return;
   }
   setContinuousActive(true);
@@ -295,7 +434,7 @@ document.getElementById('stop').onclick = async () => {
   if (timer) { clearInterval(timer); timer = null; }
   setContinuousActive(false);
   stopPolling();
-  wsSend({op:'stop'});
+  requestStop();
 };
 autoBootEl.onchange = () => {
   wsSend({op:'auto-calibration', enabled:autoBootEl.checked});
@@ -444,8 +583,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--worker-slice-seconds",
         type=float,
-        default=0.5,
+        default=0.25,
         help="Wall-clock timeout for each frontend worker timeslice, keeping input/status responsive in tight loops.",
+    )
+    ap.add_argument(
+        "--run-internal-chunk-steps",
+        type=int,
+        default=100_000,
+        help="Maximum Unicorn emu_start count inside one frontend worker slice. Lower values improve yield points; 100000 matches the previous default.",
+    )
+    ap.add_argument(
+        "--frame-push-min-interval",
+        type=float,
+        default=0.04,
+        help="Minimum seconds between framebuffer-dirty WebSocket frame pushes.",
+    )
+    ap.add_argument(
+        "--frame-info-min-interval",
+        type=float,
+        default=1.0,
+        help="Minimum seconds between full framebuffer-stat rescans for status JSON.",
     )
     ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200", help="Frontend cold-boot path. c200 matches the passing menu regression.")
     ap.add_argument("--state-in", type=Path, help="Load an emulator checkpoint when the frontend resets.")
@@ -499,6 +656,30 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--slow-global-code-hook", action="store_true", help="Diagnostic: hook every executed instruction instead of selected fast-hook PCs.")
     ap.add_argument("--block-image", action="store_true", help="Enable the legacy temporary logical block-device hook.")
     ap.add_argument("--scheduler-tick-clamp", action="store_true", help="Enable the old diagnostic scheduler tick clamp.")
+    ap.add_argument(
+        "--completed-step-timer",
+        action="store_true",
+        help=(
+            "Drive modeled TCU/periodic IRQ time from completed Unicorn steps "
+            "instead of hook observations. Keep this off for cold-boot diagnostics."
+        ),
+    )
+    ap.add_argument(
+        "--completed-step-timer-after-auto-boot",
+        action="store_true",
+        default=False,
+        help=(
+            "Switch to completed-step timer after automatic calibration/time-dialog "
+            "input reaches the main menu. Off by default because menu/app event "
+            "timing is still calibrated against the hook-observed source."
+        ),
+    )
+    ap.add_argument(
+        "--no-completed-step-timer-after-auto-boot",
+        dest="completed_step_timer_after_auto_boot",
+        action="store_false",
+        help="Keep hook-observed timer source even after automatic cold boot finishes.",
+    )
     ap.add_argument(
         "--key-input-mode",
         choices=["hardware", "sampler", "both"],

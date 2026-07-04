@@ -130,6 +130,8 @@ class HwEmuStateMixin:
             "tcu_enabled_mask": self.tcu_enabled_mask,
             "tcu_pending_mask": self.tcu_pending_mask,
             "intc_pending_mask": self.intc_pending_mask,
+            "completed_step_timer": bool(getattr(self, "completed_step_timer", False)),
+            "timer_insn_count": self.timer_insn_count,
             "tcu_period_insn": self.tcu_period_insn,
             "next_tcu_irq_insn": self.next_tcu_irq_insn,
             "irq24_period_insn": self.irq24_period_insn,
@@ -140,6 +142,9 @@ class HwEmuStateMixin:
             "gui_timer_tick_count": self.gui_timer_tick_count,
             "gui_timer_fire_count": self.gui_timer_fire_count,
             "gui_timer_events": self.gui_timer_events[-128:],
+            "bda_poll_timer_service_count": getattr(self, "bda_poll_timer_service_count", 0),
+            "bda_poll_irq_service_count": getattr(self, "bda_poll_irq_service_count", 0),
+            "bda_poll_step_timer_enable_count": getattr(self, "bda_poll_step_timer_enable_count", 0),
             "scratch_alloc_va": self.scratch_alloc_va,
             "ram_z": zlib.compress(bytes(self.uc.mem_read(PHYS_RAM_BASE, self.ram_size)), level=1),
         }
@@ -237,6 +242,8 @@ class HwEmuStateMixin:
         self.tcu_enabled_mask = int(payload.get("tcu_enabled_mask", self.mmio_regs.get(0x10002038, self.tcu_enabled_mask)))
         self.tcu_pending_mask = int(payload.get("tcu_pending_mask", self.tcu_pending_mask))
         self.intc_pending_mask = int(payload.get("intc_pending_mask", self.intc_pending_mask))
+        self.completed_step_timer = bool(payload.get("completed_step_timer", getattr(self, "completed_step_timer", False)))
+        self.timer_insn_count = int(payload.get("timer_insn_count", getattr(self, "timer_insn_count", self.state.insn_count)))
         self.tcu_period_insn = int(payload.get("tcu_period_insn", self.tcu_period_insn))
         self.irq24_period_insn = int(payload.get("irq24_period_insn", self.irq24_period_insn))
         for addr in (0x10002054, 0x10002050):
@@ -257,6 +264,18 @@ class HwEmuStateMixin:
         self.gui_timer_tick_count = int(payload.get("gui_timer_tick_count", self.gui_timer_tick_count))
         self.gui_timer_fire_count = int(payload.get("gui_timer_fire_count", self.gui_timer_fire_count))
         self.gui_timer_events = list(payload.get("gui_timer_events", self.gui_timer_events))[-128:]
+        self.bda_poll_timer_service_count = int(
+            payload.get(
+                "bda_poll_timer_service_count",
+                payload.get("bda_poll_irq_service_count", getattr(self, "bda_poll_timer_service_count", 0)),
+            )
+        )
+        self.bda_poll_irq_service_count = int(
+            payload.get("bda_poll_irq_service_count", self.bda_poll_timer_service_count)
+        )
+        self.bda_poll_step_timer_enable_count = int(
+            payload.get("bda_poll_step_timer_enable_count", getattr(self, "bda_poll_step_timer_enable_count", 0))
+        )
         self.scratch_alloc_va = int(payload.get("scratch_alloc_va", self.scratch_alloc_va))
 
     def regs(self) -> dict[str, str]:
@@ -433,6 +452,7 @@ class HwEmuStateMixin:
                 "raw_y": self._touch_adc_raw(1),
             },
             "tcu": {
+                "timer_insn_count": self.timer_insn_count,
                 "enabled_mask": f"0x{self.tcu_enabled_mask:08x}",
                 "pending_mask": f"0x{self.tcu_pending_mask:08x}",
                 "intc_pending_mask": f"0x{self.intc_pending_mask:08x}",
@@ -843,16 +863,48 @@ class HwEmuStateMixin:
             values[name] = None if value is None else f"0x{value:0{size * 2}x}"
         raw = self._read_block_va_safe(0x80473F00, 0x80)
         return {
+            "timer_source": "completed_steps" if getattr(self, "completed_step_timer", False) else "hook_observed",
+            "timer_insn_count": self.timer_insn_count,
             "wait_wake_count": self.wait_wake_count,
             "timer_tick_count": self.timer_tick_count,
             "gui_timer_tick_count": self.gui_timer_tick_count,
             "gui_timer_fire_count": self.gui_timer_fire_count,
             "gui_timer_events": self.gui_timer_events[-32:],
+            "bda_poll_timer_service_count": getattr(self, "bda_poll_timer_service_count", 0),
+            "bda_poll_irq_service_count": getattr(self, "bda_poll_irq_service_count", 0),
+            "bda_poll_step_timer_enable_count": getattr(self, "bda_poll_step_timer_enable_count", 0),
             "scheduler_poll_count": self.scheduler_poll_count,
             "scheduler_dispatch_count": self.scheduler_dispatch_count,
             "tick_clamp_enabled": self.scheduler_tick_clamp,
             "fields": values,
             "raw_80473f00_7f": None if raw is None else raw.hex(),
+        }
+
+    def scheduler_snapshot_compact(self) -> dict[str, object]:
+        def read_u8_hex(va: int) -> str | None:
+            try:
+                return f"0x{self._read_mem_va(va, 1) & 0xFF:02x}"
+            except Exception:
+                return None
+
+        fields = {
+            "run_enabled_3f09": read_u8_hex(0x80473F09),
+            "timer_countdown_3f08": read_u8_hex(0x80473F08),
+        }
+        return {
+            "timer_source": "completed_steps" if getattr(self, "completed_step_timer", False) else "hook_observed",
+            "timer_insn_count": self.timer_insn_count,
+            "wait_wake_count": self.wait_wake_count,
+            "timer_tick_count": self.timer_tick_count,
+            "gui_timer_tick_count": self.gui_timer_tick_count,
+            "gui_timer_fire_count": self.gui_timer_fire_count,
+            "bda_poll_timer_service_count": getattr(self, "bda_poll_timer_service_count", 0),
+            "bda_poll_irq_service_count": getattr(self, "bda_poll_irq_service_count", 0),
+            "bda_poll_step_timer_enable_count": getattr(self, "bda_poll_step_timer_enable_count", 0),
+            "scheduler_poll_count": self.scheduler_poll_count,
+            "scheduler_dispatch_count": self.scheduler_dispatch_count,
+            "tick_clamp_enabled": self.scheduler_tick_clamp,
+            "fields": fields,
         }
 
     def input_snapshot(self) -> dict[str, object]:

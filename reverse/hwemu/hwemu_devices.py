@@ -18,23 +18,44 @@ from unicorn.mips_const import (
 
 from hwemu_defs import (
     GPIO_BASE,
+    GPIO_DATA_OFFSET,
+    GPIO_FLAG_IRQ_INFO,
     GPIO_FLAG_CLEAR_OFFSET,
     GPIO_FLAG_OFFSET,
     GPIO_PORT_COUNT,
     GPIO_PORT_STRIDE,
     SADC_BASE,
     SADC_STATUS,
+    TOUCH_PEN_GPIO_ADDR,
     gpio_addr_for_port,
     gpio_main_irq_for_port,
 )
 from hwemu_utils import va_to_phys
 
 
+GPIO_DYNAMIC_BACKING_ADDRS = tuple(
+    gpio_addr_for_port(port, GPIO_DATA_OFFSET)
+    for port in range(GPIO_PORT_COUNT)
+    if gpio_addr_for_port(port, GPIO_DATA_OFFSET) != TOUCH_PEN_GPIO_ADDR
+)
+
+
 class HwEmuDeviceMixin:
+    def _sync_sadc_status_backing(self) -> None:
+        self._write_mmio_value(SADC_STATUS, 4, self.sadc_status_event & 0xFF)
+
+    def _sync_gpio_data_backing(self, address: int) -> None:
+        if address not in GPIO_DYNAMIC_BACKING_ADDRS:
+            return
+        value = self.mmio_regs.get(address, self.gpio_idle_levels.get(address, 0))
+        self._write_u32_phys(address, value & 0xFFFFFFFF)
+
+    def _sync_dynamic_gpio_data_backing(self) -> None:
+        for address in GPIO_DYNAMIC_BACKING_ADDRS:
+            self._sync_gpio_data_backing(address)
+
     def _refresh_gpio_pending(self) -> None:
-        for port in range(GPIO_PORT_COUNT):
-            flag_addr = gpio_addr_for_port(port, GPIO_FLAG_OFFSET)
-            main_bit = 1 << gpio_main_irq_for_port(port)
+        for flag_addr, main_bit in GPIO_FLAG_IRQ_INFO:
             if self.mmio_regs.get(flag_addr, 0) & 0xFFFFFFFF:
                 self.intc_pending_mask |= main_bit
             else:
@@ -238,6 +259,9 @@ class HwEmuDeviceMixin:
         }
         removed = before - len(self.nand_page_overrides)
         if removed:
+            cache = getattr(self, "backing_sector_cache", None)
+            if cache is not None:
+                cache.clear()
             self._trace_event("nand-overrides-clear", pc=self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF, size=removed)
         return removed
 
@@ -636,6 +660,8 @@ class HwEmuDeviceMixin:
         if access == UC_MEM_WRITE:
             mask = (1 << (size * 8)) - 1
             self.mmio_regs[address] = value & mask
+            if size == 4:
+                self._sync_gpio_data_backing(address)
             if 0x13040000 <= address < 0x13040100:
                 # UDC registers are not normal RAM. Keep configuration writes
                 # in mmio_regs for inspection, but do not let them become the
@@ -655,7 +681,7 @@ class HwEmuDeviceMixin:
                     ):
                         self.sadc_status_event |= 0x04
                         self.intc_pending_mask |= 1 << 12
-                    self._write_mmio_value(address, size, self.sadc_status_event)
+                    self._sync_sadc_status_backing()
                     return
                 if (
                     address == SADC_BASE + 0x08
@@ -665,6 +691,7 @@ class HwEmuDeviceMixin:
                 ):
                     self.sadc_status_event |= 0x04
                     self.intc_pending_mask |= 1 << 12
+                    self._sync_sadc_status_backing()
                 self._write_mmio_value(address, size, value)
             if size == 4 and self._clear_gpio_flags(address, value):
                 return
@@ -679,9 +706,9 @@ class HwEmuDeviceMixin:
                 if ack & (1 << 22):
                     self.tcu_pending_mask &= ~0x2
                 if ack & ((1 << 23) | (1 << 22)):
-                    self._schedule_next_tcu_irq()
+                    self._advance_next_tcu_irq_after_service()
                 if ack & (1 << 24):
-                    self._schedule_next_irq24()
+                    self._advance_next_irq24_after_service()
             elif address == 0x10002038 and size == 4:
                 self.tcu_enabled_mask |= value & 0xFFFFFFFF
                 self._schedule_next_tcu_irq()
@@ -694,7 +721,7 @@ class HwEmuDeviceMixin:
                     self.intc_pending_mask &= ~(1 << 23)
                 if value & 0x2:
                     self.intc_pending_mask &= ~(1 << 22)
-                self._schedule_next_tcu_irq()
+                self._advance_next_tcu_irq_after_service()
             elif address in (0x10002050, 0x10002054) and size == 4:
                 self._update_tcu_period_from_register(value)
                 self._schedule_next_tcu_irq()

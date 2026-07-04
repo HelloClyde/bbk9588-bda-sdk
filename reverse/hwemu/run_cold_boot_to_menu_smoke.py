@@ -16,6 +16,10 @@ BOOT_TRACE_PCS = [
     "0x8017d3b0",
 ]
 
+CALIBRATION_WAIT_STOP_PCS = [
+    "0x80017c70",
+]
+
 DIALOG_TRACE_PCS = [
     "0x800ca8c0",
     "0x800cad20",
@@ -63,6 +67,8 @@ def run_hwemu(
     max_seconds: int,
     trace_pcs: list[str],
     event_args: list[str],
+    idle_stop_hits: int,
+    stop_pcs: list[str] | None = None,
 ) -> dict[str, object]:
     cmd = [
         sys.executable,
@@ -91,7 +97,7 @@ def run_hwemu(
         "--nand-loop-accelerator",
         "--resource-cache16-accelerator",
         "--idle-stop-hits",
-        "30000",
+        str(idle_stop_hits),
         "--no-block-image",
         "--nand-image",
         str(nand_image),
@@ -107,6 +113,8 @@ def run_hwemu(
         cmd += ["--state-in", str(state_in)]
     for pc in trace_pcs:
         cmd += ["--trace-pc", pc]
+    for pc in stop_pcs or []:
+        cmd += ["--stop-pc", pc]
     cmd += event_args
 
     stdout_path = json_out.with_suffix(".stdout.txt")
@@ -228,6 +236,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-max-seconds", type=int, default=120)
     ap.add_argument("--dialog-max-seconds", type=int, default=80)
     ap.add_argument("--settle-max-seconds", type=int, default=60)
+    ap.add_argument(
+        "--idle-stop-hits",
+        type=int,
+        default=3000,
+        help="Idle-loop hits required before each checkpoint stops. Raise this when investigating late timers.",
+    )
+    ap.add_argument(
+        "--calibration-press-max-seconds",
+        type=int,
+        default=1,
+        help=(
+            "Maximum wall time for the intermediate touch-down checkpoints. "
+            "The release phase performs the real firmware calibration advance."
+        ),
+    )
     ap.add_argument("--x", type=int, default=150)
     ap.add_argument("--y", type=int, default=205)
     args = ap.parse_args(argv)
@@ -248,6 +271,8 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.boot_max_seconds,
         trace_pcs=BOOT_TRACE_PCS,
         event_args=[],
+        idle_stop_hits=args.idle_stop_hits,
+        stop_pcs=CALIBRATION_WAIT_STOP_PCS,
     )
 
     calibration_rows: dict[str, dict[str, object]] = {}
@@ -266,9 +291,10 @@ def main(argv: list[str] | None = None) -> int:
             png_out=args.out_dir / f"{args.prefix}_{name}_press.png",
             nand_image=args.nand_image,
             timeout=args.timeout,
-            max_seconds=max_seconds,
+            max_seconds=args.calibration_press_max_seconds,
             trace_pcs=trace_pcs,
             event_args=["--touch-state", f"{x}:{y}:1"],
+            idle_stop_hits=args.idle_stop_hits,
         )
         release = run_hwemu(
             c200=c200,
@@ -281,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             max_seconds=max_seconds,
             trace_pcs=trace_pcs,
             event_args=["--touch-state", f"{x}:{y}:0"],
+            idle_stop_hits=args.idle_stop_hits,
         )
         calibration_rows[f"{name}_press"] = press
         calibration_rows[f"{name}_release"] = release
@@ -300,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.boot_max_seconds,
         trace_pcs=DIALOG_TRACE_PCS,
         event_args=[],
+        idle_stop_hits=args.idle_stop_hits,
     )
     press = run_hwemu(
         c200=c200,
@@ -317,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
             "--touch-controller-event",
             f"{args.x}:{args.y}:1@20",
         ],
+        idle_stop_hits=args.idle_stop_hits,
     )
     release = run_hwemu(
         c200=c200,
@@ -329,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.dialog_max_seconds,
         trace_pcs=DIALOG_TRACE_PCS,
         event_args=["--touch-state", f"{args.x}:{args.y}:0"],
+        idle_stop_hits=args.idle_stop_hits,
     )
     settle = run_hwemu(
         c200=c200,
@@ -341,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         max_seconds=args.settle_max_seconds,
         trace_pcs=DIALOG_TRACE_PCS,
         event_args=[],
+        idle_stop_hits=args.idle_stop_hits,
     )
 
     failures: list[str] = []

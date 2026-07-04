@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
-from hwemu_defs import BDA_RETURN_PC, KNOWN_C200_STORE_DELAY_BRANCH_PCS
+from hwemu_defs import BDA_IRQ_POLL_PCS, BDA_RETURN_PC, KNOWN_C200_STORE_DELAY_BRANCH_PCS, NATIVE_SAFE_STORE_DELAY_BRANCH_PCS
 from hwemu_fastpaths import PORTRAIT_BLIT_LOOP_PCS
 from hwemu_surface import SURFACE_TRANSPARENT_BLIT_PCS
 
+
+EPILOGUE_JR_FIX_PCS = frozenset(
+    {
+        0x80006688,
+        0x80006834,
+        0x8000FEB4,
+        0x800100C8,
+        0x801802E8,
+        0x8017FDCC,
+        0x8018057C,
+        0x80184D08,
+    }
+)
 
 BASE_FAST_CODE_HOOK_PCS = frozenset(
     {
@@ -50,16 +63,12 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x80004CD4,
         0x80006BD0,
         0x80006BF8,
-        0x80006688,
-        0x80006834,
         0x800074A0,
         0x800098C0,
         0x8000C15C,
         0x8000D990,
         0x8000FEC0,
         0x8000FE74,
-        0x8000FEB4,
-        0x800100C8,
         0x80008354,
         0x80008470,
         0x800080F0,
@@ -81,11 +90,6 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x800129AC,
         0x800133EC,
         0x800176E0,
-        0x80017CB4,
-        0x80017D54,
-        0x80017DE8,
-        0x80018C58,
-        0x80018DAC,
         0x8001A3A0,
         0x8001A6B0,
         0x8001B464,
@@ -124,9 +128,8 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x800E123C,
         0x800E1408,
         0x80170C74,
-        0x8001920C,
-        0x8001925C,
         0x8012A6A8,
+        *BDA_IRQ_POLL_PCS,
         *PORTRAIT_BLIT_LOOP_PCS,
         0x80172840,
         0x8017B45C,
@@ -164,9 +167,6 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x80183958,
         0x80184300,
         0x801838FC,
-        0x801802E8,
-        0x8017FDCC,
-        0x8018057C,
         0x801813E0,
         0x80181400,
         0x80182A90,
@@ -184,7 +184,6 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
         0x801843DC,
         0x80184530,
         0x80183304,
-        0x80184D08,
     }
 )
 
@@ -200,6 +199,10 @@ class HwEmuHookPolicyMixin:
             pcs.update(self._image_jal_pcs())
         pcs.update(self._store_delay_branch_hook_pcs())
         pcs.update(BASE_FAST_CODE_HOOK_PCS)
+        if getattr(self, "busy_delay_static_patch", False):
+            pcs.discard(0x800043A0)
+        if getattr(self, "epilogue_jr_fix_mode", "off") != "off":
+            pcs.update(EPILOGUE_JR_FIX_PCS)
         return pcs
 
     def _store_delay_branch_hook_pcs(self) -> set[int]:
@@ -209,7 +212,7 @@ class HwEmuHookPolicyMixin:
         if self.store_delay_branch_hooks == "all":
             pcs = self._image_store_delay_branch_pcs()
         elif self.store_delay_branch_hooks == "known":
-            pcs = set(KNOWN_C200_STORE_DELAY_BRANCH_PCS)
+            pcs = set(KNOWN_C200_STORE_DELAY_BRANCH_PCS) - set(NATIVE_SAFE_STORE_DELAY_BRANCH_PCS)
         else:
             pcs = set()
         self.store_delay_branch_pcs = pcs

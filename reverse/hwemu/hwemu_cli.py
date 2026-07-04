@@ -575,6 +575,32 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
         ),
     )
     ap.add_argument(
+        "--epilogue-jr-fix-mode",
+        default="off",
+        choices=["off", "log", "fix"],
+        help=(
+            "Diagnostic mode for legacy epilogue jr return patches. "
+            "Default off keeps the full-system path from rewriting SP/PC."
+        ),
+    )
+    ap.add_argument(
+        "--legacy-return-fixes",
+        action="store_true",
+        help=(
+            "Diagnostic compatibility: re-enable old hard-coded RA/SP/return "
+            "patches. Off by default so full-system runs expose real PC/stack bugs."
+        ),
+    )
+    ap.add_argument(
+        "--completed-step-timer",
+        action="store_true",
+        help=(
+            "Drive modeled TCU/periodic IRQ time from completed Unicorn step "
+            "counts instead of selected hook observations. Useful after boot "
+            "for game timing; off by default for cold-boot fidelity."
+        ),
+    )
+    ap.add_argument(
         "--fs-dir-scan-stop-samples",
         type=int,
         default=0,
@@ -664,6 +690,9 @@ def main(argv: list[str], emulator_cls: type, unicorn_cls: object | None) -> int
             font_helper_accelerator=ns.font_helper_accelerator,
             gui_ring_pump=ns.gui_ring_pump,
             repeat_prologue_mode=ns.repeat_prologue_mode,
+            epilogue_jr_fix_mode=ns.epilogue_jr_fix_mode,
+            legacy_return_fixes=ns.legacy_return_fixes,
+            completed_step_timer=ns.completed_step_timer,
         )
         if ns.state_in:
             emu.load_emulator_state(ns.state_in)

@@ -35,11 +35,20 @@ class HwEmuTraceMixin:
             "byte-copy-loop",
             "halfword-copy-loop",
             "halfword-copy-delay-loop",
+            "block-image-hook",
+            "fat16-cluster-read",
+            "fat16-cluster-read-cache-hit",
+            "fs-dir-scan-entry",
+            "lfn-copy-loop",
             "nand-loop-accelerate",
             "ram-delay-branch",
+            "stack-clear32-delay-loop",
+            "zero-pad-delay-loop",
             "lcd-getter",
             "periodic-irq24-pending",
             "busy-delay",
+            "mmio-delay-branch",
+            "wait-wake",
         }:
             self.suppressed_hot_event_count += 1
             return

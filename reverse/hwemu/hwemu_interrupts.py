@@ -10,15 +10,53 @@ from unicorn.mips_const import (
     UC_MIPS_REG_PC,
 )
 
-from hwemu_defs import GPIO_FLAG_OFFSET, GPIO_PORT_COUNT, gpio_addr_for_port, gpio_main_irq_for_port
+from hwemu_defs import GPIO_MAIN_IRQ_TO_FLAG_ADDR, GPIO_MAIN_IRQ_TO_PORT
 
 
 class HwEmuInterruptMixin:
+    def _timer_now(self) -> int:
+        if getattr(self, "completed_step_timer", False):
+            return int(getattr(self, "timer_insn_count", self.state.insn_count))
+        return int(self.state.insn_count)
+
+    def _set_completed_step_timer_source(self, enabled: bool, *, pc: int = 0, reason: str = "manual") -> bool:
+        old_enabled = bool(getattr(self, "completed_step_timer", False))
+        enabled = bool(enabled)
+        if old_enabled == enabled:
+            return False
+
+        old_now = self._timer_now()
+        old_tcu = self.next_tcu_irq_insn
+        old_irq24 = self.next_irq24_insn
+
+        if enabled:
+            self.timer_insn_count = max(
+                int(getattr(self, "timer_insn_count", 0)),
+                int(self.state.insn_count),
+            )
+        self.completed_step_timer = enabled
+        new_now = self._timer_now()
+
+        def rebase(deadline: int | None) -> int | None:
+            if deadline is None:
+                return None
+            return new_now + max(0, int(deadline) - old_now)
+
+        self.next_tcu_irq_insn = rebase(old_tcu)
+        self.next_irq24_insn = rebase(old_irq24)
+        self._trace_event(
+            "timer-source-switch",
+            pc=pc,
+            value=int(enabled),
+            size=new_now,
+            addr=old_now,
+        )
+        return True
+
     def _gpio_subirq_from_main_irq(self, irq: int) -> int | None:
-        port = gpio_main_irq_for_port(0) - irq
-        if port < 0 or port >= GPIO_PORT_COUNT:
+        flag_addr = GPIO_MAIN_IRQ_TO_FLAG_ADDR.get(irq)
+        if flag_addr is None:
             return None
-        flag_addr = gpio_addr_for_port(port, GPIO_FLAG_OFFSET)
         flags = self.mmio_regs.get(flag_addr, 0) & 0xFFFFFFFF
         if flags == 0:
             self.intc_pending_mask &= ~(1 << irq)
@@ -31,6 +69,7 @@ class HwEmuInterruptMixin:
             self.intc_pending_mask |= 1 << irq
         else:
             self.intc_pending_mask &= ~(1 << irq)
+        port = GPIO_MAIN_IRQ_TO_PORT[irq]
         subirq = 0x30 + port * 32 + bit
         self._trace_event(
             "wait-gpio-subirq",
@@ -43,17 +82,32 @@ class HwEmuInterruptMixin:
 
     def _schedule_next_tcu_irq(self) -> None:
         if self.tcu_enabled_mask & 0x3:
-            self.next_tcu_irq_insn = self.state.insn_count + self.tcu_period_insn
+            self.next_tcu_irq_insn = self._timer_now() + self.tcu_period_insn
+        else:
+            self.next_tcu_irq_insn = None
+
+    def _advance_next_tcu_irq_after_service(self) -> None:
+        if self.tcu_enabled_mask & 0x3:
+            if self.next_tcu_irq_insn is None:
+                self.next_tcu_irq_insn = self._timer_now() + self.tcu_period_insn
+            else:
+                self.next_tcu_irq_insn += self.tcu_period_insn
         else:
             self.next_tcu_irq_insn = None
 
     def _schedule_next_irq24(self) -> None:
-        self.next_irq24_insn = self.state.insn_count + self.irq24_period_insn
+        self.next_irq24_insn = self._timer_now() + self.irq24_period_insn
+
+    def _advance_next_irq24_after_service(self) -> None:
+        if self.next_irq24_insn is None:
+            self._schedule_next_irq24()
+        else:
+            self.next_irq24_insn += self.irq24_period_insn
 
     def _refresh_tcu_pending(self) -> None:
         if self.next_tcu_irq_insn is None:
             return
-        if self.state.insn_count < self.next_tcu_irq_insn:
+        if self._timer_now() < self.next_tcu_irq_insn:
             return
         newly_pending = (self.tcu_enabled_mask & 0x3) & ~self.tcu_pending_mask
         if newly_pending:
@@ -64,18 +118,16 @@ class HwEmuInterruptMixin:
             if newly_pending & 0x2:
                 self.intc_pending_mask |= 1 << 22
                 self._trace_event("tcu-irq-pending", pc=self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF, value=22)
-        self.next_tcu_irq_insn = self.state.insn_count + self.tcu_period_insn
 
     def _refresh_irq24_pending(self) -> None:
         if self.next_irq24_insn is None:
             self._schedule_next_irq24()
             return
-        if self.state.insn_count < self.next_irq24_insn:
+        if self._timer_now() < self.next_irq24_insn:
             return
         if not (self.intc_pending_mask & (1 << 24)):
             self.intc_pending_mask |= 1 << 24
             self._trace_event("periodic-irq24-pending", pc=self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF, value=24)
-        self.next_irq24_insn = self.state.insn_count + self.irq24_period_insn
 
     def _update_tcu_period_from_register(self, value: int) -> None:
         compare = value & 0xFFFFFFFF
@@ -113,8 +165,13 @@ class HwEmuInterruptMixin:
     def _maybe_deliver_external_interrupt(self, pc: int) -> bool:
         if self.profile != "bbk9588-uboot":
             return False
-        self._refresh_tcu_pending()
-        self._refresh_irq24_pending()
+        insn_count = self._timer_now()
+        if self.next_tcu_irq_insn is not None and insn_count >= self.next_tcu_irq_insn:
+            self._refresh_tcu_pending()
+        if self.next_irq24_insn is None:
+            self._schedule_next_irq24()
+        elif insn_count >= self.next_irq24_insn:
+            self._refresh_irq24_pending()
         if self.interrupt_suppress_pc_once is not None and pc == self.interrupt_suppress_pc_once:
             self._trace_event("external-interrupt-suppress-once", pc=pc)
             self.interrupt_suppress_pc_once = None
@@ -171,12 +228,12 @@ class HwEmuInterruptMixin:
             self.intc_pending_mask &= ~(1 << irq)
             if irq == 23:
                 self.tcu_pending_mask &= ~0x1
-                self._schedule_next_tcu_irq()
+                self._advance_next_tcu_irq_after_service()
             elif irq == 22:
                 self.tcu_pending_mask &= ~0x2
-                self._schedule_next_tcu_irq()
+                self._advance_next_tcu_irq_after_service()
             elif irq == 24:
-                self._schedule_next_irq24()
+                self._advance_next_irq24_after_service()
             self._trace_event("wait-irq-skip-default", pc=pc, value=dispatch_irq, target=handler or 0, addr=irq)
             pending = self.intc_pending_mask & 0xFFFFFFFF
         else:
@@ -186,8 +243,12 @@ class HwEmuInterruptMixin:
             self.intc_pending_mask &= ~(1 << irq)
         if irq == 23:
             self.tcu_pending_mask &= ~0x1
+            self._advance_next_tcu_irq_after_service()
         elif irq == 22:
             self.tcu_pending_mask &= ~0x2
+            self._advance_next_tcu_irq_after_service()
+        elif irq == 24:
+            self._advance_next_irq24_after_service()
         self.uc.reg_write(UC_MIPS_REG_4, arg & 0xFFFFFFFF)
         self.uc.reg_write(UC_MIPS_REG_31, return_pc & 0xFFFFFFFF)
         self.uc.reg_write(UC_MIPS_REG_PC, handler & 0xFFFFFFFF)

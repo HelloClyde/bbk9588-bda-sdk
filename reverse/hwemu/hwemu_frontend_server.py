@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from hwemu_frontend_ws import encode_ws_frame, recv_ws_text, websocket_accept_key
+from hwemu_frontend_ws import WebSocketFrameReader, encode_ws_frame, websocket_accept_key
 
 
 class FrontendHandler(BaseHTTPRequestHandler):
@@ -32,23 +34,59 @@ class FrontendHandler(BaseHTTPRequestHandler):
     def _ws_send_json(self, data: object) -> None:
         self._ws_send_frame(0x1, json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
-    def _ws_send_frame_png(self, allow_cached: bool = True, allow_dump: bool = True) -> bool:
-        frame = self.state.pop_queued_frame()
+    def _ws_send_frame_payload(self, allow_cached: bool = True, allow_dump: bool = True) -> bool:
+        popper = getattr(self.state, "pop_queued_ws_frame", None)
+        frame = popper() if popper is not None else self.state.pop_queued_frame()
+        if frame is None and allow_cached:
+            cached = getattr(self.state, "cached_ws_frame", None)
+            frame = cached() if cached is not None else None
         if frame is None and allow_cached:
             frame = self.state.cached_frame()
         if frame is None and allow_dump:
-            frame = self.state.dump_frame()
+            dumper = getattr(self.state, "dump_ws_frame", None)
+            frame = dumper() if dumper is not None else self.state.dump_frame()
         if frame is None:
             return False
         self._ws_send_frame(0x2, frame)
+        recorder = getattr(self.state, "record_ws_frame_sent", None)
+        if recorder is not None:
+            recorder(frame)
         return True
 
-    def _ws_send_queued_frame_png(self) -> bool:
-        frame = self.state.pop_queued_frame()
+    def _ws_send_queued_frame_payload(self) -> bool:
+        popper = getattr(self.state, "pop_latest_queued_ws_frame", None)
+        frame = popper() if popper is not None else self.state.pop_latest_queued_frame()
         if frame is None:
             return False
         self._ws_send_frame(0x2, frame)
+        recorder = getattr(self.state, "record_ws_frame_sent", None)
+        if recorder is not None:
+            recorder(frame)
         return True
+
+    def _ws_response_for_text(self, text: str) -> dict[str, object] | None:
+        if text is None:
+            return None
+        if not text:
+            return None
+        try:
+            msg = json.loads(text)
+            if isinstance(msg, dict):
+                op = str(msg.get("op", "status"))
+                command_seq = msg.get("command_seq")
+                recorder = getattr(self.state, "record_ws_command", None)
+                if recorder is not None:
+                    recorder(op, command_seq)
+                response = self.state.command(msg)
+                if isinstance(response, dict):
+                    response = dict(response)
+                    response["_ws_op"] = op
+                    if command_seq is not None:
+                        response["_ws_command_seq"] = command_seq
+                return response
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        return None
 
     def _handle_ws(self) -> None:
         key = self.headers.get("Sec-WebSocket-Key")
@@ -61,36 +99,103 @@ class FrontendHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "Upgrade")
         self.send_header("Sec-WebSocket-Accept", accept)
         self.end_headers()
-        self.connection.settimeout(0.25)
-        last_push = 0.0
-        self._ws_send_json(self.state.snapshot())
-        self._ws_send_frame_png(allow_cached=True, allow_dump=not self.state.worker_active())
-        while True:
-            now = time.time()
-            if self._ws_send_queued_frame_png():
-                self._ws_send_json(self.state.snapshot())
-                last_push = now
-            elif now - last_push >= 0.5:
-                self._ws_send_json(self.state.snapshot())
-                last_push = now
+        # The same socket is used by the reader thread and the frame sender.
+        # Raw RGB565 frames are 153 KiB, so a 250 ms socket timeout can close a
+        # healthy WS connection if the browser is briefly busy. Keep the
+        # condition-variable loop responsive and give sendall enough room.
+        self.connection.settimeout(2.0)
+        alive = threading.Event()
+        alive.set()
+        reader_alive_setter = getattr(self.state, "set_ws_reader_alive", None)
+        if reader_alive_setter is not None:
+            reader_alive_setter(True)
+        pending_lock = threading.Lock()
+        pending_responses: deque[dict[str, object]] = deque()
+        activity_seq_getter = getattr(self.state, "frontend_activity_sequence", None)
+        activity_waiter = getattr(self.state, "wait_for_frontend_activity", None)
+        activity_notifier = getattr(self.state, "notify_frontend_activity", None)
+        deferred_delay_getter = getattr(self.state, "seconds_until_deferred_frame", None)
+        activity_seq = activity_seq_getter() if activity_seq_getter is not None else 0
+
+        def queue_response(response: dict[str, object] | None) -> None:
+            if response is None:
+                return
+            with pending_lock:
+                pending_responses.append(response)
+            if activity_notifier is not None:
+                activity_notifier()
+
+        def reader() -> None:
+            frame_reader = WebSocketFrameReader(self.connection)
             try:
-                text = recv_ws_text(self.connection)
-            except TimeoutError:
-                continue
-            except OSError:
-                break
-            if text is None:
-                break
-            if not text:
-                continue
-            try:
-                msg = json.loads(text)
-                if isinstance(msg, dict):
-                    self._ws_send_json(self.state.command(msg))
-                    active = self.state.worker_active()
-                    self._ws_send_frame_png(allow_cached=not active, allow_dump=not active)
-            except Exception as exc:
-                self._ws_send_json({"error": f"{type(exc).__name__}: {exc}"})
+                while alive.is_set():
+                    try:
+                        text = frame_reader.recv_text()
+                    except TimeoutError:
+                        if reader_alive_setter is not None:
+                            reader_alive_setter(True)
+                        continue
+                    except OSError:
+                        break
+                    if text is None:
+                        break
+                    queue_response(self._ws_response_for_text(text))
+            finally:
+                alive.clear()
+                if reader_alive_setter is not None:
+                    reader_alive_setter(False)
+                if activity_notifier is not None:
+                    activity_notifier()
+
+        reader_thread = threading.Thread(target=reader, name="hwemu-ws-reader", daemon=True)
+        reader_thread.start()
+
+        def pop_response() -> dict[str, object] | None:
+            with pending_lock:
+                return pending_responses.popleft() if pending_responses else None
+
+        last_status_push = 0.0
+        try:
+            self._ws_send_json(self.state.snapshot())
+            last_status_push = time.time()
+            self._ws_send_frame_payload(allow_cached=True, allow_dump=not self.state.worker_active())
+            while alive.is_set() or pending_responses:
+                now = time.time()
+                response_sent = False
+                for _ in range(32):
+                    response = pop_response()
+                    if response is None:
+                        break
+                    self._ws_send_json(response)
+                    last_status_push = now
+                    response_sent = True
+                if response_sent:
+                    continue
+                if self._ws_send_queued_frame_payload():
+                    if now - last_status_push >= 0.5:
+                        self._ws_send_json(self.state.snapshot())
+                        last_status_push = now
+                elif now - last_status_push >= 0.5:
+                    self._ws_send_json(self.state.snapshot())
+                    last_status_push = now
+                else:
+                    status_delay = max(0.0, 0.5 - (time.time() - last_status_push))
+                    wait_timeout = min(0.25, status_delay)
+                    if deferred_delay_getter is not None:
+                        deferred_delay = deferred_delay_getter()
+                        if deferred_delay is not None:
+                            wait_timeout = min(wait_timeout, deferred_delay)
+                    if activity_waiter is not None:
+                        activity_seq = activity_waiter(activity_seq, wait_timeout)
+                    elif wait_timeout > 0:
+                        time.sleep(wait_timeout)
+        except OSError:
+            pass
+        finally:
+            alive.clear()
+            reader_thread.join(timeout=0.5)
+            if reader_alive_setter is not None:
+                reader_alive_setter(False)
 
     def do_GET(self) -> None:
         try:
@@ -100,7 +205,11 @@ class FrontendHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/ws":
                 self._handle_ws()
             elif parsed.path == "/api/status":
-                self._json(self.state.snapshot())
+                detail = parse_qs(parsed.query).get("detail", ["compact"])[0]
+                if detail == "full":
+                    self._json(self.state.snapshot(detail="full"))
+                else:
+                    self._json(self.state.snapshot())
             elif parsed.path == "/api/logs":
                 limit = int(parse_qs(parsed.query).get("limit", ["512"])[0])
                 self._json(self.state.logs(limit))

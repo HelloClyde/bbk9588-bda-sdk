@@ -14,6 +14,29 @@ class FramebufferReader(Protocol):
     def _read_block_va_safe(self, va: int, size: int) -> bytes | None: ...
 
 
+_RGB565_LUT_RGB: tuple[tuple[int, int, int], ...] | None = None
+_RGB565_LUT_BGR: tuple[tuple[int, int, int], ...] | None = None
+
+
+def _rgb565_lut(bgr: bool) -> tuple[tuple[int, int, int], ...]:
+    global _RGB565_LUT_RGB, _RGB565_LUT_BGR
+    cached = _RGB565_LUT_BGR if bgr else _RGB565_LUT_RGB
+    if cached is not None:
+        return cached
+    table: list[tuple[int, int, int]] = []
+    for px in range(0x10000):
+        r = ((px >> 11) & 0x1F) * 255 // 31
+        g = ((px >> 5) & 0x3F) * 255 // 63
+        b = (px & 0x1F) * 255 // 31
+        table.append((b, g, r) if bgr else (r, g, b))
+    cached = tuple(table)
+    if bgr:
+        _RGB565_LUT_BGR = cached
+    else:
+        _RGB565_LUT_RGB = cached
+    return cached
+
+
 def _png_chunk(kind: bytes, data: bytes) -> bytes:
     return (
         struct.pack(">I", len(data))
@@ -111,11 +134,42 @@ def render_rgb565_framebuffer(
 ) -> tuple[dict[str, object], bytes]:
     if width <= 0 or height <= 0 or stride_pixels < width or offset_bytes < 0:
         raise ValueError("invalid framebuffer dimensions")
-    if pixel_format not in {"rgb565", "bgr565", "rgb565-be", "bgr565-be"}:
-        raise ValueError(f"unsupported framebuffer format: {pixel_format}")
 
     phys = (addr & 0x1FFFFFFF if addr >= RAM_BASE else addr) + offset_bytes
     raw = bytes(emu.uc.mem_read(phys, stride_pixels * height * 2))
+    return rgb565_raw_to_info_rgb(
+        raw,
+        addr,
+        offset_bytes,
+        width,
+        height,
+        stride_pixels,
+        pixel_format,
+        orientation,
+    )
+
+
+def rgb565_raw_to_info_rgb(
+    raw: bytes,
+    addr: int,
+    offset_bytes: int,
+    width: int,
+    height: int,
+    stride_pixels: int,
+    pixel_format: str,
+    orientation: str,
+) -> tuple[dict[str, object], bytes]:
+    if width <= 0 or height <= 0 or stride_pixels < width or offset_bytes < 0:
+        raise ValueError("invalid framebuffer dimensions")
+    if pixel_format not in {"rgb565", "bgr565", "rgb565-be", "bgr565-be"}:
+        raise ValueError(f"unsupported framebuffer format: {pixel_format}")
+    required = stride_pixels * height * 2
+    if len(raw) < required:
+        raise ValueError("RGB565 buffer size does not match framebuffer dimensions")
+
+    big_endian = pixel_format.endswith("-be")
+    bgr = pixel_format.startswith("bgr")
+    rgb_lut = _rgb565_lut(bgr)
     rgb = bytearray(width * height * 3)
     nonzero = 0
     unique: set[int] = set()
@@ -129,7 +183,7 @@ def render_rgb565_framebuffer(
         row = y * stride_pixels * 2
         for x in range(width):
             i = row + x * 2
-            if pixel_format.endswith("-be"):
+            if big_endian:
                 px = (raw[i] << 8) | raw[i + 1]
             else:
                 px = raw[i] | (raw[i + 1] << 8)
@@ -144,11 +198,7 @@ def render_rgb565_framebuffer(
                     max_x = x
                 if y > max_y:
                     max_y = y
-            r = ((px >> 11) & 0x1F) * 255 // 31
-            g = ((px >> 5) & 0x3F) * 255 // 63
-            b = (px & 0x1F) * 255 // 31
-            if pixel_format.startswith("bgr"):
-                r, b = b, r
+            r, g, b = rgb_lut[px]
             rgb[out_i] = r
             rgb[out_i + 1] = g
             rgb[out_i + 2] = b

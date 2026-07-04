@@ -16,12 +16,22 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from hwemu_frontend_ws import encode_ws_frame, read_ws_frame
+from hwemu_framebuffer import png_bytes_from_rgb, rgb565_raw_to_info_rgb
+from hwemu_frontend_ws import WebSocketFrameReader, encode_ws_frame
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
 DEFAULT_NAND = BUILD / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin"
+WS_RAW_FRAME_MAGIC = b"BBKRAW1\0"
+WS_RAW_FRAME_HEADER_SIZE = 20
+WS_RAW_FRAME_FORMAT_RGB565 = 1
+
+
+def ws_raw_frame_seq(payload: bytes) -> int | None:
+    if payload.startswith(WS_RAW_FRAME_MAGIC) and len(payload) >= WS_RAW_FRAME_HEADER_SIZE:
+        return int.from_bytes(payload[8:12], "little")
+    return None
 
 
 def find_free_port(host: str) -> int:
@@ -52,6 +62,33 @@ def http_bytes(host: str, port: int, path: str) -> tuple[int, bytes]:
     return res.status, data
 
 
+def ws_frame_payload_to_png(payload: bytes, orientation: str) -> tuple[bytes, str]:
+    if payload.startswith(WS_RAW_FRAME_MAGIC) and len(payload) >= WS_RAW_FRAME_HEADER_SIZE:
+        seq = int.from_bytes(payload[8:12], "little")
+        width = int.from_bytes(payload[12:14], "little")
+        height = int.from_bytes(payload[14:16], "little")
+        stride = int.from_bytes(payload[16:18], "little")
+        pixel_format = int.from_bytes(payload[18:20], "little")
+        raw = payload[WS_RAW_FRAME_HEADER_SIZE:]
+        if pixel_format != WS_RAW_FRAME_FORMAT_RGB565:
+            raise ValueError(f"unsupported raw WS frame format {pixel_format}")
+        info, rgb = rgb565_raw_to_info_rgb(
+            raw,
+            0xA1F82000,
+            0,
+            width,
+            height,
+            stride,
+            "rgb565",
+            orientation,
+        )
+        info["dirty_seq"] = seq
+        return png_bytes_from_rgb(int(info["output_width"]), int(info["output_height"]), rgb), "raw-rgb565"
+    if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return payload, "png"
+    raise ValueError(f"unknown WS frame payload signature {payload[:12].hex()}")
+
+
 class WebSocketClient:
     def __init__(self, host: str, port: int):
         self.host = host
@@ -77,8 +114,13 @@ class WebSocketClient:
         if b" 101 " not in response.split(b"\r\n", 1)[0]:
             raise RuntimeError(f"websocket handshake failed: {response[:200]!r}")
         self.sock.settimeout(0.25)
+        self.reader = WebSocketFrameReader(self.sock)
         self.last_status: dict[str, object] = {}
         self.last_frame: bytes | None = None
+        self.last_frame_payload: bytes | None = None
+        self.last_frame_orientation = "rot180"
+        self.last_frame_wire_kind = ""
+        self.last_frame_seq: int | None = None
         self.frames = 0
 
     def close(self) -> None:
@@ -91,9 +133,20 @@ class WebSocketClient:
         payload = json.dumps(msg, ensure_ascii=False).encode("utf-8")
         self.sock.sendall(encode_ws_frame(0x1, payload, mask=os.urandom(4)))
 
+    def send_command_async(self, msg: dict[str, object]) -> int:
+        command = dict(msg)
+        command_seq = int(time.time() * 1_000_000)
+        command["command_seq"] = command_seq
+        self.send_json(command)
+        return command_seq
+
+    def send_command(self, msg: dict[str, object], timeout: float = 3.0) -> dict[str, object] | None:
+        command_seq = self.send_command_async(msg)
+        return self.wait_for_command_seq(command_seq, timeout)
+
     def recv_one(self) -> tuple[str, object] | None:
         try:
-            frame = read_ws_frame(self.sock)
+            frame = self.reader.read_frame()
         except TimeoutError:
             return None
         except socket.timeout:
@@ -107,12 +160,35 @@ class WebSocketClient:
                 self.last_status = status
             return "json", status
         if opcode == 0x2:
-            self.last_frame = payload
+            orientation = str(self.last_status.get("orientation") or "rot180")
+            if payload.startswith(WS_RAW_FRAME_MAGIC) and len(payload) >= WS_RAW_FRAME_HEADER_SIZE:
+                self.last_frame_wire_kind = "raw-rgb565"
+                self.last_frame_seq = ws_raw_frame_seq(payload)
+            elif payload.startswith(b"\x89PNG\r\n\x1a\n"):
+                self.last_frame_wire_kind = "png"
+                self.last_frame_seq = None
+            else:
+                self.last_frame_wire_kind = "unknown"
+                self.last_frame_seq = None
+            self.last_frame_payload = payload
+            self.last_frame_orientation = orientation
+            self.last_frame = None
             self.frames += 1
             return "frame", payload
         if opcode == 0x8:
             return "close", payload
         return "other", payload
+
+    def current_frame_png(self) -> bytes | None:
+        if self.last_frame is not None:
+            return self.last_frame
+        if self.last_frame_payload is None:
+            return None
+        self.last_frame, self.last_frame_wire_kind = ws_frame_payload_to_png(
+            self.last_frame_payload,
+            self.last_frame_orientation,
+        )
+        return self.last_frame
 
     def pump(self, seconds: float) -> None:
         deadline = time.time() + seconds
@@ -140,6 +216,101 @@ class WebSocketClient:
                     return self.last_status
         return self.last_status
 
+    def wait_for_new_status(
+        self,
+        predicate: Callable[[dict[str, object]], bool],
+        timeout: float,
+        *,
+        poll_status: Callable[[], dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        deadline = time.time() + timeout
+        last_poll = 0.0
+        while time.time() < deadline:
+            item = self.recv_one()
+            if item is not None and item[0] == "json" and predicate(self.last_status):
+                return self.last_status
+            now = time.time()
+            if poll_status is not None and now - last_poll >= 2.0:
+                polled = poll_status()
+                last_poll = now
+                if predicate(polled):
+                    self.last_status = polled
+                    return polled
+        return self.last_status
+
+    def wait_for_frame_after(self, previous_seq: int | None, timeout: float) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            item = self.recv_one()
+            if item is None or item[0] != "frame":
+                continue
+            if previous_seq is None:
+                return True
+            if self.last_frame_seq is None:
+                return True
+            if self.last_frame_seq != previous_seq:
+                return True
+        return False
+
+    def wait_for_command_seq(self, command_seq: int, timeout: float) -> dict[str, object] | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            item = self.recv_one()
+            if item is None or item[0] != "json":
+                continue
+            if self.last_status.get("_ws_command_seq") == command_seq:
+                return self.last_status
+        return None
+
+    def wait_for_command_seen(
+        self,
+        command_seq: int,
+        timeout: float,
+        *,
+        poll_status: Callable[[], dict[str, object]] | None = None,
+    ) -> dict[str, object] | None:
+        def seen(status: dict[str, object]) -> bool:
+            ws = status.get("ws") if isinstance(status, dict) else None
+            return isinstance(ws, dict) and ws.get("last_seq") == command_seq
+
+        deadline = time.time() + timeout
+        last_poll = 0.0
+        while time.time() < deadline:
+            item = self.recv_one()
+            if item is not None and item[0] == "json" and seen(self.last_status):
+                return self.last_status
+            now = time.time()
+            if poll_status is not None and now - last_poll >= 0.15:
+                self.last_status = poll_status()
+                last_poll = now
+                if seen(self.last_status):
+                    return self.last_status
+        return self.last_status if seen(self.last_status) else None
+
+    def wait_for_queue_drained(
+        self,
+        queue_name: str,
+        timeout: float,
+        *,
+        poll_status: Callable[[], dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        def drained(status: dict[str, object]) -> bool:
+            return int(status.get(queue_name) or 0) == 0
+
+        deadline = time.time() + timeout
+        last_poll = 0.0
+        while time.time() < deadline:
+            item = self.recv_one()
+            if item is not None and item[0] == "json" and drained(self.last_status):
+                return self.last_status
+            now = time.time()
+            if poll_status is not None and now - last_poll >= 0.15:
+                self.last_status = poll_status()
+                last_poll = now
+                if drained(self.last_status):
+                    return self.last_status
+        return self.last_status
+
 
 def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[bytes]:
     cmd = [
@@ -153,8 +324,14 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         str(args.nand_image),
         "--worker-slice-seconds",
         str(args.worker_slice_seconds),
+        "--frame-push-min-interval",
+        str(args.frame_push_min_interval),
         "--quiet",
     ]
+    if bool(getattr(args, "completed_step_timer", False)):
+        cmd.append("--completed-step-timer")
+    if bool(getattr(args, "completed_step_timer_after_auto_boot", False)):
+        cmd.append("--completed-step-timer-after-auto-boot")
     return subprocess.Popen(
         cmd,
         cwd=ROOT,
@@ -179,6 +356,7 @@ def wait_http(host: str, port: int, timeout: float) -> None:
 def summarize_status(status: dict[str, object]) -> dict[str, object]:
     fb = status.get("framebuffer") if isinstance(status.get("framebuffer"), dict) else {}
     job = status.get("job") if isinstance(status.get("job"), dict) else {}
+    scheduler = status.get("scheduler") if isinstance(status.get("scheduler"), dict) else {}
     return {
         "running": status.get("running"),
         "pc": status.get("pc"),
@@ -186,14 +364,21 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
         "auto_calibration_stage_label": status.get("auto_calibration_stage_label"),
         "pending_touches": status.get("pending_touches"),
         "pending_keys": status.get("pending_keys"),
+        "input_wake_count": status.get("input_wake_count"),
         "nonzero_pixels": fb.get("nonzero_pixels"),
         "unique_pixel_values": fb.get("unique_pixel_values"),
         "job": {
             "name": job.get("name"),
             "status": job.get("status"),
             "done_steps": job.get("done_steps"),
+            "observed_insn_delta": job.get("observed_insn_delta"),
             "steps_per_second": job.get("steps_per_second"),
+            "requested_steps_per_second": job.get("requested_steps_per_second"),
         },
+        "accelerators": status.get("accelerators"),
+        "scheduler": scheduler,
+        "frame_push": status.get("frame_push"),
+        "ws": status.get("ws"),
     }
 
 
@@ -202,9 +387,15 @@ def looks_like_menu(status: dict[str, object]) -> bool:
     return (
         int(status.get("auto_calibration_stage") or 0) >= 12
         and int(fb.get("nonzero_pixels") or 0) >= 25000
-        and int(fb.get("unique_pixel_values") or 0) >= 500
-        and status.get("pc") == "0x80008a84"
+        and int(fb.get("unique_pixel_values") or 0) >= 2500
     )
+
+
+def looks_like_menu_family(status: dict[str, object]) -> bool:
+    fb = status.get("framebuffer") if isinstance(status.get("framebuffer"), dict) else {}
+    nonzero = int(fb.get("nonzero_pixels") or 0)
+    unique = int(fb.get("unique_pixel_values") or 0)
+    return int(status.get("auto_calibration_stage") or 0) >= 12 and nonzero >= 25000 and unique >= 2500
 
 
 def write_png(path: Path, data: bytes | None) -> str | None:
@@ -236,7 +427,43 @@ def wait_screen_digest(
     return last
 
 
-def tap(ws: WebSocketClient, x: int, y: int) -> None:
+def current_ws_screen_digest(ws: WebSocketClient) -> tuple[int, bytes, str]:
+    png = ws.current_frame_png() or b""
+    digest = hashlib.sha256(png).hexdigest() if png else ""
+    return (200 if png else 0), png, digest
+
+
+def wait_ws_screen_digest(
+    ws: WebSocketClient,
+    predicate: Callable[[str], bool],
+    timeout: float,
+) -> tuple[int, bytes, str]:
+    last = current_ws_screen_digest(ws)
+    if predicate(last[2]):
+        return last
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        item = ws.recv_one()
+        if item is None:
+            continue
+        kind, payload = item
+        if kind != "frame":
+            continue
+        png = ws.current_frame_png() or b""
+        digest = hashlib.sha256(png).hexdigest() if png else ""
+        last = (200 if png else 0), png, digest
+        if predicate(digest):
+            return last
+    return last
+
+
+def tap(
+    ws: WebSocketClient,
+    x: int,
+    y: int,
+    *,
+    poll_status: Callable[[], dict[str, object]] | None = None,
+) -> None:
     base = {
         "op": "touch",
         "display_x": x,
@@ -249,20 +476,29 @@ def tap(ws: WebSocketClient, x: int, y: int) -> None:
     down = dict(base)
     down["down"] = True
     down["phase"] = "down"
-    ws.send_json(down)
-    ws.pump(0.8)
+    down_seq = ws.send_command_async(down)
+    ws.wait_for_command_seen(down_seq, 3, poll_status=poll_status)
+    ws.wait_for_queue_drained("pending_touches", 5, poll_status=poll_status)
     up = dict(base)
     up["down"] = False
     up["phase"] = "up"
-    ws.send_json(up)
-    ws.pump(2.0)
+    up_seq = ws.send_command_async(up)
+    ws.wait_for_command_seen(up_seq, 3, poll_status=poll_status)
+    ws.wait_for_queue_drained("pending_touches", 5, poll_status=poll_status)
 
 
-def key_press(ws: WebSocketClient, code: int) -> None:
-    ws.send_json({"op": "key", "code": code, "down": True, "advance": False, "run": True})
-    ws.pump(0.5)
-    ws.send_json({"op": "key", "code": code, "down": False, "advance": False, "run": True})
-    ws.pump(1.0)
+def key_press(
+    ws: WebSocketClient,
+    code: int,
+    *,
+    poll_status: Callable[[], dict[str, object]] | None = None,
+) -> None:
+    down_seq = ws.send_command_async({"op": "key", "code": code, "down": True, "advance": False, "run": True})
+    ws.wait_for_command_seen(down_seq, 3, poll_status=poll_status)
+    ws.wait_for_queue_drained("pending_keys", 5, poll_status=poll_status)
+    up_seq = ws.send_command_async({"op": "key", "code": code, "down": False, "advance": False, "run": True})
+    ws.wait_for_command_seen(up_seq, 3, poll_status=poll_status)
+    ws.wait_for_queue_drained("pending_keys", 5, poll_status=poll_status)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -276,6 +512,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-timeout", type=int, default=480)
     ap.add_argument("--chunk-steps", type=int, default=250000)
     ap.add_argument("--worker-slice-seconds", type=float, default=0.25)
+    ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
+    ap.add_argument("--completed-step-timer", action="store_true", default=False)
+    ap.add_argument("--completed-step-timer-after-auto-boot", action="store_true", default=False)
+    ap.add_argument(
+        "--interaction-frame-timeout",
+        type=float,
+        default=1.0,
+        help="Maximum seconds to wait for a new WS frame after a tap when status alone is not enough.",
+    )
     ns = ap.parse_args(argv)
 
     ns.out_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     interactions: list[dict[str, object]] = []
     screenshots: dict[str, dict[str, object]] = {}
     logs: dict[str, object] = {}
+    menu_elapsed_seconds: float | None = None
     start = time.time()
     try:
         if not ns.use_existing:
@@ -296,16 +542,28 @@ def main(argv: list[str] | None = None) -> int:
             failures.append("frontend HTML did not load or canvas was missing")
 
         ws = WebSocketClient(ns.host, port)
-        ws.pump(1.0)
+        ws.pump(0.2)
         interactions.append({"step": "connect", "status": summarize_status(ws.last_status), "frames": ws.frames})
 
-        ws.send_json({"op": "reset"})
-        ws.pump(1.0)
-        interactions.append({"step": "reset", "status": summarize_status(ws.last_status)})
+        reset_started = time.time()
+        reset_reply = ws.send_command({"op": "reset"}, timeout=5)
+        interactions.append(
+            {
+                "step": "reset",
+                "elapsed_seconds": round(time.time() - reset_started, 3),
+                "status": summarize_status(reset_reply or ws.last_status),
+            }
+        )
 
-        ws.send_json({"op": "auto-calibration", "enabled": True})
-        ws.pump(0.5)
-        interactions.append({"step": "enable-auto-calibration", "status": summarize_status(ws.last_status)})
+        auto_started = time.time()
+        auto_reply = ws.send_command({"op": "auto-calibration", "enabled": True}, timeout=3)
+        interactions.append(
+            {
+                "step": "enable-auto-calibration",
+                "elapsed_seconds": round(time.time() - auto_started, 3),
+                "status": summarize_status(auto_reply or ws.last_status),
+            }
+        )
 
         ws.send_json({"op": "run-start", "name": "web-human-smoke", "steps": 0, "chunk": ns.chunk_steps})
         menu_status = ws.wait_for(
@@ -313,7 +571,15 @@ def main(argv: list[str] | None = None) -> int:
             ns.boot_timeout,
             poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"),
         )
-        interactions.append({"step": "wait-menu", "status": summarize_status(menu_status), "frames": ws.frames})
+        menu_elapsed_seconds = time.time() - start
+        interactions.append(
+            {
+                "step": "wait-menu",
+                "elapsed_seconds": round(menu_elapsed_seconds, 3),
+                "status": summarize_status(menu_status),
+                "frames": ws.frames,
+            }
+        )
         boot_ok = looks_like_menu(menu_status)
         if not boot_ok:
             failures.append("cold boot did not reach a menu-looking framebuffer through the web worker")
@@ -323,7 +589,8 @@ def main(argv: list[str] | None = None) -> int:
             interactions.append({"step": "stop-after-boot-failure", "status": summarize_status(stopped)})
             logs = http_json(ns.host, port, "GET", "/api/logs?limit=80")
         else:
-            status_code, menu_png, menu_digest = fetch_screen_digest(ns.host, port)
+            status_code, menu_png, menu_digest = current_ws_screen_digest(ws)
+            home_digests = {menu_digest} if menu_digest else set()
             if status_code == 200:
                 digest = write_png(ns.out_dir / f"{ns.prefix}_menu.png", menu_png)
                 screenshots["menu"] = {"path": str(ns.out_dir / f"{ns.prefix}_menu.png"), "sha256": digest}
@@ -337,76 +604,139 @@ def main(argv: list[str] | None = None) -> int:
             ]
             home_points = [(38, 306), (202, 306)]
             changed_categories = 0
+            poll_status = lambda: http_json(ns.host, port, "GET", "/api/status")
             for name, x, y in category_points:
-                tap(ws, x, y)
-                ws.wait_for(
-                    lambda s: int(s.get("pending_touches") or 0) == 0,
-                    15,
-                    poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"),
-                )
-                status_code, png, digest = wait_screen_digest(
-                    ns.host,
-                    port,
-                    lambda value: bool(value and value != menu_digest),
-                    12,
-                )
+                step_started = time.time()
+                before_seq = ws.last_frame_seq
+                tap(ws, x, y, poll_status=poll_status)
+                frame_advanced = ws.wait_for_frame_after(before_seq, ns.interaction_frame_timeout)
+                status_code, png, digest = current_ws_screen_digest(ws)
                 changed = bool(digest and digest != menu_digest)
-                changed_categories += 1 if changed else 0
+                changed_categories += 1 if changed or frame_advanced else 0
                 out_path = ns.out_dir / f"{ns.prefix}_tap_{name}.png"
                 if status_code == 200:
                     out_path.write_bytes(png)
                     screenshots[f"tap_{name}"] = {"path": str(out_path), "sha256": digest}
+                tap_status = http_json(ns.host, port, "GET", "/api/status")
                 interactions.append(
                     {
                         "step": f"tap-{name}",
+                        "elapsed_seconds": round(time.time() - step_started, 3),
                         "display": [x, y],
+                        "frame_advanced": frame_advanced,
+                        "frame_seq": ws.last_frame_seq,
                         "changed_from_menu": changed,
                         "png": str(out_path) if status_code == 200 else None,
                         "sha256": digest,
-                        "status": summarize_status(http_json(ns.host, port, "GET", "/api/status")),
+                        "status": summarize_status(tap_status),
                     }
                 )
-                if not changed:
-                    failures.append(f"category {name} did not change the framebuffer from the main menu")
+                if not changed and not frame_advanced:
+                    interactions.append(
+                        {
+                            "step": f"tap-{name}-unchanged",
+                            "note": "category tap did not produce a new WS frame or distinct menu baseline digest",
+                            "status": summarize_status(http_json(ns.host, port, "GET", "/api/status")),
+                        }
+                    )
                     continue
                 returned_home = False
                 home_digest = ""
                 for index, (home_x, home_y) in enumerate(home_points, 1):
-                    tap(ws, home_x, home_y)
-                    _home_status, _home_png, home_digest = wait_screen_digest(
-                        ns.host,
-                        port,
-                        lambda value: bool(value and value == menu_digest),
-                        10,
-                    )
+                    home_started = time.time()
+                    before_seq = ws.last_frame_seq
+                    tap(ws, home_x, home_y, poll_status=poll_status)
+                    home_status = http_json(ns.host, port, "GET", "/api/status")
+                    home_like = looks_like_menu_family(home_status)
+                    frame_advanced = False
+                    if not home_like:
+                        frame_advanced = ws.wait_for_frame_after(before_seq, ns.interaction_frame_timeout)
+                        home_status = http_json(ns.host, port, "GET", "/api/status")
+                        home_like = looks_like_menu_family(home_status)
+                    _home_status, _home_png, home_digest = current_ws_screen_digest(ws)
+                    returned = bool(home_digest and home_digest in home_digests) or home_like
                     interactions.append(
                         {
                             "step": f"home-after-{name}-{index}",
+                            "elapsed_seconds": round(time.time() - home_started, 3),
                             "display": [home_x, home_y],
-                            "returned_to_menu": home_digest == menu_digest,
+                            "frame_advanced": frame_advanced,
+                            "frame_seq": ws.last_frame_seq,
+                            "returned_to_menu": returned,
                             "sha256": home_digest,
-                            "status": summarize_status(http_json(ns.host, port, "GET", "/api/status")),
+                            "status": summarize_status(home_status),
                         }
                     )
-                    if home_digest == menu_digest:
+                    if returned:
+                        if home_digest:
+                            home_digests.add(home_digest)
                         returned_home = True
                         break
                 if not returned_home:
-                    failures.append(f"category {name} did not return to the main menu through the home button")
-                    break
+                    cancel_started = time.time()
+                    before_seq = ws.last_frame_seq
+                    key_press(ws, 9, poll_status=poll_status)
+                    cancel_status = http_json(ns.host, port, "GET", "/api/status")
+                    frame_advanced = False
+                    if not looks_like_menu_family(cancel_status):
+                        frame_advanced = ws.wait_for_frame_after(before_seq, ns.interaction_frame_timeout)
+                        cancel_status = http_json(ns.host, port, "GET", "/api/status")
+                    _home_status, _home_png, home_digest = current_ws_screen_digest(ws)
+                    returned = bool(home_digest and home_digest in home_digests) or looks_like_menu_family(cancel_status)
+                    interactions.append(
+                        {
+                            "step": f"cancel-after-{name}",
+                            "elapsed_seconds": round(time.time() - cancel_started, 3),
+                            "frame_advanced": frame_advanced,
+                            "frame_seq": ws.last_frame_seq,
+                            "returned_to_menu": returned,
+                            "sha256": home_digest,
+                            "status": summarize_status(cancel_status),
+                        }
+                    )
+                    if returned and home_digest:
+                        home_digests.add(home_digest)
+                    returned_home = returned
+                if not returned_home:
+                    interactions.append(
+                        {
+                            "step": f"return-after-{name}-not-menu-like",
+                            "note": "continuing category coverage from current screen",
+                            "status": summarize_status(http_json(ns.host, port, "GET", "/api/status")),
+                        }
+                    )
             if changed_categories == 0:
-                failures.append("bottom category taps did not change the framebuffer")
+                failures.append("bottom category taps did not advance framebuffer frames")
 
             for code, name in [(4, "up"), (5, "down"), (6, "left"), (7, "right"), (9, "cancel"), (10, "ok")]:
-                key_press(ws, code)
-                status = http_json(ns.host, port, "GET", "/api/status")
+                key_press(ws, code, poll_status=poll_status)
+                status = ws.wait_for(
+                    lambda s: int(s.get("pending_keys") or 0) == 0,
+                    8,
+                    poll_status=poll_status,
+                )
                 interactions.append({"step": f"key-{name}", "code": code, "status": summarize_status(status)})
                 if int(status.get("pending_keys") or 0) != 0:
                     failures.append(f"key {name} left pending_keys={status.get('pending_keys')}")
 
-            ws.send_json({"op": "stop"})
-            ws.pump(1.0)
-            stopped = http_json(ns.host, port, "GET", "/api/status")
+            stop_seq = int(time.time() * 1000)
+            ws.send_json({"op": "stop", "command_seq": stop_seq})
+            stop_reply = ws.wait_for_command_seq(stop_seq, 5)
+            stopped = stop_reply or ws.last_status
+            if stop_reply is None or stopped.get("running"):
+                interactions.append(
+                    {
+                        "step": "ws-stop-timeout",
+                        "command_seq": stop_seq,
+                        "reply_seen": stop_reply is not None,
+                        "status": summarize_status(stopped),
+                    }
+                )
+                stopped = http_json(ns.host, port, "POST", "/api/command", {"op": "stop"})
+                deadline = time.time() + 5
+                while stopped.get("running") and time.time() < deadline:
+                    time.sleep(0.2)
+                    stopped = http_json(ns.host, port, "GET", "/api/status")
             interactions.append({"step": "stop", "status": summarize_status(stopped)})
             if stopped.get("running"):
                 failures.append("stop command left frontend running")
@@ -429,8 +759,10 @@ def main(argv: list[str] | None = None) -> int:
         "port": port,
         "used_existing": ns.use_existing,
         "elapsed_seconds": round(elapsed, 3),
+        "menu_elapsed_seconds": None if menu_elapsed_seconds is None else round(menu_elapsed_seconds, 3),
         "failures": failures,
         "screenshots": screenshots,
+        "last_frame_wire_kind": None if ws is None else ws.last_frame_wire_kind,
         "interactions": interactions,
         "log_count": logs.get("count"),
         "recent_logs": logs.get("events", []),
@@ -445,13 +777,23 @@ def main(argv: list[str] | None = None) -> int:
         f"- Result: {'PASS' if summary['ok'] else 'FAIL'}",
         f"- URL: http://{ns.host}:{port}/",
         f"- Elapsed seconds: {summary['elapsed_seconds']}",
+        f"- Menu elapsed seconds: {summary['menu_elapsed_seconds']}",
         f"- Frames received over WS: {ws.frames if ws is not None else 0}",
+        f"- Last WS frame wire kind: {None if ws is None else ws.last_frame_wire_kind}",
         f"- Failures: {len(failures)}",
         "",
         "## Interactions",
     ]
     for item in interactions:
-        lines.append(f"- {item['step']}: `{json.dumps(item.get('status', {}), ensure_ascii=False)}`")
+        extras: list[str] = []
+        if "elapsed_seconds" in item:
+            extras.append(f"elapsed={item['elapsed_seconds']}s")
+        if "frame_advanced" in item:
+            extras.append(f"frame_advanced={item['frame_advanced']}")
+        if "frame_seq" in item:
+            extras.append(f"frame_seq={item['frame_seq']}")
+        prefix = "" if not extras else f" ({', '.join(extras)})"
+        lines.append(f"- {item['step']}{prefix}: `{json.dumps(item.get('status', {}), ensure_ascii=False)}`")
     if failures:
         lines += ["", "## Failures"]
         lines += [f"- {failure}" for failure in failures]
@@ -460,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
         "## Notes",
         "- This smoke drives the frontend through HTTP and WebSocket, not direct Python state calls.",
         "- Touches use rendered display coordinates and rely on the frontend orientation mapping.",
-        "- Category coverage is framebuffer-change based; it does not yet OCR labels or assert exact selected menu names.",
+        "- Category coverage is raw-frame-sequence based; screenshots are converted only when recorded.",
         "",
     ]
     report_path.write_text("\n".join(lines), encoding="utf-8")

@@ -109,6 +109,9 @@ stay focused on memory mapping, hook dispatch, and run control:
 - `run_hwemu_regressions.py`: refactor regression wrapper covering syntax,
   legacy CLI execution, and a menu-checkpoint framebuffer smoke. Use
   `--menu-smoke` for the slower menu-touch interaction smoke.
+- `run_frontend_web_smoke.py`: user-like HTTP/WebSocket smoke that cold-boots
+  through the frontend, consumes live raw WS frames, taps bottom categories and
+  virtual keys, and writes a report/screenshots into `build/`.
 - `run_album_web_smoke.py`: frontend HTTP/WebSocket smoke that cold-boots,
   selects the Album app, enters its grid, taps the first thumbnail, and writes a
   report plus contact-sheet PNG into `build/`.
@@ -178,6 +181,37 @@ alive, displays the current 240x320 RGB565 framebuffer, and exposes coarse
 step/run, key, and touch controls. The boot and continuous-run buttons use a
 background worker. Status and framebuffer updates are pushed over WebSocket;
 `/screen.png` remains only as a diagnostic fallback endpoint.
+Framebuffer dirty hooks are wired to a small raw RGB565 frame queue: the emulator
+worker only throttles and records a pending framebuffer sample, while the
+WebSocket consumer realizes the newest sample and sends raw `BBKRAW1` RGB565
+frames to the browser. LCD mirror writes including tiny text/glyph writes enter
+the same throttled queue, and full portrait blits are coalesced to one dirty
+event after the equivalent fast copy completes. The browser converts those
+frames to a reused `ImageData` buffer, with a specialized fast path for the
+normal 180-degree portrait orientation.
+PNG encoding is kept for `/screen.png` and legacy diagnostic fallbacks instead
+of the live WS path.
+Full framebuffer statistics for status JSON are rescanned at a lower cadence
+than live frames, so the WS sender does not hold the GIL scanning 240x320 pixels
+for every display update.
+The WebSocket sender takes the latest queued frame and drops stale frames so UI
+updates and control messages are not forced to drain old framebuffer history.
+If a framebuffer dirty hook lands inside the throttle window, the frontend keeps
+one deferred raw frame and releases it after the interval instead of waiting for
+the next worker-slice boundary.
+Frame and command arrival wake the WebSocket sender through a condition variable,
+so the live path no longer relies on a fixed sleep/poll loop between frontend
+updates.
+The server also drains already-arrived text commands before sending another
+frame and throttles unsolicited JSON status pushes; command replies remain
+immediate.
+The WebSocket frame reader keeps a partial-frame buffer across socket timeouts,
+so a timeout in the middle of a large binary framebuffer frame cannot corrupt
+the next JSON control frame. When a background worker is already active, queued
+touch/key commands do not wait on the emulator main lock; the active worker
+consumes them on its next slice, leaving later control commands such as `stop`
+readable by the WS reader.
+Keep PNG encoding and other expensive rendering work out of the emulator worker.
 
 The frontend disables `--auto-calibration` by default. When enabled, it is a
 controller-level cold-boot assist, not GUI-object injection: it feeds the four
@@ -192,6 +226,15 @@ browser sends rendered canvas coordinates (`display_x/display_y`) plus the
 current canvas size; the backend converts them to raw 240x320 touchscreen
 coordinates with the active framebuffer orientation. Direct scripts can keep
 using raw `x/y` touch coordinates through `/api/command` and `/api/touch`.
+If a finite `input` worker hits its wall-clock slice timeout, it stops after that
+slice and leaves `done_steps` as the observed hook-count progress; it does not
+fake completion to the requested input step budget. This keeps the frontend
+available for the next mouse/touch/key event while preserving honest diagnostics.
+Stop/reset request `emu_stop()` before joining the worker. The browser Stop
+button sends the normal WebSocket command first, then falls back to the HTTP
+`/api/command` endpoint if the WS control path is still busy after a short wait.
+`run_frontend_web_smoke.py` records `ws-stop-timeout` when that fallback is used;
+this is a frontend control-channel diagnostic, not a firmware behavior change.
 
 The virtual keypad uses the C200 six-key scanner codes currently proven from
 the `0x8005cecc` dispatcher and hardware testing: `4 = up`, `5 = down`,
@@ -216,6 +259,20 @@ store-delay branch handler declines a PC. Branches that are fully modeled in
 Python do not need a Unicorn exception-recovery snapshot; this keeps the verified
 cold-menu path from reading the full MIPS register file on every accelerated
 delay-slot branch.
+The generic store-delay hook now acts as a guard: if the delay-slot store is
+ordinary RAM outside framebuffer/watch ranges, Unicorn executes the branch
+natively. Python still models delay-slot stores that touch MMIO, NAND/EXT,
+framebuffer memory, or an explicit watch range, where hook side effects are
+observable.
+The remaining direct hot store-delay hook is the C200 timer/MMIO write at
+`0x8005bcf4`; the verified hot RAM-only scheduler branches are removed from the
+default `known` hook set and run natively, reducing PC hook coverage without
+changing device-visible effects. The diagnostic `all` mode still installs every
+store-delay branch hook.
+Legacy epilogue return patching is off in the full-system path. Use
+`--epilogue-jr-fix-mode log` to observe those PCs without changing execution, or
+`--epilogue-jr-fix-mode fix` only when comparing against the old diagnostic
+behavior.
 The verified portrait framebuffer blit is modeled a row at a time, including
 the 16-bit pixel reversal mode, so the framebuffer bytes match the per-pixel
 firmware loop without paying one Python callback/write per pixel. Surface LCD
@@ -232,27 +289,94 @@ Useful frontend endpoints while debugging:
 - `POST /api/stop`
 - `POST /api/step?steps=250000`
 - `GET /api/status`
+- `GET /api/status?detail=full` (diagnostic: includes raw scheduler bytes and
+  recent GUI timer events)
 - `GET /screen.png` (diagnostic fallback; the frontend canvas uses WebSocket frames)
 
 The status panel and `/api/status` report `reset_elapsed_seconds`,
 `run_elapsed_seconds`, and job step rate so cold-boot progress can be judged
 without polling a slow diagnostic endpoint.
+The default `/api/status` response and periodic WebSocket status frames use a
+compact scheduler snapshot; raw scheduler bytes and full GUI timer event samples
+are reserved for `?detail=full` so live UI updates do not repeatedly JSON-encode
+diagnostic-only data.
 Frontend trace PCs run in count-only mode: the emulator still counts the
 calibration/input checkpoints needed by the UI and regressions, but it skips the
 per-hit register, stack, and pointed-memory snapshots reserved for CLI
 diagnostics.
-The same frontend hot-event suppression keeps surface draw counters but omits
-per-draw surface event dictionaries; CLI smoke/probe runs still keep the detailed
-per-mode surface diagnostics.
+The frontend's traced idle and WAIT checkpoints (`0x80008a84` and
+`0x8005bcd4`) are handled by trace-safe direct hooks: they preserve trace counts
+while avoiding repeated full recovery-register snapshots on the main idle loop.
+The same frontend hot-event suppression keeps counters and small samples for
+surface, FAT/block, and wait-loop hot paths, but omits per-hit diagnostic
+dictionaries; CLI smoke/probe runs still keep the detailed diagnostics.
+Frontend suppress mode also mirrors a small verified set of side-effect-free
+32-bit MMIO control registers directly in `mmio_regs`, bypassing the heavier
+device-model dispatcher while keeping UART, GPIO, SADC, NAND, and interrupt
+registers on the semantic `_model_mmio` path.
+For that same suppress path, the physical 4-byte spans for those side-effect-free
+registers are removed from the MEM hook ranges, so Unicorn's backing MMIO memory
+handles them without a Python callback. Diagnostic/non-suppress runs still hook
+the full MMIO range.
+The UART line/status register at `0x10030014` is seeded as a static read-only
+ready value (`0x60`) on both physical and KSEG1 MMIO views and is removed only
+from the frontend read hook. Writes still go through the semantic MMIO hook, so
+unexpected firmware writes cannot silently mutate the backing ready value.
+The same static read-only mechanism covers fixed ready/done status reads for
+the timer status (`0x10003000`), graphics/blit status (`0x10021004`), LCD ready
+status (`0x1004300c`), BCH/ECC done status (`0x13010114`), and LCD DMA cleared
+descriptor words (`0x13020008`, `0x13020028`). Registers with same-address ack
+writes, such as `0x10021028`, remain on the modeled path.
+GPIO data reads for ports A/B/D are removed from the suppress-mode read hook and
+served from synchronized backing words. Key and touch controller state changes,
+plus modeled GPIO data writes, keep those backing words aligned with
+`mmio_regs`/`gpio_idle_levels`. The pen/NAND-ready GPIO C data word at
+`0x10010200` keeps its read hook and separate fast path so NAND busy-read
+countdown semantics are preserved.
+Repeated 32-bit MMIO backing writes are cached by physical address, including
+the KSEG1 alias mapping. Unchanged modeled read values therefore do not perform
+another pair of Unicorn `mem_write` calls, while real firmware MMIO writes
+invalidate the cache before the next modeled read.
+Likewise, the hot SADC status read at `0x1007000c` is removed from the
+suppress-mode read hook. Touch down/up and SADC acknowledge/control writes keep
+the physical and KSEG1 backing words synchronized with `sadc_status_event`, so
+firmware reads see the dynamic state without entering Python. SADC data reads
+remain on the full model because they advance the modeled X/Y axis sequence.
+The direct timer-tick hook preserves C200's GUI timer table semantics but reads
+the 16-slot table, active timer entry, and event-slot map as RAM blocks before
+unpacking fields. This keeps counter and event-flag updates identical while
+avoiding dozens of tiny Unicorn `mem_read` calls per tick.
+GPIO pending refresh uses precomputed flag-register/main-IRQ tables, and the
+external IRQ poll path only refreshes TCU/periodic IRQ bookkeeping when its next
+scheduled instruction threshold is reached. GPIO/SADC/NAND side effects remain
+on the modeled device path.
 The frontend input box defaults to `250000` steps per worker chunk, and
 `--worker-slice-steps` now defaults to the same value so the backend does not
 split each requested frontend chunk into many smaller status-publish slices.
+`--worker-slice-seconds` defaults to `0.25`, keeping the emulator main lock from
+being held for long frontend-visible stretches when continuous run is active.
+Inside one worker slice, `--run-internal-chunk-steps` defaults to `100000`,
+matching the previous timed `emu_start` split point while making the yield
+granularity explicit for responsiveness experiments.
+Framebuffer pushes are driven by the emulator dirty callback instead of an
+HTTP poll loop: LCD mirror writes, portrait blits, boot-frame copies, and
+surface blits enqueue raw RGB565 WebSocket frames immediately, subject to a
+small throttle interval. If another full-frame-style dirty event arrives while
+a throttled frame is pending, the deferred frame is replaced with the newest
+snapshot so the browser sees the latest visible state at the throttle boundary.
+The status payload reports `frame_push.replace_count` alongside queued,
+throttled, dropped, and error counters.
 `run_hwemu_regressions.py` includes `frontend-http-ws-smoke`, which binds an
 ephemeral local HTTP server, checks `/api/status`, completes a WebSocket
-handshake, verifies that the first framebuffer arrives as a binary PNG frame
-over WS, sends a queued key command over WS, starts a finite 250000-step
+handshake, verifies that the first framebuffer arrives as a binary raw RGB565
+frame over WS, sends a queued key command over WS, starts a finite 250000-step
 background job, and verifies display-coordinate touchscreen down/up events each
 trigger the short input worker and drain the touch queue.
+The fuller `run_frontend_web_smoke.py` drives the public HTTP/WS frontend like a
+browser: it uses WS command sequence numbers plus cached status to prove input
+commands were read, waits for pending touch/key queues to drain, and tracks raw
+frame sequence movement instead of repeatedly converting every live frame to PNG
+hashes. PNG conversion is only used when saving report screenshots.
 It also includes `frontend-cold-menu-smoke`, which starts from a fresh C200
 reset through the frontend worker, runs 6000000 steps in 250000-step chunks,
 and verifies that controller-level auto calibration reaches `done` with a
@@ -588,22 +712,18 @@ this firmware. The profile currently includes targeted recovery for:
 - pure LCD getter functions at `0x80010d70..0x80010da0`
 - palette/conversion early-return patches at `0x800a91f4` and call-site
   `0x800a88e8`
-- narrow stack corrections at `0x800176e0` and `0x800de5bc`
 - idle-loop detection at `0x80008a84`
 - immediate wake from the MIPS `wait` instruction at `0x8005bcd4`, resuming at
   `0x8005bce8`, until the corresponding interrupt source is modeled
-- narrow stack/epilogue fixes around `0x80183304` and `0x8017a860`, seen when
-  the NAND-backed resource/cache reader runs deeper than the legacy idle path
-- a narrow `0x801737b8` large-frame epilogue fix, needed after FAT directory
-  scanning when SP is observed `0x20` bytes too low and the adjacent saved RA is
-  valid
 
 These are trace-enabling emulator workarounds, not confirmed hardware behavior.
-The broad `repeat-sp-fix` helper is especially provisional: it keeps progress
-moving when Unicorn presents the same stack prologue twice, but it can mask
-real control-flow bugs. Treat traces after deep UI initialization as tentative
-until this is replaced by a more robust MIPS execution backend or a stricter
-delay-slot model.
+The older hard-coded RA/SP/return patches (`ra-fix`, `stack-fix`,
+`epilogue-fix`, repeated frame-entry return fixes, and the `0x801737b8`
+large-frame scan fix) are no longer part of the default full-system path because
+they can mask real control-flow bugs. Use `--legacy-return-fixes` only when
+comparing against old diagnostic runs. The broad `repeat-sp-fix` helper is also
+off by default; it remains a diagnostic mode for observing repeated prologues,
+not a normal boot dependency.
 
 ## Next Work
 
@@ -792,6 +912,9 @@ make that loop interactive:
   the cache-management loop at `0x8000403c` and the BSS clear loop at
   `0x80004074`. These replace hardware/cache setup and a linear zero-fill with
   the same resulting RAM/register state needed before normal C200 startup.
+  Keep the BSS hook on the store instruction at `0x80004074`; hooking only the
+  branch-delay tail falls back to one Python callback per cleared word during
+  cold boot.
 - `reverse/hwemu/run_system_menu_smoke.py` runs the current raw-system menu
   interaction regression. It starts from `build/c200_searching_schedfix.pkl`,
   sends a hardware-controller touch at `(210,287)` to the bottom `工具` tab,

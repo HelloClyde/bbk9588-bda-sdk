@@ -26,6 +26,19 @@ from unicorn.mips_const import (
 
 from hwemu_utils import va_to_phys
 
+IMMEDIATE_FRAME_DIRTY_REASONS = frozenset(
+    {
+        "logo-strip-blit",
+        "fullscreen-fill",
+        "boot-frame-copy",
+        "portrait-blit",
+        "surface-hline",
+        "surface-color-span",
+        "surface-block-write",
+        "surface-transparent-blit",
+    }
+)
+
 SURFACE_TRANSPARENT_BLIT_PCS = frozenset(
     {
         0x8012C46C,
@@ -93,6 +106,7 @@ class HwEmuSurfaceMixin:
         x: int,
         y: int,
         data: bytes,
+        mark_dirty: bool = True,
     ) -> None:
         width, height, fb, reverse = config
         count = len(data) // 2
@@ -115,7 +129,8 @@ class HwEmuSurfaceMixin:
         dest = (fb + ((my * width + dest_x) << 1)) & 0xFFFFFFFF
         if self._is_mapped_ram_va(dest, len(span)):
             self.uc.mem_write(va_to_phys(dest), span)
-            self._mark_framebuffer_dirty(pc, dest, len(span), "lcd-mirror")
+            if mark_dirty:
+                self._mark_framebuffer_dirty(pc, dest, len(span), "lcd-mirror")
 
     def _mirror_lcd_hline_with_config(
         self,
@@ -145,6 +160,16 @@ class HwEmuSurfaceMixin:
             size,
             reason,
         )
+        callback = getattr(self, "framebuffer_dirty_callback", None)
+        if reason == "lcd-mirror":
+            pass
+        elif reason not in IMMEDIATE_FRAME_DIRTY_REASONS:
+            callback = None
+        if callback is not None:
+            try:
+                callback(self.framebuffer_dirty_seq, pc & 0xFFFFFFFF, addr & 0xFFFFFFFF, size, reason)
+            except Exception as exc:
+                self._trace_event("frame-dirty-callback-error", pc=pc, addr=addr, size=size, value=type(exc).__name__)
 
     def _framebuffer_dirty_last_snapshot(self) -> dict[str, str | int] | None:
         raw = getattr(self, "framebuffer_dirty_last_raw", None)
@@ -605,36 +630,51 @@ class HwEmuSurfaceMixin:
         transparent &= 0xFFFF
         mirror_config = self._lcd_mirror_config()
         pixels_written = 0
+        dirty = False
+        transparent_bytes = struct.pack("<H", transparent)
         for row in range(height):
             src = src_va + row * stride
             data = self._read_block_va_safe(src, row_bytes)
             if data is None or len(data) != row_bytes:
                 return False
             dest_row = surface_buffer + (y + row) * pitch + x * 2
-            span_start: int | None = None
-            for col in range(width):
-                color = struct.unpack_from("<H", data, col * 2)[0]
-                if color == transparent:
-                    if span_start is not None:
-                        span = data[span_start * 2 : col * 2]
-                        dest = dest_row + span_start * 2
-                        self.uc.mem_write(va_to_phys(dest), span)
-                        if mirror_config is not None:
-                            self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x + span_start, y + row, span)
-                        self._mark_framebuffer_dirty(pc, dest, len(span), "surface-transparent-blit")
-                        pixels_written += col - span_start
-                        span_start = None
+            span_start = 0
+            search = 0
+            while search < row_bytes:
+                hit = data.find(transparent_bytes, search)
+                if hit < 0:
+                    hit = row_bytes
+                elif hit & 1:
+                    search = hit + 1
                     continue
-                if span_start is None:
-                    span_start = col
-            if span_start is not None:
-                span = data[span_start * 2 : row_bytes]
-                dest = dest_row + span_start * 2
-                self.uc.mem_write(va_to_phys(dest), span)
-                if mirror_config is not None:
-                    self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x + span_start, y + row, span)
-                self._mark_framebuffer_dirty(pc, dest, len(span), "surface-transparent-blit")
-                pixels_written += width - span_start
+                if hit > span_start:
+                    span = data[span_start:hit]
+                    dest = dest_row + span_start
+                    self.uc.mem_write(va_to_phys(dest), span)
+                    if mirror_config is not None:
+                        self._mirror_lcd_span_bytes_with_config(
+                            mirror_config,
+                            pc,
+                            x + (span_start // 2),
+                            y + row,
+                            span,
+                            mark_dirty=False,
+                        )
+                    pixels_written += (hit - span_start) // 2
+                    dirty = True
+                if hit >= row_bytes:
+                    break
+                search = hit + 2
+                span_start = search
+
+        if dirty:
+            if mirror_config is not None:
+                mirror_width, mirror_height, mirror_fb, _mirror_reverse = mirror_config
+                self._mark_framebuffer_dirty(pc, mirror_fb, mirror_width * mirror_height * 2, "surface-transparent-blit")
+            else:
+                dirty_addr = surface_buffer + y * pitch + x * 2
+                dirty_size = (height - 1) * pitch + row_bytes
+                self._mark_framebuffer_dirty(pc, dirty_addr, dirty_size, "surface-transparent-blit")
 
         if at_entry:
             self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)

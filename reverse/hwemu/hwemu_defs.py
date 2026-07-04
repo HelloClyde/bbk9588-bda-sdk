@@ -75,12 +75,71 @@ def gpio_addr_for_port(port: int, offset: int) -> int:
 def gpio_main_irq_for_port(port: int) -> int:
     return GPIO_MAIN_IRQ_BASE - port
 
+GPIO_FLAG_IRQ_INFO = tuple(
+    (
+        gpio_addr_for_port(port, GPIO_FLAG_OFFSET),
+        1 << gpio_main_irq_for_port(port),
+    )
+    for port in range(GPIO_PORT_COUNT)
+)
+GPIO_MAIN_IRQ_TO_FLAG_ADDR = {
+    gpio_main_irq_for_port(port): gpio_addr_for_port(port, GPIO_FLAG_OFFSET)
+    for port in range(GPIO_PORT_COUNT)
+}
+GPIO_MAIN_IRQ_TO_PORT = {
+    gpio_main_irq_for_port(port): port
+    for port in range(GPIO_PORT_COUNT)
+}
+
+NATIVE_SAFE_STORE_DELAY_BRANCH_PCS = frozenset(
+    {
+        0x80006630,
+        0x800066A0,
+        0x80007E18,
+        0x80007E54,
+        0x800087D4,
+        0x80008A7C,
+        0x8000BB14,
+        0x8000BC14,
+        0x800230F8,
+        0x80058CC8,
+        0x8012B224,
+        0x801283C0,
+        0x801283D8,
+        0x80170EF4,
+        0x8017355C,
+        0x801735B8,
+        0x801735C8,
+        0x8017371C,
+        0x8017374C,
+        0x80173A90,
+        0x80173C40,
+        0x801741EC,
+        0x80174854,
+        0x80174D84,
+        0x8017E5E0,
+        0x8017F9E8,
+        0x8017FAEC,
+        0x802421D0,
+        0x802421E4,
+        0x802421F8,
+        0x8024220C,
+    }
+)
+
 BDA_ENTRY_SIG = bytes.fromhex("e8 ff bd 27 10 00 bf af")
 BDA_RUNTIME_TABLE_SRC = 0x80281680
 BDA_RUNTIME_TABLE_DST = 0x81C00000
 BDA_RUNTIME_ENTRY_VA = 0x81C00020
 BDA_RETURN_PC = 0x80008A8C
 BDA_DISPLAY_CALLBACK_TABLE = 0x8046A510
+BDA_IRQ_POLL_PCS = frozenset(
+    {
+        0x81C0FDB8,
+        0x81C10B40,
+        0x81C10CA0,
+    }
+)
 
 # Store-delay branch PCs observed in passing C200 cold-boot/menu regressions.
 # This keeps the default fast-hook set narrow while retaining the branch-delay
