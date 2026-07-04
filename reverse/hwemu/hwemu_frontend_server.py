@@ -8,6 +8,7 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from hwemu_frontend_ws import WebSocketFrameReader, encode_ws_frame, websocket_accept_key
@@ -236,6 +237,11 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._json(self.state.command(msg))
             elif parsed.path == "/api/boot":
                 self._json(self.state.boot())
+            elif parsed.path == "/api/checkpoint":
+                path = qs.get("path", [""])[0]
+                if not path:
+                    raise ValueError("missing checkpoint path")
+                self._json(self.state.save_checkpoint(Path(path)))
             elif parsed.path == "/api/run-start":
                 name = qs.get("name", ["run"])[0]
                 steps = int(qs.get("steps", ["0"])[0])
@@ -243,6 +249,9 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._json(self.state.run_start(name, steps, chunk))
             elif parsed.path == "/api/stop":
                 self._json(self.state.stop())
+            elif parsed.path == "/api/shutdown":
+                self._json({"ok": True})
+                threading.Thread(target=self.server.shutdown, name="hwemu-http-shutdown", daemon=True).start()
             elif parsed.path == "/api/logs/clear":
                 self._json(self.state.clear_logs())
             elif parsed.path == "/api/step":

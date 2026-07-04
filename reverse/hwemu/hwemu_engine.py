@@ -51,6 +51,7 @@ from unicorn.mips_const import (
     UC_MIPS_REG_29,
     UC_MIPS_REG_30,
     UC_MIPS_REG_31,
+    UC_MIPS_REG_CP0_STATUS,
     UC_MIPS_REG_PC,
     UC_MIPS_REG_SP,
 )
@@ -166,6 +167,7 @@ HOT_STORE_DELAY_BRANCH_PCS = frozenset(
         # delay slot. Hot RAM-only delay slots are left to the generic guard,
         # which lets Unicorn execute them natively.
         0x8005BCF4,
+        0x80009860,
     }
 )
 
@@ -199,17 +201,22 @@ class HwEmuEngineMixin:
             if enabled and pc not in stop_blocked and (trace_safe or pc not in trace_blocked):
                 hooks[pc] = callback
 
-        add(0x8000403C, self._on_c200_reset_init_loop_code)
-        add(0x80004074, self._on_c200_reset_init_loop_code)
         add(0x800043A0, self._on_busy_delay_code, not getattr(self, "busy_delay_static_patch", False))
         add(0x80006BD0, self._on_memset_bulk_code)
         add(0x80006BF8, self._on_memcpy_bulk_code)
+        add(0x800B36D0, self._on_row_copy_loop_code)
         add(0x800098C0, self._on_debug_print_stub_code)
         add(0x80058CB4, self._on_no_event_poll_code)
         add(0x8005BCD4, self._on_wait_wake_code, trace_safe=True)
         add(0x80008A84, self._on_idle_loop_code, trace_safe=True)
         add(0x800087C4, self._on_timer_tick_code, trace_safe=True)
         add(0x800080F0, self._on_scheduler_dispatch_code, trace_safe=True)
+        add(0x800A80F0, self._on_cp0_irq_disable_code, self.cp0_status_accelerator)
+        add(0x800A8130, self._on_cp0_status_restore_code, self.cp0_status_accelerator)
+        add(0x800A7B40, self._on_task_context_restore_code, trace_safe=True)
+        add(0x800A7C18, self._on_task_context_restore_code, trace_safe=True)
+        for pc in BDA_IRQ_POLL_PCS:
+            add(pc, self._on_bda_irq_poll_code)
         for pc in HOT_STORE_DELAY_BRANCH_PCS:
             add(pc, self._on_hot_store_delay_branch_code)
         add(0x8012BDF4, self._on_surface_setpixel_code, self.surface_pixel_accelerator)
@@ -222,6 +229,7 @@ class HwEmuEngineMixin:
             add(pc, self._on_portrait_blit_code)
         add(0x800074A0, self._on_malloc_scan_code)
         add(0x800AC388, self._on_raster_copy_code)
+        add(0x800BC2E0, self._on_rgb565_color_code, not self.legacy_direct_bda)
         add(0x80007900, self._on_zero_fill_delay_loop_code)
         add(0x80173908, self._on_stack_clear32_delay_loop_code)
         add(0x80173C30, self._on_stack_clear32_delay_loop_code)
@@ -248,11 +256,8 @@ class HwEmuEngineMixin:
         for pc in (0x80182A90, 0x80182BF4, 0x80182D58):
             add(pc, self._on_block_image_code)
 
-        # These two store-delay branch sites also carry task context restore
-        # side effects in _on_code, so keep them on the full dispatch path.
-        full_dispatch_pcs = {0x800081A8, 0x800088AC}
         for pc in self._store_delay_branch_hook_pcs():
-            add(pc, self._on_store_delay_branch_code, pc not in hooks and pc not in full_dispatch_pcs)
+            add(pc, self._on_store_delay_branch_code, pc not in hooks)
         return hooks
 
     def _on_direct_fast_code(self, handler, uc, address: int, size: int, user_data) -> None:
@@ -301,10 +306,52 @@ class HwEmuEngineMixin:
         self._on_direct_fast_code(self._handle_c200_reset_init_loop, uc, address, size, user_data)
 
     def _on_memset_bulk_code(self, uc, address: int, size: int, user_data) -> None:
-        self._on_direct_fast_code(self._handle_memset_bulk, uc, address, size, user_data)
+        if self.profile == "bbk9588-uboot" and self._handle_memset_bulk(address):
+            return
+        self._on_code(uc, address, size, user_data)
 
     def _on_memcpy_bulk_code(self, uc, address: int, size: int, user_data) -> None:
-        self._on_direct_fast_code(self._handle_memcpy_bulk, uc, address, size, user_data)
+        if self.profile == "bbk9588-uboot" and self._handle_memcpy_bulk(address):
+            return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_row_copy_loop_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot" and self._handle_row_copy_loop_800b36d0(address):
+            return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_task_context_restore_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot":
+            if address == 0x800A7B40 and self._handle_task_context_restore(address, save_current=False):
+                return
+            if address == 0x800A7C18 and self._handle_task_context_restore(address, save_current=True):
+                return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_cp0_irq_disable_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot":
+            try:
+                status = uc.reg_read(UC_MIPS_REG_CP0_STATUS) & 0xFFFFFFFF
+                uc.reg_write(UC_MIPS_REG_CP0_STATUS, status & 0xFFFFFFFE)
+            except Exception:
+                status = 0x10000401
+            uc.reg_write(UC_MIPS_REG_2, status)
+            uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+            self.cp0_irq_disable_accel_count += 1
+            return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_cp0_status_restore_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot":
+            status = uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
+            try:
+                uc.reg_write(UC_MIPS_REG_CP0_STATUS, status)
+            except Exception:
+                pass
+            uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+            self.cp0_status_restore_accel_count += 1
+            return
+        self._on_code(uc, address, size, user_data)
 
     def _handle_memset_bulk(self, address: int) -> bool:
         if self.profile != "bbk9588-uboot" or address != 0x80006BD0:
@@ -323,9 +370,12 @@ class HwEmuEngineMixin:
     def _handle_memcpy_bulk(self, address: int) -> bool:
         if self.profile != "bbk9588-uboot" or address != 0x80006BF8:
             return False
+        collect_hot_stats = bool(getattr(self, "hot_path_stats", False))
+        perf_start = time.perf_counter() if collect_hot_stats else 0.0
         dst = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
         src = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF
         size_bytes = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
+        ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF if collect_hot_stats else 0
         if size_bytes > 0x200000 or not self._is_mapped_ram_va_or_phys(dst, size_bytes):
             return False
         data = None
@@ -341,6 +391,23 @@ class HwEmuEngineMixin:
         self.uc.reg_write(UC_MIPS_REG_2, dst)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self._trace_event(event_name, pc=address, addr=dst, value=src, size=size_bytes)
+        if collect_hot_stats:
+            perf_add = getattr(self, "_perf_add", None)
+            if perf_add is not None:
+                perf_add(event_name.replace("-", "_"), time.perf_counter() - perf_start, size=size_bytes)
+            callers = getattr(self, "memcpy_bulk_callers", None)
+            if callers is None:
+                callers = {}
+                self.memcpy_bulk_callers = callers
+            row = callers.get(ra)
+            if row is None:
+                row = {"count": 0, "bytes": 0, "last_src": 0, "last_dst": 0, "last_size": 0}
+                callers[ra] = row
+            row["count"] = int(row.get("count", 0)) + 1
+            row["bytes"] = int(row.get("bytes", 0)) + int(size_bytes)
+            row["last_src"] = src
+            row["last_dst"] = dst
+            row["last_size"] = size_bytes
         return True
 
     def _record_direct_idle_instruction(self, address: int) -> None:
@@ -351,7 +418,13 @@ class HwEmuEngineMixin:
             del self.state.pcs[0]
 
     def _on_wait_wake_code(self, uc, address: int, size: int, user_data) -> None:
-        self._trace_selected_pc(address)
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
         if self._handle_interrupt_return(address):
             return
         if self._maybe_deliver_external_interrupt(address):
@@ -363,7 +436,13 @@ class HwEmuEngineMixin:
         uc.reg_write(UC_MIPS_REG_PC, 0x8005BCE8)
 
     def _on_idle_loop_code(self, uc, address: int, size: int, user_data) -> None:
-        self._trace_selected_pc(address)
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
         if self._handle_interrupt_return(address):
             return
         if self._maybe_deliver_external_interrupt(address):
@@ -400,7 +479,13 @@ class HwEmuEngineMixin:
         uc.reg_write(UC_MIPS_REG_PC, 0x80007B10)
 
     def _on_timer_tick_code(self, uc, address: int, size: int, user_data) -> None:
-        self._trace_selected_pc(address)
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
         if self._handle_interrupt_return(address):
             return
         if self._maybe_deliver_external_interrupt(address):
@@ -409,12 +494,43 @@ class HwEmuEngineMixin:
         self._service_gui_timer_entries(address)
 
     def _on_scheduler_dispatch_code(self, uc, address: int, size: int, user_data) -> None:
-        self._trace_selected_pc(address)
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
         if self._handle_interrupt_return(address):
             return
         if self._maybe_deliver_external_interrupt(address):
             return
         self.scheduler_dispatch_count += 1
+
+    def _on_rgb565_color_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot":
+            red = uc.reg_read(UC_MIPS_REG_5) & 0xFF
+            green = uc.reg_read(UC_MIPS_REG_6) & 0xFF
+            blue = uc.reg_read(UC_MIPS_REG_7) & 0xFF
+            bpp = self._read_u32_va_safe(0x8033C0BC) or 0x10
+            if bpp == 0x10:
+                value = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+                uc.reg_write(UC_MIPS_REG_2, value & 0xFFFF)
+                uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+                self.rgb565_color_accel_count += 1
+                if self.rgb565_color_accel_count <= 16 or self.rgb565_color_accel_count % 4096 == 0:
+                    surface = uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
+                    self._trace_event("rgb565-color", pc=address, addr=surface, value=value, size=self.rgb565_color_accel_count)
+                return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_bda_irq_poll_code(self, uc, address: int, size: int, user_data) -> None:
+        if self._handle_interrupt_return(address):
+            return
+        if self._maybe_deliver_external_interrupt(address):
+            return
+        if self.profile == "bbk9588-uboot" and self._service_irq_from_bda_poll(address):
+            return
 
     def _finish_hot_store_delay_branch(
         self,
@@ -498,6 +614,16 @@ class HwEmuEngineMixin:
                 4,
                 is_mmio=True,
                 ra=0x8005BCFC,
+            )
+        if pc == 0x80009860:
+            value = self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF
+            return self._finish_hot_store_delay_branch(
+                pc,
+                0x80009840,
+                0xB000100C,
+                value,
+                4,
+                is_mmio=True,
             )
         if pc == 0x80007E54:
             a2 = self.uc.reg_read(UC_MIPS_REG_6) & 0xFFFFFFFF
@@ -642,6 +768,9 @@ class HwEmuEngineMixin:
         return None
 
     def _on_store_delay_branch_code(self, uc, address: int, size: int, user_data) -> None:
+        if getattr(self, "hot_path_stats", False):
+            counts = self.store_delay_branch_counts
+            counts[address] = int(counts.get(address, 0)) + 1
         if self._handle_interrupt_return(address):
             return
         if self._maybe_deliver_external_interrupt(address):
@@ -749,10 +878,19 @@ class HwEmuEngineMixin:
         table = self._read_block_va_safe(GUI_TIMER_TABLE_VA, GUI_TIMER_TABLE_BYTES)
         if table is None:
             return
-        for index in range(GUI_TIMER_TABLE_SLOTS):
-            entry = struct.unpack_from("<I", table, index * 4)[0]
-            if not self._is_mapped_ram_va(entry, 0x10):
-                continue
+        cached_table = getattr(self, "_gui_timer_cached_table", None)
+        if cached_table == table:
+            entries = self._gui_timer_cached_entries
+        else:
+            entries = []
+            for index in range(GUI_TIMER_TABLE_SLOTS):
+                entry = struct.unpack_from("<I", table, index * 4)[0]
+                if self._is_mapped_ram_va(entry, 0x10):
+                    entries.append((index, entry))
+            self._gui_timer_cached_table = table
+            self._gui_timer_cached_entries = tuple(entries)
+            entries = self._gui_timer_cached_entries
+        for index, entry in entries:
             entry_data = self._read_block_va_safe(entry, 0x10)
             if entry_data is None:
                 continue
@@ -976,6 +1114,9 @@ class HwEmuEngineMixin:
         self._record_recovery_reg_snapshot(address)
 
     def _on_block(self, uc, address: int, size: int, user_data) -> None:
+        if getattr(self, "hot_path_stats", False):
+            counts = self.block_dispatch_counts
+            counts[address] = int(counts.get(address, 0)) + 1
         self.state.last_pc = address
         self.state.pcs.append(address)
         if len(self.state.pcs) > 64:
@@ -984,6 +1125,9 @@ class HwEmuEngineMixin:
             self.uc.emu_stop()
 
     def _on_code(self, uc, address: int, size: int, user_data) -> None:
+        if getattr(self, "hot_path_stats", False):
+            counts = self.on_code_dispatch_counts
+            counts[address] = int(counts.get(address, 0)) + 1
         if self.legacy_direct_bda:
             self._recover_bda_corrupt_pointer_registers(address)
         if self.profile == "bbk9588-uboot" and self.fast_hooks:
@@ -1108,7 +1252,13 @@ class HwEmuEngineMixin:
         self._preexecute_jr_delay(address)
         if not self.fast_hooks:
             self._trace_call(address)
-        self._trace_selected_pc(address)
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
         if self._apply_stop_input_node_conditions(address):
             return
         if address in self.stop_pcs:
@@ -1128,6 +1278,18 @@ class HwEmuEngineMixin:
         self._capture_firmware_key_sample_return(address)
         self._capture_touch_sample_return(address)
         self._capture_bda_launch_return(address)
+        if self.profile == "bbk9588-uboot" and address == 0x8001A3A0:
+            count = int(getattr(self, "touch_coord_entry_trace_count", 0))
+            if count < 64:
+                self.touch_coord_entry_trace_count = count + 1
+                self._trace_event(
+                    "touch-coord-entry",
+                    pc=address,
+                    addr=self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF,
+                    size=self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF,
+                    value=self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF,
+                    sp=self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF,
+                )
         if (
             self.profile == "bbk9588-uboot"
             and address in (0x80182A90, 0x80182BF4, 0x80182D58)
@@ -1154,16 +1316,6 @@ class HwEmuEngineMixin:
             if block_count and index >= block_count:
                 self._trace_event("nand-index-clamp", pc=address, value=index, limit=block_count)
                 self.uc.reg_write(UC_MIPS_REG_2, 0)
-        if self.profile == "bbk9588-uboot" and address == 0x800088AC:
-            target_node = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-            self._write_u32_va(0x80473F30, target_node)
-            if self._handle_task_context_restore(address, save_current=False):
-                return
-        if self.profile == "bbk9588-uboot" and address == 0x800081A8:
-            pending = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-            self._write_u32_va(0x80473F1C, pending)
-            if self._handle_task_context_restore(address, save_current=True):
-                return
         if self.profile == "bbk9588-uboot" and address == 0x800A7B40:
             if self._handle_task_context_restore(address, save_current=False):
                 return
@@ -3112,9 +3264,11 @@ class HwEmuEngineMixin:
                 count = min(remaining, chunk_size)
                 try:
                     self.internal_chunk_stop = False
+                    # Unicorn's wall-clock timeout can corrupt PC when a
+                    # selected code hook rewrites PC inside the callback. Keep
+                    # timeout slicing in Python and let count-bounded
+                    # emu_start calls finish at instruction boundaries.
                     timeout_us = 0
-                    if deadline is not None:
-                        timeout_us = max(1, int(max(0.0, deadline - time.monotonic()) * 1_000_000))
                     self.uc.emu_start(start_pc, 0, timeout=timeout_us, count=count)
                     ran = max(1, self.state.insn_count - before)
                     timed_out = deadline is not None and time.monotonic() >= deadline

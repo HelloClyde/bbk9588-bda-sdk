@@ -15,8 +15,8 @@ from hwemu_defs import GPIO_MAIN_IRQ_TO_FLAG_ADDR, GPIO_MAIN_IRQ_TO_PORT
 
 class HwEmuInterruptMixin:
     def _timer_now(self) -> int:
-        if getattr(self, "completed_step_timer", False):
-            return int(getattr(self, "timer_insn_count", self.state.insn_count))
+        if self.completed_step_timer:
+            return int(self.timer_insn_count)
         return int(self.state.insn_count)
 
     def _set_completed_step_timer_source(self, enabled: bool, *, pc: int = 0, reason: str = "manual") -> bool:
@@ -165,12 +165,17 @@ class HwEmuInterruptMixin:
     def _maybe_deliver_external_interrupt(self, pc: int) -> bool:
         if self.profile != "bbk9588-uboot":
             return False
-        insn_count = self._timer_now()
-        if self.next_tcu_irq_insn is not None and insn_count >= self.next_tcu_irq_insn:
+        if self.completed_step_timer:
+            insn_count = self.timer_insn_count
+        else:
+            insn_count = self.state.insn_count
+        next_tcu_irq = self.next_tcu_irq_insn
+        if next_tcu_irq is not None and insn_count >= next_tcu_irq:
             self._refresh_tcu_pending()
-        if self.next_irq24_insn is None:
-            self._schedule_next_irq24()
-        elif insn_count >= self.next_irq24_insn:
+        next_irq24 = self.next_irq24_insn
+        if next_irq24 is None:
+            self.next_irq24_insn = insn_count + self.irq24_period_insn
+        elif insn_count >= next_irq24:
             self._refresh_irq24_pending()
         if self.interrupt_suppress_pc_once is not None and pc == self.interrupt_suppress_pc_once:
             self._trace_event("external-interrupt-suppress-once", pc=pc)
@@ -209,6 +214,8 @@ class HwEmuInterruptMixin:
         return True
 
     def _service_pending_irq_from_wait(self, pc: int, return_pc: int) -> bool:
+        if self.intc_pending_mask == 0:
+            return False
         self._refresh_gpio_pending()
         pending = self.intc_pending_mask & 0xFFFFFFFF
         while pending:

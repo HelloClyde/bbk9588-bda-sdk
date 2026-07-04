@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
+import pstats
 import struct
 import subprocess
 import threading
 import time
+import traceback
 from collections import deque
 from itertools import islice
 from pathlib import Path
+
+from unicorn.mips_const import (
+    UC_MIPS_REG_2,
+    UC_MIPS_REG_4,
+    UC_MIPS_REG_5,
+    UC_MIPS_REG_29,
+    UC_MIPS_REG_31,
+    UC_MIPS_REG_PC,
+)
 
 from bbk9588_hwemu import Bbk9588HwEmu
 from hwemu_defs import (
@@ -26,7 +38,7 @@ from hwemu_utils import access_to_dict, find_workspace_file
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
 FAT_IMAGE = BUILD / "bbk9588_fs_fat16.img"
-COMBINED_NAND_IMAGE = BUILD / "bbk9588_nand_c200_fat_page1c40_gbkshort_usbfix.bin"
+COMBINED_NAND_IMAGE = BUILD / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin"
 FALLBACK_COMBINED_NAND_IMAGE = BUILD / "bbk9588_nand_c200_fat_page1c40.bin"
 DEFAULT_READONLY_NAND_RANGE = (0x1C40, 0x28AA7)
 AUTO_BOOT_DIALOG_X = 150
@@ -49,7 +61,6 @@ AUTO_CALIBRATION_CAPTURE_PCS = tuple(start for start, _end in AUTO_CALIBRATION_C
 AUTO_BOOT_TRACE_PCS = [
     0x800087C4,
     0x800080F0,
-    0x800081A8,
     0x80008A84,
     0x8005BCD4,
     0x8001A8FC,
@@ -225,6 +236,7 @@ class FrontendState:
         self.lock = threading.RLock()
         self.emu: Bbk9588HwEmu | None = None
         self.last_error: str | None = None
+        self.crash_snapshot: dict[str, object] | None = None
         self.last_frame: dict[str, object] | None = None
         self.running = False
         self.job_name: str | None = None
@@ -344,6 +356,11 @@ class FrontendState:
             )
             nand_image = self.args.nand_image or default_nand
             block_image = self._ensure_fat_image() if self.args.block_image else None
+            auto_boot_trace_pcs = (
+                AUTO_BOOT_TRACE_PCS
+                if self.args.auto_calibration and self.args.boot_mode == "c200" and self.args.state_in is None
+                else ()
+            )
             self.emu = Bbk9588HwEmu(
                 image=image,
                 base=base,
@@ -367,17 +384,21 @@ class FrontendState:
                 fast_hooks=not self.args.slow_global_code_hook,
                 nand_loop_accelerator=self.args.nand_loop_accelerator,
                 resource_cache16_accelerator=self.args.resource_cache16_accelerator,
-                trace_pcs=AUTO_BOOT_TRACE_PCS,
+                glyph_mask_accelerator=not getattr(self.args, "no_glyph_mask_accelerator", False),
+                cp0_status_accelerator=not getattr(self.args, "no_cp0_status_accelerator", False),
+                trace_pcs=auto_boot_trace_pcs,
                 trace_pc_detail=False,
                 completed_step_timer=bool(getattr(self.args, "completed_step_timer", False)),
                 suppress_hot_events=True,
-                block_hook=False,
+                hot_path_stats=bool(getattr(self.args, "hot_path_stats", False)),
+                block_hook=bool(getattr(self.args, "hot_path_stats", False)),
                 run_internal_chunk_steps=getattr(self.args, "run_internal_chunk_steps", None),
             )
             self.emu.framebuffer_dirty_callback = self._on_framebuffer_dirty
             if self.args.state_in is not None:
                 self.emu.load_emulator_state(self.args.state_in)
             self.last_error = None
+            self.crash_snapshot = None
             self.last_frame = None
             self.running = False
             self.job_name = None
@@ -914,11 +935,52 @@ class FrontendState:
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             self.emu.state.stop_reason = self.last_error
+            self._capture_crash_snapshot_locked(self.last_error, traceback.format_exc())
             self.cancel_run.set()
         finally:
             if publish:
                 self._publish_snapshot_locked()
         return completed_steps
+
+    def _capture_crash_snapshot_locked(self, reason: str, traceback_text: str | None = None) -> None:
+        if self.crash_snapshot is not None or self.emu is None:
+            return
+        emu = self.emu
+        registers: dict[str, str] = {}
+        for name, reg in (
+            ("pc", UC_MIPS_REG_PC),
+            ("v0", UC_MIPS_REG_2),
+            ("a0", UC_MIPS_REG_4),
+            ("a1", UC_MIPS_REG_5),
+            ("sp", UC_MIPS_REG_29),
+            ("ra", UC_MIPS_REG_31),
+        ):
+            try:
+                registers[name] = f"0x{emu.uc.reg_read(reg) & 0xFFFFFFFF:08x}"
+            except Exception as exc:
+                registers[name] = f"<{type(exc).__name__}: {exc}>"
+        self.crash_snapshot = {
+            "reason": reason,
+            "traceback": traceback_text,
+            "captured_at": time.time(),
+            "job": {
+                "name": self.job_name,
+                "total_steps": self.job_total_steps,
+                "done_steps": self.job_done_steps,
+                "chunk_steps": self.job_chunk_steps,
+                "last_slice_steps": self.job_last_slice_steps,
+                "last_slice_timed_out": self.job_last_slice_timed_out,
+            },
+            "pc": f"0x{emu.pc:08x}",
+            "last_pc": f"0x{emu.state.last_pc:08x}",
+            "insn_count": int(emu.state.insn_count),
+            "registers": registers,
+            "pending_touches": self._pending_touch_count_locked(),
+            "pending_keys": self._pending_key_count_locked(),
+            "events": deque_tail(emu.state.events, 64),
+            "invalid": [access_to_dict(a) for a in emu.state.invalid[-8:]],
+            "scheduler": emu.scheduler_snapshot_compact(),
+        }
 
     def _pending_touch_count_locked(self) -> int:
         with self.input_lock:
@@ -1155,6 +1217,17 @@ class FrontendState:
     def boot(self) -> dict[str, object]:
         return self.step(self.args.boot_steps)
 
+    def save_checkpoint(self, path: Path) -> dict[str, object]:
+        with self.lock:
+            if self.emu is None:
+                self.reset()
+            assert self.emu is not None
+            self.emu.save_emulator_state(path)
+            self._publish_snapshot_locked()
+            snap = self.snapshot()
+            snap["checkpoint"] = str(path)
+            return snap
+
     def _worker_alive(self) -> bool:
         return self.worker is not None and self.worker is not threading.current_thread() and self.worker.is_alive()
 
@@ -1174,13 +1247,16 @@ class FrontendState:
             self.job_started_at = time.time()
             self.job_finished_at = None
             self.running = True
-            if self.emu is not None:
+            if self.emu is not None and self.crash_snapshot is None:
                 self.emu.state.stop_reason = None
-            self.last_error = None
+                self.last_error = None
             chunk = max(1, chunk_steps)
             self._publish_snapshot_locked()
 
         def worker() -> None:
+            profiler = cProfile.Profile() if getattr(self.args, "worker_profile_out", None) is not None else None
+            if profiler is not None:
+                profiler.enable()
             try:
                 stop_after_timeout_slice = False
                 while not self.cancel_run.is_set():
@@ -1230,8 +1306,18 @@ class FrontendState:
                     self.last_error = f"{type(exc).__name__}: {exc}"
                     if self.emu is not None:
                         self.emu.state.stop_reason = self.last_error
+                    self._capture_crash_snapshot_locked(self.last_error, traceback.format_exc())
                     self.cancel_run.set()
             finally:
+                if profiler is not None:
+                    profiler.disable()
+                    profile_path = self.args.worker_profile_out
+                    profile_path.parent.mkdir(parents=True, exist_ok=True)
+                    profiler.dump_stats(str(profile_path))
+                    text_path = profile_path.with_suffix(profile_path.suffix + ".txt")
+                    with text_path.open("w", encoding="utf-8") as fh:
+                        stats = pstats.Stats(profiler, stream=fh).strip_dirs().sort_stats("cumtime")
+                        stats.print_stats(120)
                 start_input_followup = False
                 with self.lock:
                     self.running = False
@@ -1553,6 +1639,9 @@ class FrontendState:
                 "halfword_copy": getattr(self.emu, "halfword_copy_accel_count", 0),
                 "raster_copy": getattr(self.emu, "raster_loop_accel_count", 0),
                 "glyph_mask": getattr(self.emu, "glyph_mask_loop_accel_count", 0),
+                "row_copy_loop": getattr(self.emu, "row_copy_loop_accel_count", 0),
+                "cp0_irq_disable": getattr(self.emu, "cp0_irq_disable_accel_count", 0),
+                "cp0_status_restore": getattr(self.emu, "cp0_status_restore_accel_count", 0),
                 "surface_setpixel": getattr(self.emu, "surface_setpixel_accel_count", 0),
                 "surface_hline": getattr(self.emu, "surface_hline_accel_count", 0),
                 "surface_color_span": getattr(self.emu, "surface_color_span_accel_count", 0),
@@ -1568,10 +1657,51 @@ class FrontendState:
             },
             "suppressed_hot_events": self.emu.suppressed_hot_event_count,
             "no_event_poll_accel": self.emu.no_event_poll_accel_count,
+            "perf": getattr(self.emu, "perf_counters", {}),
+            "memcpy_bulk_callers": [
+                {
+                    "ra": f"0x{ra:08x}",
+                    "count": int(row.get("count", 0)),
+                    "bytes": int(row.get("bytes", 0)),
+                    "last_src": f"0x{int(row.get('last_src', 0)) & 0xFFFFFFFF:08x}",
+                    "last_dst": f"0x{int(row.get('last_dst', 0)) & 0xFFFFFFFF:08x}",
+                    "last_size": int(row.get("last_size", 0)),
+                }
+                for ra, row in sorted(
+                    getattr(self.emu, "memcpy_bulk_callers", {}).items(),
+                    key=lambda item: int(item[1].get("count", 0)),
+                    reverse=True,
+                )[:12]
+            ],
+            "store_delay_branch_counts": [
+                {"pc": f"0x{pc:08x}", "count": int(count)}
+                for pc, count in sorted(
+                    getattr(self.emu, "store_delay_branch_counts", {}).items(),
+                    key=lambda item: int(item[1]),
+                    reverse=True,
+                )[:12]
+            ],
+            "on_code_dispatch_counts": [
+                {"pc": f"0x{pc:08x}", "count": int(count)}
+                for pc, count in sorted(
+                    getattr(self.emu, "on_code_dispatch_counts", {}).items(),
+                    key=lambda item: int(item[1]),
+                    reverse=True,
+                )[:24]
+            ],
+            "block_dispatch_counts": [
+                {"pc": f"0x{pc:08x}", "count": int(count)}
+                for pc, count in sorted(
+                    getattr(self.emu, "block_dispatch_counts", {}).items(),
+                    key=lambda item: int(item[1]),
+                    reverse=True,
+                )[:24]
+            ],
             "job": job,
             "input_worker_pending": self.input_worker_pending,
             "input_wake_count": self.input_wake_count,
             "stop_reason": self.last_error or state.stop_reason,
+            "crash_snapshot": self.crash_snapshot,
             "insn_count": state.insn_count,
             "pc": f"0x{self.emu.pc:08x}",
             "last_pc": f"0x{state.last_pc:08x}",

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
+import pstats
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -123,6 +125,7 @@ const autoBootEl = document.getElementById('autoBoot');
 let timer = null;
 let poller = null;
 let ws = null;
+let wsOpenPromise = null;
 let continuousActive = false;
 let pointerActive = false;
 let activePointerId = null;
@@ -354,8 +357,13 @@ async function drawPngFrame(data) {
   bitmap.close?.();
 }
 function connectWs() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve(ws);
+  if (ws && ws.readyState === WebSocket.CONNECTING) return wsOpenPromise || Promise.resolve(ws);
   ws = new WebSocket(`ws://${location.host}/ws`);
+  wsOpenPromise = new Promise((resolve, reject) => {
+    ws.addEventListener('open', () => resolve(ws), {once:true});
+    ws.addEventListener('error', () => reject(new Error('websocket failed')), {once:true});
+  });
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => stopPolling();
   ws.onmessage = async ev => {
@@ -371,10 +379,12 @@ function connectWs() {
   };
   ws.onclose = () => {
     ws = null;
+    wsOpenPromise = null;
     if (!poller) poller = setInterval(() => refresh().catch(console.error), 1000);
     setTimeout(connectWs, 1500);
   };
   ws.onerror = () => ws?.close();
+  return wsOpenPromise;
 }
 function stopPolling() {
   if (poller) { clearInterval(poller); poller = null; }
@@ -409,8 +419,8 @@ function requestStop() {
 document.getElementById('boot').onclick = async () => {
   const n = Number(stepsEl.value || 250000);
   setContinuousActive(true);
+  await connectWs();
   wsSend({op:'run-start', name:'boot', steps:0, chunk:n});
-  connectWs();
 };
 document.getElementById('step').onclick = step;
 document.getElementById('reset').onclick = async () => {
@@ -419,7 +429,7 @@ document.getElementById('reset').onclick = async () => {
   stopPolling();
   wsSend({op:'reset'});
 };
-document.getElementById('auto').onclick = () => {
+document.getElementById('auto').onclick = async () => {
   const n = Number(stepsEl.value || 250000);
   if (continuousActive) {
     setContinuousActive(false);
@@ -427,8 +437,8 @@ document.getElementById('auto').onclick = () => {
     return;
   }
   setContinuousActive(true);
+  await connectWs();
   wsSend({op:'run-start', name:'continuous', steps:0, chunk:n});
-  connectWs();
 };
 document.getElementById('stop').onclick = async () => {
   if (timer) { clearInterval(timer); timer = null; }
@@ -583,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--worker-slice-seconds",
         type=float,
-        default=0.25,
+        default=0.02,
         help="Wall-clock timeout for each frontend worker timeslice, keeping input/status responsive in tight loops.",
     )
     ap.add_argument(
@@ -654,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable automatic cold-boot touchscreen calibration input.",
     )
     ap.add_argument("--slow-global-code-hook", action="store_true", help="Diagnostic: hook every executed instruction instead of selected fast-hook PCs.")
+    ap.add_argument("--no-cp0-status-accelerator", action="store_true", help="Diagnostic: disable CP0 status helper fast hooks.")
+    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", help="Diagnostic: disable the glyph-mask loop accelerator.")
     ap.add_argument("--block-image", action="store_true", help="Enable the legacy temporary logical block-device hook.")
     ap.add_argument("--scheduler-tick-clamp", action="store_true", help="Enable the old diagnostic scheduler tick clamp.")
     ap.add_argument(
@@ -691,6 +703,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     ap.add_argument("--orientation", choices=["raw", "rot180", "cw90", "ccw90", "hflip", "vflip"], default="rot180")
+    ap.add_argument("--profile-out", type=Path, help="Write a cProfile report when the frontend exits normally.")
+    ap.add_argument("--worker-profile-out", type=Path, help="Write a cProfile report for the emulation worker thread.")
+    ap.add_argument("--hot-path-stats", action="store_true", help="Diagnostic: collect per-call counters in hot emulator fast paths.")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -698,12 +713,27 @@ def main(argv: list[str] | None = None) -> int:
     Handler.state = state
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"BBK9588 HWEMU frontend: http://{args.host}:{args.port}/")
+    profiler = cProfile.Profile() if args.profile_out is not None else None
     try:
-        httpd.serve_forever()
+        if profiler is None:
+            httpd.serve_forever()
+        else:
+            profiler.enable()
+            httpd.serve_forever()
+            profiler.disable()
     except KeyboardInterrupt:
-        pass
+        if profiler is not None:
+            profiler.disable()
     finally:
         httpd.server_close()
+        if profiler is not None and args.profile_out is not None:
+            args.profile_out.parent.mkdir(parents=True, exist_ok=True)
+            stats_path = args.profile_out
+            profiler.dump_stats(str(stats_path))
+            text_path = stats_path.with_suffix(stats_path.suffix + ".txt")
+            with text_path.open("w", encoding="utf-8") as fh:
+                stats = pstats.Stats(profiler, stream=fh).strip_dirs().sort_stats("cumtime")
+                stats.print_stats(80)
     return 0
 
 

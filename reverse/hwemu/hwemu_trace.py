@@ -42,6 +42,7 @@ class HwEmuTraceMixin:
             "lfn-copy-loop",
             "nand-loop-accelerate",
             "ram-delay-branch",
+            "row-copy-loop",
             "stack-clear32-delay-loop",
             "zero-pad-delay-loop",
             "lcd-getter",

@@ -1213,6 +1213,48 @@ class HwEmuFastpathMixin:
         self._trace_event("byte-copy-loop", pc=pc, addr=dst, size=count, value=src)
         return True
 
+    def _handle_row_copy_loop_800b36d0(self, pc: int) -> bool:
+        if not self.fast_hooks or pc != 0x800B36D0:
+            return False
+        rows = self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF
+        dst = self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF
+        src_base = self.uc.reg_read(UC_MIPS_REG_22) & 0xFFFFFFFF
+        src_off = self.uc.reg_read(UC_MIPS_REG_18) & 0xFFFFFFFF
+        row_bytes = self.uc.reg_read(UC_MIPS_REG_19) & 0xFFFFFFFF
+        src_stride = self.uc.reg_read(UC_MIPS_REG_20) & 0xFFFFFFFF
+        if rows == 0:
+            self.uc.reg_write(UC_MIPS_REG_PC, 0x800B36F0)
+            self.state.insn_count += 1
+            self.row_copy_loop_accel_count += 1
+            return True
+        if rows > 0x1000 or row_bytes == 0 or row_bytes > 0x10000:
+            return False
+        total_src_span = src_off + (rows - 1) * src_stride + row_bytes
+        total_dst_span = rows * row_bytes
+        src_start = (src_base + src_off) & 0xFFFFFFFF
+        if not self._is_mapped_ram_va(src_base, total_src_span):
+            return False
+        if not self._is_mapped_ram_va(dst, total_dst_span):
+            return False
+        src_data = self._read_block_va_safe(src_base, total_src_span)
+        if src_data is None:
+            return False
+        out = bytearray(total_dst_span)
+        for row in range(rows):
+            src_pos = src_off + row * src_stride
+            dst_pos = row * row_bytes
+            out[dst_pos : dst_pos + row_bytes] = src_data[src_pos : src_pos + row_bytes]
+        self.uc.mem_write(va_to_phys(dst), bytes(out))
+        self._mark_framebuffer_dirty_if_overlaps(pc, dst, total_dst_span, "row-copy-loop")
+        self.uc.reg_write(UC_MIPS_REG_16, 0)
+        self.uc.reg_write(UC_MIPS_REG_17, (dst + total_dst_span) & 0xFFFFFFFF)
+        self.uc.reg_write(UC_MIPS_REG_18, (src_off + rows * src_stride) & 0xFFFFFFFF)
+        self.uc.reg_write(UC_MIPS_REG_2, dst)
+        self.uc.reg_write(UC_MIPS_REG_PC, 0x800B36F0)
+        self.row_copy_loop_accel_count += 1
+        self._trace_event("row-copy-loop", pc=pc, addr=dst, value=src_start, size=total_dst_span)
+        return True
+
     def _handle_portrait_blit_loop(self, pc: int) -> bool:
         if not self.fast_hooks or pc not in PORTRAIT_BLIT_LOOP_PCS:
             return False
@@ -1227,24 +1269,19 @@ class HwEmuFastpathMixin:
             return False
         if not self._is_mapped_ram_va(src_base, 240 * 320 * 2):
             return False
-        dest_base = 0x12B10
-        src_row_index = 0
-        for _y in range(320):
-            src = (src_base + (src_row_index << 5)) & 0xFFFFFFFF
-            byte_count = 240 * 2
-            data = self._read_block_va_safe(src, byte_count)
-            if data is None or len(data) != byte_count:
-                return False
+        byte_count = 240 * 2
+        frame_bytes = 240 * 320 * 2
+        src_data = self._read_block_va_safe(src_base, frame_bytes)
+        if src_data is None or len(src_data) != frame_bytes:
+            return False
+        frame = bytearray(frame_bytes)
+        for y in range(320):
+            row = src_data[y * byte_count : (y + 1) * byte_count]
             if reverse:
-                dest = (fb + dest_base * 2) & 0xFFFFFFFF
-                data = b"".join(data[i : i + 2] for i in range(byte_count - 2, -2, -2))
-            else:
-                dest = (fb + dest_base * 2) & 0xFFFFFFFF
-            if not self._is_mapped_ram_va(dest, byte_count):
-                return False
-            self.uc.mem_write(va_to_phys(dest), data)
-            dest_base = (dest_base - 240) & 0xFFFFFFFF
-            src_row_index = (src_row_index + 15) & 0xFFFFFFFF
+                row = memoryview(row).cast("H")[::-1].tobytes()
+            dest_off = (319 - y) * byte_count
+            frame[dest_off : dest_off + byte_count] = row
+        self.uc.mem_write(va_to_phys(fb), bytes(frame))
         self._mark_framebuffer_dirty_if_overlaps(pc, fb, 240 * 320 * 2, "portrait-blit")
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self._trace_event("portrait-blit-loop", pc=pc, addr=fb, size=320 * 240, value=src_base)

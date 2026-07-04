@@ -332,6 +332,21 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         cmd.append("--completed-step-timer")
     if bool(getattr(args, "completed_step_timer_after_auto_boot", False)):
         cmd.append("--completed-step-timer-after-auto-boot")
+    if bool(getattr(args, "no_cp0_status_accelerator", False)):
+        cmd.append("--no-cp0-status-accelerator")
+    if bool(getattr(args, "no_glyph_mask_accelerator", False)):
+        cmd.append("--no-glyph-mask-accelerator")
+    state_in = getattr(args, "state_in", None)
+    if state_in is not None:
+        cmd += ["--state-in", str(state_in)]
+    profile_out = getattr(args, "frontend_profile_out", None)
+    if profile_out is not None:
+        cmd += ["--profile-out", str(profile_out)]
+    worker_profile_out = getattr(args, "worker_profile_out", None)
+    if worker_profile_out is not None:
+        cmd += ["--worker-profile-out", str(worker_profile_out)]
+    if bool(getattr(args, "hot_path_stats", False)):
+        cmd.append("--hot-path-stats")
     return subprocess.Popen(
         cmd,
         cwd=ROOT,
@@ -360,6 +375,7 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
     return {
         "running": status.get("running"),
         "pc": status.get("pc"),
+        "stop_reason": status.get("stop_reason"),
         "auto_calibration_stage": status.get("auto_calibration_stage"),
         "auto_calibration_stage_label": status.get("auto_calibration_stage_label"),
         "pending_touches": status.get("pending_touches"),
@@ -376,6 +392,11 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
             "requested_steps_per_second": job.get("requested_steps_per_second"),
         },
         "accelerators": status.get("accelerators"),
+        "perf": status.get("perf"),
+        "memcpy_bulk_callers": status.get("memcpy_bulk_callers"),
+        "store_delay_branch_counts": status.get("store_delay_branch_counts"),
+        "on_code_dispatch_counts": status.get("on_code_dispatch_counts"),
+        "block_dispatch_counts": status.get("block_dispatch_counts"),
         "scheduler": scheduler,
         "frame_push": status.get("frame_push"),
         "ws": status.get("ws"),
@@ -515,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
     ap.add_argument("--completed-step-timer", action="store_true", default=False)
     ap.add_argument("--completed-step-timer-after-auto-boot", action="store_true", default=False)
+    ap.add_argument("--no-cp0-status-accelerator", action="store_true", default=False)
+    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", default=False)
     ap.add_argument(
         "--interaction-frame-timeout",
         type=float,

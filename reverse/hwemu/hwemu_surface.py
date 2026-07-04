@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import time
 
 from unicorn.mips_const import (
     UC_MIPS_REG_2,
@@ -62,15 +63,35 @@ SURFACE_TRANSPARENT_BLIT_PCS = frozenset(
 
 
 class HwEmuSurfaceMixin:
+    def _perf_add(self, name: str, elapsed: float, *, size: int = 0, count: int = 1) -> None:
+        stats = getattr(self, "perf_counters", None)
+        if stats is None:
+            stats = {}
+            self.perf_counters = stats
+        row = stats.get(name)
+        if row is None:
+            row = {"count": 0, "seconds": 0.0, "bytes": 0}
+            stats[name] = row
+        row["count"] = int(row.get("count", 0)) + int(count)
+        row["seconds"] = float(row.get("seconds", 0.0)) + float(elapsed)
+        row["bytes"] = int(row.get("bytes", 0)) + int(size)
+
+    @staticmethod
+    def _reverse_rgb565_pairs(data: bytes) -> bytes:
+        return memoryview(data).cast("H")[::-1].tobytes()
+
     def _lcd_mirror_config(self) -> tuple[int, int, int, bool] | None:
         if (self._read_u32_va_safe(0x80474040) or 0) == 0:
             return None
-        width = self._read_mem_va(0x804A6B88, 2) & 0xFFFF
-        height = self._read_mem_va(0x804A6B8C, 2) & 0xFFFF
-        fb = self._read_u32_va_safe(0x804A6C60) or 0
+        config = self._read_block_va_safe(0x804A6B88, 0xE0)
+        if config is None or len(config) != 0xE0:
+            return None
+        width = struct.unpack_from("<H", config, 0x00)[0]
+        height = struct.unpack_from("<H", config, 0x04)[0]
+        fb = struct.unpack_from("<I", config, 0xD8)[0]
         if width == 0 or height == 0 or fb == 0:
             return None
-        reverse = bool(self._read_mem_va(0x804A6C64, 1) & 0xFF)
+        reverse = bool(config[0xDC])
         return width, height, fb, reverse
 
     def _mirror_lcd_pixel_if_enabled(self, x: int, y: int, color: int) -> None:
@@ -123,7 +144,7 @@ class HwEmuSurfaceMixin:
         span = data[start * 2 : end * 2]
         if reverse:
             dest_x = width - x0 - end
-            span = b"".join(span[i : i + 2] for i in range(len(span) - 2, -2, -2))
+            span = self._reverse_rgb565_pairs(span)
         else:
             dest_x = x0 + start
         dest = (fb + ((my * width + dest_x) << 1)) & 0xFFFFFFFF
@@ -150,6 +171,75 @@ class HwEmuSurfaceMixin:
             y,
             struct.pack("<H", color & 0xFFFF) * width,
         )
+
+    def _mirror_lcd_row_spans_with_config(
+        self,
+        config: tuple[int, int, int, bool],
+        pc: int,
+        x: int,
+        y: int,
+        spans: list[tuple[int, bytes]],
+    ) -> None:
+        if not spans:
+            return
+        if len(spans) == 1:
+            start_px, span = spans[0]
+            self._mirror_lcd_span_bytes_with_config(config, pc, x + start_px, y, span, mark_dirty=False)
+            return
+
+        width, height, fb, reverse = config
+        my = height - int(y) - 1
+        if my < 0 or my >= height:
+            return
+        row_dest = (fb + my * width * 2) & 0xFFFFFFFF
+        row_bytes = width * 2
+        if not self._is_mapped_ram_va(row_dest, row_bytes):
+            return
+        row_data = self._read_block_va_safe(row_dest, row_bytes)
+        if row_data is None or len(row_data) != row_bytes:
+            return
+        merged = bytearray(row_data)
+        x_base = int(x)
+        changed = False
+        for start_px, span in spans:
+            count = len(span) // 2
+            if count <= 0:
+                continue
+            x0 = x_base + start_px
+            start = max(0, -x0)
+            end = min(count, width - x0)
+            if start >= end:
+                continue
+            clipped = span[start * 2 : end * 2]
+            if reverse:
+                dest_x = width - x0 - end
+                clipped = self._reverse_rgb565_pairs(clipped)
+            else:
+                dest_x = x0 + start
+            off = dest_x * 2
+            merged[off : off + len(clipped)] = clipped
+            changed = True
+        if changed:
+            self.uc.mem_write(va_to_phys(row_dest), bytes(merged))
+
+    def _write_surface_row_spans(self, dest_row: int, row_bytes: int, spans: list[tuple[int, bytes]]) -> bool:
+        if not spans:
+            return True
+        if len(spans) == 1:
+            start_byte, span = spans[0]
+            self.uc.mem_write(va_to_phys(dest_row + start_byte), span)
+            return True
+
+        if not self._is_mapped_ram_va(dest_row, row_bytes):
+            return False
+        row_data = self._read_block_va_safe(dest_row, row_bytes)
+        if row_data is None or len(row_data) != row_bytes:
+            return False
+        merged = bytearray(row_data)
+        for start_byte, span in spans:
+            merged[start_byte : start_byte + len(span)] = span
+        self.uc.mem_write(va_to_phys(dest_row), bytes(merged))
+        return True
 
     def _mark_framebuffer_dirty(self, pc: int, addr: int, size: int, reason: str) -> None:
         self.framebuffer_dirty_seq = (self.framebuffer_dirty_seq + 1) & 0xFFFFFFFF
@@ -518,13 +608,20 @@ class HwEmuSurfaceMixin:
             return False
         surface, x, y, width, height, buffer_va, stride, pitch, surface_buffer = args
         row_bytes = width * 2
-        for row in range(height):
-            src = surface_buffer + (y + row) * pitch + x * 2
-            dst = buffer_va + row * stride
-            data = self._read_block_va_safe(src, row_bytes)
+        src0 = surface_buffer + y * pitch + x * 2
+        if stride == row_bytes and pitch == row_bytes:
+            data = self._read_block_va_safe(src0, row_bytes * height)
             if data is None:
                 return False
-            self.uc.mem_write(va_to_phys(dst), data)
+            self.uc.mem_write(va_to_phys(buffer_va), data)
+        else:
+            for row in range(height):
+                src = surface_buffer + (y + row) * pitch + x * 2
+                dst = buffer_va + row * stride
+                data = self._read_block_va_safe(src, row_bytes)
+                if data is None:
+                    return False
+                self.uc.mem_write(va_to_phys(dst), data)
         self.uc.reg_write(UC_MIPS_REG_2, 0)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_block_read_accel_count += 1
@@ -553,16 +650,23 @@ class HwEmuSurfaceMixin:
         surface, x, y, width, height, buffer_va, stride, pitch, surface_buffer = args
         row_bytes = width * 2
         mirror_config = self._lcd_mirror_config()
-        for row in range(height):
-            src = buffer_va + row * stride
-            dst = surface_buffer + (y + row) * pitch + x * 2
-            data = self._read_block_va_safe(src, row_bytes)
+        dest0 = surface_buffer + y * pitch + x * 2
+        if mirror_config is None and stride == row_bytes and pitch == row_bytes:
+            data = self._read_block_va_safe(buffer_va, row_bytes * height)
             if data is None:
                 return False
-            self.uc.mem_write(va_to_phys(dst), data)
-            if mirror_config is not None:
-                self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x, y + row, data)
-        self._mark_framebuffer_dirty(pc, surface_buffer + y * pitch + x * 2, row_bytes * height, "surface-block-write")
+            self.uc.mem_write(va_to_phys(dest0), data)
+        else:
+            for row in range(height):
+                src = buffer_va + row * stride
+                dst = surface_buffer + (y + row) * pitch + x * 2
+                data = self._read_block_va_safe(src, row_bytes)
+                if data is None:
+                    return False
+                self.uc.mem_write(va_to_phys(dst), data)
+                if mirror_config is not None:
+                    self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x, y + row, data)
+        self._mark_framebuffer_dirty(pc, dest0, row_bytes * height, "surface-block-write")
         self.uc.reg_write(UC_MIPS_REG_2, 0)
         self.uc.reg_write(UC_MIPS_REG_PC, self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
         self.surface_block_write_accel_count += 1
@@ -585,6 +689,7 @@ class HwEmuSurfaceMixin:
     def _handle_surface_transparent_blit(self, pc: int) -> bool:
         if not self.fast_hooks or pc not in SURFACE_TRANSPARENT_BLIT_PCS:
             return False
+        perf_start = time.perf_counter()
         sp = self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF
         at_entry = pc == 0x8012C46C
         if at_entry:
@@ -632,12 +737,35 @@ class HwEmuSurfaceMixin:
         pixels_written = 0
         dirty = False
         transparent_bytes = struct.pack("<H", transparent)
+        full_row_count = 0
+        span_row_count = 0
+        source_size = (height - 1) * stride + row_bytes
+        source_blob = None
+        if source_size <= 0x400000:
+            source_blob = self._read_block_va_safe(src_va, source_size)
+            if source_blob is not None and len(source_blob) != source_size:
+                source_blob = None
         for row in range(height):
-            src = src_va + row * stride
-            data = self._read_block_va_safe(src, row_bytes)
-            if data is None or len(data) != row_bytes:
-                return False
+            row_offset = row * stride
+            if source_blob is None:
+                src = src_va + row_offset
+                data = self._read_block_va_safe(src, row_bytes)
+                if data is None or len(data) != row_bytes:
+                    return False
+            else:
+                data = source_blob[row_offset : row_offset + row_bytes]
             dest_row = surface_buffer + (y + row) * pitch + x * 2
+            if data.find(transparent_bytes) < 0:
+                self.uc.mem_write(va_to_phys(dest_row), data)
+                if mirror_config is not None:
+                    self._mirror_lcd_span_bytes_with_config(mirror_config, pc, x, y + row, data, mark_dirty=False)
+                pixels_written += width
+                dirty = True
+                full_row_count += 1
+                continue
+
+            row_spans: list[tuple[int, bytes]] = []
+            mirror_spans: list[tuple[int, bytes]] = []
             span_start = 0
             search = 0
             while search < row_bytes:
@@ -649,23 +777,21 @@ class HwEmuSurfaceMixin:
                     continue
                 if hit > span_start:
                     span = data[span_start:hit]
-                    dest = dest_row + span_start
-                    self.uc.mem_write(va_to_phys(dest), span)
+                    row_spans.append((span_start, span))
                     if mirror_config is not None:
-                        self._mirror_lcd_span_bytes_with_config(
-                            mirror_config,
-                            pc,
-                            x + (span_start // 2),
-                            y + row,
-                            span,
-                            mark_dirty=False,
-                        )
+                        mirror_spans.append((span_start // 2, span))
                     pixels_written += (hit - span_start) // 2
                     dirty = True
                 if hit >= row_bytes:
                     break
                 search = hit + 2
                 span_start = search
+            if row_spans and not self._write_surface_row_spans(dest_row, row_bytes, row_spans):
+                return False
+            if mirror_config is not None and mirror_spans:
+                self._mirror_lcd_row_spans_with_config(mirror_config, pc, x, y + row, mirror_spans)
+            if row_spans:
+                span_row_count += 1
 
         if dirty:
             if mirror_config is not None:
@@ -725,5 +851,16 @@ class HwEmuSurfaceMixin:
                 width=width,
                 height=height,
             )
+        self._perf_add(
+            "surface_transparent_blit",
+            time.perf_counter() - perf_start,
+            size=width * height * 2,
+        )
+        if full_row_count:
+            self._perf_add("surface_transparent_blit_full_rows", 0.0, count=full_row_count, size=full_row_count * row_bytes)
+        if span_row_count:
+            self._perf_add("surface_transparent_blit_span_rows", 0.0, count=span_row_count, size=span_row_count * row_bytes)
+        if source_blob is not None:
+            self._perf_add("surface_transparent_blit_source_bulk", 0.0, size=source_size)
         return True
 

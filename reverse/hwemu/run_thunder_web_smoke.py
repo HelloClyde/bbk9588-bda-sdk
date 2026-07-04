@@ -13,6 +13,7 @@ import sys
 import time
 import zlib
 from pathlib import Path
+from urllib.parse import quote
 
 from inspect_combined_nand_fat import Fat16View, extract_fat_from_nand
 from run_frontend_web_smoke import (
@@ -34,6 +35,8 @@ from run_frontend_web_smoke import (
 KEY_RIGHT = 7
 KEY_OK = 10
 KEY_LEFT = 6
+KEY_CANCEL = 9
+KEY_DISMISS_PET = KEY_OK
 
 
 def read_syspet_balance(nand_image: Path) -> int | None:
@@ -135,6 +138,33 @@ def thunder_menu_capture_like(capture: dict[str, object]) -> bool:
     if not isinstance(stats, dict):
         return False
     return int(stats.get("yellow") or 0) >= 800
+
+
+def game_grid_capture_like(capture: dict[str, object]) -> bool:
+    stats = capture.get("image_stats")
+    if not isinstance(stats, dict):
+        return False
+    return (
+        int(stats.get("white") or 0) >= 4500
+        and int(stats.get("bluebar") or 0) >= 2500
+        and int(stats.get("green") or 0) < 1000
+        and int(stats.get("yellow") or 0) < 400
+    )
+
+
+def pet_popup_capture_like(capture: dict[str, object]) -> bool:
+    stats = capture.get("image_stats")
+    if not isinstance(stats, dict):
+        return False
+    yellow = int(stats.get("yellow") or 0)
+    white = int(stats.get("white") or 0)
+    bluebar = int(stats.get("bluebar") or 0)
+    green = int(stats.get("green") or 0)
+    return (
+        yellow >= 700
+        and white < 7000
+        and (green >= 1000 or bluebar >= 2500)
+    )
 
 
 def save_capture(
@@ -264,6 +294,80 @@ def capture_when(
     return last_capture or save_capture(host, port, out_dir, prefix, name)
 
 
+def tap_until_capture_changes(
+    ws: WebSocketClient,
+    host: str,
+    port: int,
+    out_dir: Path,
+    prefix: str,
+    name: str,
+    x: int,
+    y: int,
+    old_digest: str,
+    *,
+    attempts: int = 3,
+    timeout: float = 3.0,
+) -> tuple[dict[str, object], bool]:
+    last_capture: dict[str, object] = {}
+    for attempt in range(max(1, attempts)):
+        tap(ws, x, y, poll_status=lambda: http_json(host, port, "GET", "/api/status"))
+        capture_name = name if attempt == 0 else f"{name}_retry{attempt}"
+        last_capture = capture_when(
+            ws,
+            host,
+            port,
+            out_dir,
+            prefix,
+            capture_name,
+            timeout=timeout,
+            min_wait=0.3,
+            capture_predicate=lambda capture, old=old_digest: str(capture.get("sha256") or "") != old,
+            check_interval=0.25,
+        )
+        if str(last_capture.get("sha256") or "") != old_digest:
+            return last_capture, True
+    return last_capture, False
+
+
+def tap_until_capture_predicate(
+    ws: WebSocketClient,
+    host: str,
+    port: int,
+    out_dir: Path,
+    prefix: str,
+    name: str,
+    x: int,
+    y: int,
+    predicate,
+    *,
+    attempts: int = 4,
+    timeout: float = 3.0,
+) -> tuple[dict[str, object], bool]:
+    last_capture: dict[str, object] = {}
+    poll_status = lambda: http_json(host, port, "GET", "/api/status")
+    for attempt in range(max(1, attempts)):
+        tap(ws, x, y, poll_status=poll_status)
+        capture_name = name if attempt == 0 else f"{name}_retry{attempt}"
+        last_capture = capture_when(
+            ws,
+            host,
+            port,
+            out_dir,
+            prefix,
+            capture_name,
+            timeout=timeout,
+            min_wait=0.3,
+            capture_predicate=lambda capture: predicate(capture) or pet_popup_capture_like(capture),
+            check_interval=0.25,
+        )
+        if predicate(last_capture):
+            return last_capture, True
+        if pet_popup_capture_like(last_capture):
+            key_press(ws, KEY_DISMISS_PET, poll_status=poll_status)
+            pump_for(ws, 0.8)
+    return last_capture, False
+
+
 def make_contact_sheet(captures: list[dict[str, object]], out_path: Path) -> str | None:
     image_paths = [Path(str(item["path"])) for item in captures if item.get("path")]
     image_paths = [path for path in image_paths if path.exists()]
@@ -322,13 +426,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot-timeout", type=int, default=240)
     ap.add_argument("--runtime-timeout", type=int, default=45)
     ap.add_argument("--chunk-steps", type=int, default=250000)
-    ap.add_argument("--worker-slice-seconds", type=float, default=0.25)
+    ap.add_argument("--worker-slice-seconds", type=float, default=0.02)
     ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
     ap.add_argument("--fps-probe-seconds", type=float, default=0.0)
     ap.add_argument("--completed-step-timer", action="store_true", default=False)
     ap.add_argument("--completed-step-timer-after-auto-boot", action="store_true", default=False)
     ap.add_argument("--completed-step-timer-at-thunder-menu", action="store_true", default=False)
+    ap.add_argument("--no-cp0-status-accelerator", action="store_true", default=False)
+    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", default=False)
     ap.add_argument("--event-probe", action="store_true", default=False)
+    ap.add_argument("--battle-state-out", type=Path, help="Save a frontend checkpoint after Thunder reaches battle.")
     ns = ap.parse_args(argv)
 
     ns.out_dir.mkdir(parents=True, exist_ok=True)
@@ -366,169 +473,249 @@ def main(argv: list[str] | None = None) -> int:
             menu_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "00_menu", 0.5)
             captures.append(menu_capture)
 
-            tap(ws, 168, 286, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment", 1.5))
+            poll_status = lambda: http_json(ns.host, port, "GET", "/api/status")
+            tap(ws, 168, 286, poll_status=poll_status)
+            entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment", 1.0)
+            if pet_popup_capture_like(entertainment_capture):
+                key_press(ws, KEY_DISMISS_PET, poll_status=poll_status)
+                entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_dismiss_pet", 1.0)
+                tap(ws, 168, 286, poll_status=poll_status)
+                entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_retry", 1.0)
+            tap(ws, 120, 70, poll_status=poll_status)
+            entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid", 1.0)
+            if pet_popup_capture_like(entertainment_capture):
+                key_press(ws, KEY_DISMISS_PET, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid_dismiss_pet", 1.0))
+                tap(ws, 120, 70, poll_status=poll_status)
+                entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid_retry", 1.0)
+            captures.append(entertainment_capture)
 
-            tap(ws, 120, 70, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "02_game_grid", 4.0))
-            grid_status = http_json(ns.host, port, "GET", "/api/status")
-            interactions.append({"step": "open-entertainment-world", "status": summarize_status(grid_status)})
-
-            tap(ws, 120, 250, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "03_select_thunder", 1.5))
-
-            key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "04_loading_or_payment", 3.0))
-            entry_status = http_json(ns.host, port, "GET", "/api/status")
-            interactions.append({"step": "open-thunder-entry", "status": summarize_status(entry_status)})
-
-            if balance is not None and balance < 2:
-                failures.append(f"SysPet.yzj balance is {balance}, expected at least 2")
-
-            # If the billing dialog is shown, this hits its confirm button.
-            # If the game has already moved to loading, the tap is harmless.
-            tap(ws, 82, 202, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            menu_capture = capture_when(
+            grid_capture, grid_opened = tap_until_capture_predicate(
                 ws,
                 ns.host,
                 port,
                 ns.out_dir,
                 ns.prefix,
-                "05_thunder_menu",
-                timeout=min(float(ns.runtime_timeout), 20.0),
-                min_wait=0.5,
-                status_predicate=thunder_fullscreen_like,
-                capture_predicate=thunder_menu_capture_like,
+                "02_game_grid",
+                120,
+                45,
+                game_grid_capture_like,
+                attempts=2,
+                timeout=4.0,
             )
-            captures.append(menu_capture)
-            wait_menu_index = 0
-            deadline = time.time() + ns.runtime_timeout
-            while not thunder_menu_capture_like(menu_capture) and time.time() < deadline:
-                menu_capture = capture_after(
+            if not grid_opened:
+                grid_capture, grid_opened = tap_until_capture_predicate(
                     ws,
                     ns.host,
                     port,
                     ns.out_dir,
                     ns.prefix,
-                    f"05_wait_thunder_menu_{wait_menu_index:02d}",
-                    3.0,
+                    "02_game_grid_open",
+                    120,
+                    45,
+                    game_grid_capture_like,
+                    attempts=3,
+                    timeout=4.0,
+                )
+            captures.append(grid_capture)
+            grid_status = http_json(ns.host, port, "GET", "/api/status")
+            interactions.append(
+                {
+                    "step": "open-entertainment-world",
+                    "digest_changed": grid_opened,
+                    "status": summarize_status(grid_status),
+                }
+            )
+            if not grid_opened:
+                failures.append("Entertainment world did not open before Thunder selection")
+            else:
+                select_capture, selected_thunder = tap_until_capture_changes(
+                    ws,
+                    ns.host,
+                    port,
+                    ns.out_dir,
+                    ns.prefix,
+                    "03_select_thunder",
+                    120,
+                    250,
+                    str(grid_capture.get("sha256") or ""),
+                    attempts=2,
+                    timeout=2.0,
+                )
+                captures.append(select_capture)
+                if not selected_thunder:
+                    failures.append("Thunder icon selection did not change the game grid")
+
+            if grid_opened:
+                key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "04_loading_or_payment", 3.0))
+                entry_status = http_json(ns.host, port, "GET", "/api/status")
+                interactions.append({"step": "open-thunder-entry", "status": summarize_status(entry_status)})
+
+                if balance is not None and balance < 2:
+                    failures.append(f"SysPet.yzj balance is {balance}, expected at least 2")
+
+                # If the billing dialog is shown, this hits its confirm button.
+                # If the game has already moved to loading, the tap is harmless.
+                tap(ws, 82, 202, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                menu_capture = capture_when(
+                    ws,
+                    ns.host,
+                    port,
+                    ns.out_dir,
+                    ns.prefix,
+                    "05_thunder_menu",
+                    timeout=min(float(ns.runtime_timeout), 20.0),
+                    min_wait=0.5,
+                    status_predicate=thunder_fullscreen_like,
+                    capture_predicate=thunder_menu_capture_like,
                 )
                 captures.append(menu_capture)
-                wait_menu_index += 1
-            menu_status = http_json(ns.host, port, "GET", "/api/status")
-            interactions.append({"step": "thunder-menu", "status": summarize_status(menu_status)})
-            if not thunder_fullscreen_like(menu_status) or not thunder_menu_capture_like(menu_capture):
-                failures.append("Thunder did not reach its actionable menu after billing/loading")
+                wait_menu_index = 0
+                deadline = time.time() + ns.runtime_timeout
+                while not thunder_menu_capture_like(menu_capture) and time.time() < deadline:
+                    menu_capture = capture_after(
+                        ws,
+                        ns.host,
+                        port,
+                        ns.out_dir,
+                        ns.prefix,
+                        f"05_wait_thunder_menu_{wait_menu_index:02d}",
+                        3.0,
+                    )
+                    captures.append(menu_capture)
+                    wait_menu_index += 1
+                menu_status = http_json(ns.host, port, "GET", "/api/status")
+                interactions.append({"step": "thunder-menu", "status": summarize_status(menu_status)})
+                if not thunder_fullscreen_like(menu_status) or not thunder_menu_capture_like(menu_capture):
+                    failures.append("Thunder did not reach its actionable menu after billing/loading")
 
-            menu_digest = str(menu_capture.get("sha256") or "")
-            if ns.completed_step_timer_at_thunder_menu and ws is not None:
-                timer_reply = ws.send_command({"op": "completed-step-timer", "enabled": True}, timeout=3.0)
-                interactions.append(
-                    {
-                        "step": "enable-completed-step-timer-at-thunder-menu",
-                        "status": summarize_status(timer_reply or ws.last_status),
-                    }
-                )
-            key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            start_capture = capture_when(
-                ws,
-                ns.host,
-                port,
-                ns.out_dir,
-                ns.prefix,
-                "06_after_start_ok",
-                timeout=8.0,
-                min_wait=0.3,
-                capture_predicate=lambda capture, old=menu_digest: capture.get("sha256") != old,
-            )
-            captures.append(start_capture)
-            if start_capture.get("sha256") == menu_digest:
-                tap(ws, 105, 142, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-                start_capture = capture_when(
-                    ws,
-                    ns.host,
-                    port,
-                    ns.out_dir,
-                    ns.prefix,
-                    "06_after_start_tap",
-                    timeout=8.0,
-                    min_wait=0.3,
-                    capture_predicate=lambda capture, old=menu_digest: capture.get("sha256") != old,
-                )
-                captures.append(start_capture)
-            start_status = http_json(ns.host, port, "GET", "/api/status")
-            interactions.append({"step": "start-game", "digest_changed": start_capture.get("sha256") != menu_digest, "status": summarize_status(start_status)})
-            if start_capture.get("sha256") == menu_digest:
-                failures.append("Thunder menu did not react to game-start input")
+                menu_digest = str(menu_capture.get("sha256") or "")
+                thunder_menu_ready = thunder_fullscreen_like(menu_status) and thunder_menu_capture_like(menu_capture)
 
-            before_battle_digest = str(start_capture.get("sha256") or "")
-            if ns.event_probe:
-                interactions.append(
-                    {
-                        "step": "event-probe-before-plane-ok",
-                        **summarize_event_probe(http_json(ns.host, port, "GET", "/api/status?detail=full")),
-                    }
-                )
-            key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-            if ns.event_probe:
-                interactions.append(
-                    {
-                        "step": "event-probe-after-plane-ok",
-                        **summarize_event_probe(http_json(ns.host, port, "GET", "/api/status?detail=full")),
-                    }
-                )
-            battle_capture = capture_when(
-                ws,
-                ns.host,
-                port,
-                ns.out_dir,
-                ns.prefix,
-                "07_after_plane_ok",
-                timeout=12.0,
-                min_wait=0.3,
-                capture_predicate=lambda capture, old=before_battle_digest: capture.get("sha256") != old,
-            )
-            captures.append(battle_capture)
-            deadline = time.time() + ns.runtime_timeout
-            wait_index = 0
-            while battle_capture.get("sha256") == before_battle_digest and time.time() < deadline:
-                battle_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, f"07_wait_battle_{wait_index:02d}", 3.0)
-                captures.append(battle_capture)
-                wait_index += 1
-            battle_status = http_json(ns.host, port, "GET", "/api/status")
-            interactions.append({"step": "enter-battle", "digest_changed": battle_capture.get("sha256") != before_battle_digest, "status": summarize_status(battle_status)})
-            if battle_capture.get("sha256") == before_battle_digest:
-                failures.append("Thunder did not advance from plane selection to a battle-looking screen")
+                if thunder_menu_ready:
+                    if ns.completed_step_timer_at_thunder_menu and ws is not None:
+                        timer_reply = ws.send_command({"op": "completed-step-timer", "enabled": True}, timeout=3.0)
+                        interactions.append(
+                            {
+                                "step": "enable-completed-step-timer-at-thunder-menu",
+                                "status": summarize_status(timer_reply or ws.last_status),
+                            }
+                        )
+                    key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                    start_capture = capture_when(
+                        ws,
+                        ns.host,
+                        port,
+                        ns.out_dir,
+                        ns.prefix,
+                        "06_after_start_ok",
+                        timeout=8.0,
+                        min_wait=0.3,
+                        capture_predicate=lambda capture, old=menu_digest: capture.get("sha256") != old,
+                    )
+                    captures.append(start_capture)
+                    if start_capture.get("sha256") == menu_digest:
+                        tap(ws, 105, 142, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                        start_capture = capture_when(
+                            ws,
+                            ns.host,
+                            port,
+                            ns.out_dir,
+                            ns.prefix,
+                            "06_after_start_tap",
+                            timeout=8.0,
+                            min_wait=0.3,
+                            capture_predicate=lambda capture, old=menu_digest: capture.get("sha256") != old,
+                        )
+                        captures.append(start_capture)
+                    start_status = http_json(ns.host, port, "GET", "/api/status")
+                    interactions.append({"step": "start-game", "digest_changed": start_capture.get("sha256") != menu_digest, "status": summarize_status(start_status)})
+                    if start_capture.get("sha256") == menu_digest:
+                        failures.append("Thunder menu did not react to game-start input")
 
-            if ns.fps_probe_seconds > 0 and ws is not None:
-                probe_start_frames = ws.frames
-                probe_start = time.time()
-                probe_deadline = probe_start + float(ns.fps_probe_seconds)
-                while time.time() < probe_deadline:
-                    ws.recv_one()
-                probe_elapsed = max(0.001, time.time() - probe_start)
-                probe_status = http_json(ns.host, port, "GET", "/api/status")
-                interactions.append(
-                    {
-                        "step": "battle-fps-probe",
-                        "seconds": round(probe_elapsed, 3),
-                        "frames_delta": ws.frames - probe_start_frames,
-                        "frames_per_second": (ws.frames - probe_start_frames) / probe_elapsed,
-                        "status": summarize_status(probe_status),
-                    }
-                )
+                    before_battle_digest = str(start_capture.get("sha256") or "")
+                    if ns.event_probe:
+                        interactions.append(
+                            {
+                                "step": "event-probe-before-plane-ok",
+                                **summarize_event_probe(http_json(ns.host, port, "GET", "/api/status?detail=full")),
+                            }
+                        )
+                    key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                    if ns.event_probe:
+                        interactions.append(
+                            {
+                                "step": "event-probe-after-plane-ok",
+                                **summarize_event_probe(http_json(ns.host, port, "GET", "/api/status?detail=full")),
+                            }
+                        )
+                    battle_capture = capture_when(
+                        ws,
+                        ns.host,
+                        port,
+                        ns.out_dir,
+                        ns.prefix,
+                        "07_after_plane_ok",
+                        timeout=12.0,
+                        min_wait=0.3,
+                        capture_predicate=lambda capture, old=before_battle_digest: capture.get("sha256") != old,
+                    )
+                    captures.append(battle_capture)
+                    deadline = time.time() + ns.runtime_timeout
+                    wait_index = 0
+                    while battle_capture.get("sha256") == before_battle_digest and time.time() < deadline:
+                        battle_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, f"07_wait_battle_{wait_index:02d}", 3.0)
+                        captures.append(battle_capture)
+                        wait_index += 1
+                    battle_status = http_json(ns.host, port, "GET", "/api/status")
+                    interactions.append({"step": "enter-battle", "digest_changed": battle_capture.get("sha256") != before_battle_digest, "status": summarize_status(battle_status)})
+                    if battle_capture.get("sha256") == before_battle_digest:
+                        failures.append("Thunder did not advance from plane selection to a battle-looking screen")
+                    elif ns.battle_state_out is not None:
+                        checkpoint_status = http_json(
+                            ns.host,
+                            port,
+                            "POST",
+                            f"/api/checkpoint?path={quote(str(ns.battle_state_out))}",
+                        )
+                        interactions.append(
+                            {
+                                "step": "save-battle-checkpoint",
+                                "path": str(ns.battle_state_out),
+                                "status": summarize_status(checkpoint_status),
+                            }
+                        )
 
-            before_input_digest = str(battle_capture.get("sha256") or before_battle_digest)
-            for name, code in (("left", KEY_LEFT), ("right", KEY_RIGHT), ("ok", KEY_OK)):
-                key_press(ws, code, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
-                capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, f"08_input_{name}", 2.0)
-                captures.append(capture)
-                interactions.append({
-                    "step": f"input-{name}",
-                    "digest_changed": capture.get("sha256") != before_input_digest,
-                    "status": capture.get("status"),
-                })
-                before_input_digest = str(capture.get("sha256") or before_input_digest)
+                    if ns.fps_probe_seconds > 0 and ws is not None:
+                        probe_start_frames = ws.frames
+                        probe_start = time.time()
+                        probe_deadline = probe_start + float(ns.fps_probe_seconds)
+                        while time.time() < probe_deadline:
+                            ws.recv_one()
+                        probe_elapsed = max(0.001, time.time() - probe_start)
+                        probe_status = http_json(ns.host, port, "GET", "/api/status")
+                        interactions.append(
+                            {
+                                "step": "battle-fps-probe",
+                                "seconds": round(probe_elapsed, 3),
+                                "frames_delta": ws.frames - probe_start_frames,
+                                "frames_per_second": (ws.frames - probe_start_frames) / probe_elapsed,
+                                "status": summarize_status(probe_status),
+                            }
+                        )
+
+                    before_input_digest = str(battle_capture.get("sha256") or before_battle_digest)
+                    for name, code in (("left", KEY_LEFT), ("right", KEY_RIGHT), ("ok", KEY_OK)):
+                        key_press(ws, code, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
+                        capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, f"08_input_{name}", 2.0)
+                        captures.append(capture)
+                        interactions.append({
+                            "step": f"input-{name}",
+                            "digest_changed": capture.get("sha256") != before_input_digest,
+                            "status": capture.get("status"),
+                        })
+                        before_input_digest = str(capture.get("sha256") or before_input_digest)
 
         if ws is not None:
             ws.send_json({"op": "stop"})

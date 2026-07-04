@@ -188,6 +188,7 @@ class Bbk9588HwEmu(
         glyph_mask_accelerator: bool = True,
         surface_pixel_accelerator: bool = True,
         surface_hline_accelerator: bool = True,
+        cp0_status_accelerator: bool = True,
         font_helper_accelerator: bool = False,
         gui_ring_pump: bool = False,
         repeat_prologue_mode: str = "off",
@@ -195,6 +196,7 @@ class Bbk9588HwEmu(
         legacy_return_fixes: bool = False,
         completed_step_timer: bool = False,
         suppress_hot_events: bool = False,
+        hot_path_stats: bool = False,
         block_hook: bool = True,
         run_internal_chunk_steps: int | None = None,
     ):
@@ -249,6 +251,7 @@ class Bbk9588HwEmu(
         self.touch_controller_events = touch_controller_events or []
         self.touch_controller_event_log: list[dict[str, str | int]] = []
         self.touch_controller_poll_hits = 0
+        self.touch_coord_entry_trace_count = 0
         self.key_controller_events = key_controller_events or []
         self.key_controller_event_log: list[dict[str, str | int]] = []
         self.key_down_codes: set[int] = set()
@@ -338,6 +341,9 @@ class Bbk9588HwEmu(
         self.store_delay_branch_hooks = store_delay_branch_hooks
         self.store_delay_branch_pcs: set[int] = set()
         self.store_delay_branch_decode_cache: dict[int, object] = {}
+        self.store_delay_branch_counts: dict[int, int] = {}
+        self.on_code_dispatch_counts: dict[int, int] = {}
+        self.block_dispatch_counts: dict[int, int] = {}
         self.mips_reg_map: tuple[int, ...] | None = None
         self.nand_loop_accelerator = nand_loop_accelerator
         self.resource_cache16_accelerator = resource_cache16_accelerator
@@ -345,9 +351,11 @@ class Bbk9588HwEmu(
         self.glyph_mask_accelerator = glyph_mask_accelerator
         self.surface_pixel_accelerator = surface_pixel_accelerator
         self.surface_hline_accelerator = surface_hline_accelerator
+        self.cp0_status_accelerator = cp0_status_accelerator
         self.font_helper_accelerator = font_helper_accelerator
         self.gui_ring_pump = gui_ring_pump
         self.suppress_hot_events = suppress_hot_events
+        self.hot_path_stats = hot_path_stats
         self.block_hook = block_hook
         self.suppressed_hot_event_count = 0
         self.gui_ring_pump_events: list[dict[str, str | int]] = []
@@ -358,6 +366,8 @@ class Bbk9588HwEmu(
         self.ftl_scan_accel_count = 0
         self.no_event_poll_accel_count = 0
         self.busy_delay_accel_count = 0
+        self.cp0_irq_disable_accel_count = 0
+        self.cp0_status_restore_accel_count = 0
         self.busy_delay_static_patch = False
         self.nand_loop_events: list[dict[str, str | int]] = []
         self.resource_cache16_accel_count = 0
@@ -389,6 +399,7 @@ class Bbk9588HwEmu(
         self.surface_events_by_mode: dict[str, list[dict[str, str | int]]] = {}
         self.rgb565_color_accel_count = 0
         self.halfword_copy_accel_count = 0
+        self.row_copy_loop_accel_count = 0
         self.raster_loop_accel_count = 0
         self.glyph_mask_loop_accel_count = 0
         self.repeat_prologue_mode = repeat_prologue_mode
@@ -986,10 +997,10 @@ class Bbk9588HwEmu(
             return None
 
     def _read_u32_va_safe(self, va: int) -> int | None:
-        data = self._read_block_va_safe(va, 4)
-        if data is None:
+        try:
+            return struct.unpack_from("<I", self.uc.mem_read(va_to_phys(va), 4))[0]
+        except Exception:
             return None
-        return struct.unpack_from("<I", data)[0]
 
     def _is_mapped_ram_va(self, va: int, size: int = 1) -> bool:
         if va == 0:
