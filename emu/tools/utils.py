@@ -15,7 +15,6 @@ from emu.core.defs import (
     GPIO_KEY_CODE_BITS,
     GPIO_KEY_IDLE_LEVELS,
     RAM_BASE,
-    FirmwareKeySample,
     GuiKeyEvent,
     GuiTouchEvent,
     MmioAccess,
@@ -148,19 +147,6 @@ def parse_scheduled_call(text: str) -> ScheduledCall:
     if idle_hit <= 0:
         raise argparse.ArgumentTypeError("idle_hit must be positive")
     return ScheduledCall(va=va, args=tuple(args), idle_hit=idle_hit)
-
-
-def parse_firmware_key_sample(text: str) -> FirmwareKeySample:
-    if "@" not in text:
-        raise argparse.ArgumentTypeError("firmware key sample must be code@idle_hit")
-    code_s, hit_s = text.split("@", 1)
-    code = int(code_s, 0)
-    idle_hit = int(hit_s, 0)
-    if not 0 <= code <= 0xFF:
-        raise argparse.ArgumentTypeError("firmware key code must fit in one byte")
-    if idle_hit <= 0:
-        raise argparse.ArgumentTypeError("idle_hit must be positive")
-    return FirmwareKeySample(code=code, idle_hit=idle_hit)
 
 
 def parse_touch_sample(text: str) -> TouchSample:

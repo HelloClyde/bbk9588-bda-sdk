@@ -724,16 +724,6 @@ class HwEmuStateMixin:
                 for call in self.scheduled_calls
             ],
             "call_events": self.call_events,
-            "firmware_key_samples": [
-                {
-                    "code": sample.code,
-                    "idle_hit": sample.idle_hit,
-                    "applied": sample.applied,
-                    "returned": sample.returned,
-                }
-                for sample in self.firmware_key_samples
-            ],
-            "firmware_key_events": self.firmware_key_events,
             "touch_samples": [
                 {
                     "x": sample.x,

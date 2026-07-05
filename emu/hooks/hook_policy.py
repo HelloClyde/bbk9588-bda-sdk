@@ -205,7 +205,7 @@ class HwEmuHookPolicyMixin:
         pcs = set(self.trace_pcs)
         pcs.update(self.stop_pcs)
         pcs.update(call.return_pc for call in self.scheduled_calls)
-        if self.firmware_key_samples or self.touch_samples:
+        if self.touch_samples:
             pcs.add(0x80008A8C)
         if self.fast_hook_image_jals:
             pcs.update(self._image_jal_pcs())

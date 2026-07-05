@@ -519,8 +519,6 @@ class HwEmuEngineMixin:
         self._apply_touch_controller_events(address)
         if self._apply_touch_sample(address):
             return
-        if self._apply_firmware_key_sample(address):
-            return
         if self._apply_scheduled_calls(address):
             return
         if self._apply_gui_ring_pump(address):
@@ -1464,7 +1462,6 @@ class HwEmuEngineMixin:
             return
         self._snapshot_recovery_regs_if_needed(address)
         self._capture_scheduled_call_return(address)
-        self._capture_firmware_key_sample_return(address)
         self._capture_touch_sample_return(address)
         if self.profile == "bbk9588-uboot" and address == 0x8001A3A0:
             count = int(getattr(self, "touch_coord_entry_trace_count", 0))
@@ -1483,8 +1480,6 @@ class HwEmuEngineMixin:
             and address in (0x80182A90, 0x80182BF4, 0x80182D58)
             and self._handle_block_image_hook(address)
         ):
-            return
-        if self.profile == "bbk9588-uboot" and address == 0x8001B464 and self._handle_forced_key_scan(address):
             return
         if self.profile == "bbk9588-uboot" and address in (0x8001A6B0, 0x8001A3A0):
             if self._handle_forced_touch_sample(address):
@@ -1658,8 +1653,6 @@ class HwEmuEngineMixin:
                 return
             self._apply_touch_controller_events(address)
             if self._apply_touch_sample(address):
-                return
-            if self._apply_firmware_key_sample(address):
                 return
             if self._apply_scheduled_calls(address):
                 return
