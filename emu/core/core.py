@@ -85,7 +85,6 @@ from emu.core.defs import (
     TOUCH_PEN_GPIO_ADDR,
     TOUCH_PEN_GPIO_BIT,
     TOUCH_PEN_GPIO_LEVELS,
-    FirmwareKeySample,
     GuiKeyEvent,
     GuiTouchEvent,
     MmioAccess,
@@ -145,7 +144,6 @@ class Bbk9588HwEmu(
         call_stack: int | None = None,
         mmio_levels: list[MmioLevel] | None = None,
         mmio_pulses: list[MmioPulse] | None = None,
-        firmware_key_samples: list[FirmwareKeySample] | None = None,
         touch_samples: list[TouchSample] | None = None,
         gui_key_events: list[GuiKeyEvent] | None = None,
         gui_touch_events: list[GuiTouchEvent] | None = None,
@@ -211,9 +209,6 @@ class Bbk9588HwEmu(
         self.mmio_read_levels = {level.addr: level.value for level in (mmio_levels or [])}
         self.mmio_pulses = mmio_pulses or []
         self.mmio_pulse_events: list[dict[str, str | int]] = []
-        self.firmware_key_samples = firmware_key_samples or []
-        self.pending_forced_scan_code: int | None = None
-        self.firmware_key_events: list[dict[str, str | int]] = []
         self.touch_samples = touch_samples or []
         self.pending_touch_sample: TouchSample | None = None
         self.touch_sample_events: list[dict[str, str | int]] = []

@@ -1,9 +1,9 @@
 """Input, scheduled event, and touchscreen helpers for the BBK 9588 emulator.
 
-本文件主要是系统固件级 hook，不是物理按键矩阵的完整硬件模型：
+本文件主要是输入和诊断 hook：
 - scheduled poke/call：测试或前端请求在 idle 点注入内存写/固件函数调用。
-- firmware key/touch sample：在已知固件扫描入口注入按键和触摸采样结果。
-- key/touch controller state：同时维护 GPIO/SADC 等硬件侧状态，供 MMIO 模型读取。
+- touch sample：在已知固件触摸采样入口注入触摸采样结果。
+- key/touch controller state：维护 GPIO/SADC 等硬件侧状态，供 MMIO 模型读取。
 - stop/input-node：观测/诊断 hook，用于在指定输入队列状态停止。
 """
 
@@ -125,71 +125,6 @@ class HwEmuInputMixin:
             }
             self.call_events.append(row)
             self._trace_event("call-return", pc=pc, addr=call.va, value=self.uc.reg_read(UC_MIPS_REG_2), size=4)
-
-    def _apply_firmware_key_sample(self, pc: int) -> bool:
-        # 固件按键采样 hook：跳入固件按键扫描函数，后续 forced scan 只负责给
-        # 该扫描函数一个确定的键值。
-        for sample in self.firmware_key_samples:
-            if sample.applied or sample.idle_hit != self.idle_loop_hits:
-                continue
-            self.pending_forced_scan_code = sample.code & 0xFF
-            self.uc.reg_write(UC_MIPS_REG_SP, self.call_stack & 0xFFFFFFFF)
-            self.uc.reg_write(UC_MIPS_REG_31, 0x80008A8C)
-            self.uc.reg_write(UC_MIPS_REG_PC, 0x8005CE48)
-            sample.applied = True
-            row = {
-                "event": "sample",
-                "pc": f"0x{pc:08x}",
-                "idle_hit": sample.idle_hit,
-                "code": sample.code,
-                "target": "0x8005ce48",
-                "forced_scan": "0x8001b464",
-                "return_pc": "0x80008a8c",
-                "sp": f"0x{self.call_stack & 0xFFFFFFFF:08x}",
-            }
-            self.firmware_key_events.append(row)
-            self._trace_event("fw-key-sample", pc=pc, addr=0x8005CE48, value=sample.code, size=1)
-            return True
-        return False
-
-    def _capture_firmware_key_sample_return(self, pc: int) -> None:
-        if pc != 0x80008A8C:
-            return
-        for sample in self.firmware_key_samples:
-            if not sample.applied or sample.returned:
-                continue
-            sample.returned = True
-            row = {
-                "event": "return",
-                "pc": f"0x{pc:08x}",
-                "code": sample.code,
-                "v0": f"0x{self.uc.reg_read(UC_MIPS_REG_2) & 0xFFFFFFFF:08x}",
-                "sp": f"0x{self.uc.reg_read(UC_MIPS_REG_29) & 0xFFFFFFFF:08x}",
-                "ra": f"0x{self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF:08x}",
-            }
-            self.firmware_key_events.append(row)
-            self._trace_event("fw-key-return", pc=pc, addr=0x8005CE48, value=self.uc.reg_read(UC_MIPS_REG_2), size=4)
-            return
-
-    def _handle_forced_key_scan(self, pc: int) -> bool:
-        # 固件级等效 hook：替代底层 scan helper 的返回值，不直接模拟键盘硬件矩阵。
-        if self.pending_forced_scan_code is None:
-            return False
-        code = self.pending_forced_scan_code
-        self.pending_forced_scan_code = None
-        ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
-        self.uc.reg_write(UC_MIPS_REG_2, code)
-        self.uc.reg_write(UC_MIPS_REG_PC, ra)
-        self.firmware_key_events.append(
-            {
-                "event": "forced-scan",
-                "pc": f"0x{pc:08x}",
-                "code": code,
-                "return_pc": f"0x{ra:08x}",
-            }
-        )
-        self._trace_event("fw-key-scan", pc=pc, addr=pc, value=code, size=1)
-        return True
 
     def _apply_touch_sample(self, pc: int) -> bool:
         # 固件触摸采样 hook：驱动真实触摸采样路径，或在指定 PC 直接写触摸全局量。

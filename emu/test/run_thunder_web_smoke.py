@@ -230,7 +230,6 @@ def summarize_event_probe(status: dict[str, object]) -> dict[str, object]:
             "key_controller_event_log",
             "touch_controller_event_log",
             "gui_key_event_log",
-            "firmware_key_events",
         ):
             value = input_state.get(key)
             if isinstance(value, list):

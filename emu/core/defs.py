@@ -285,14 +285,6 @@ class MmioPulse:
 
 
 @dataclass
-class FirmwareKeySample:
-    code: int
-    idle_hit: int
-    applied: bool = False
-    returned: bool = False
-
-
-@dataclass
 class TouchSample:
     x: int
     y: int

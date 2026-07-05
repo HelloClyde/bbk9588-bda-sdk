@@ -25,13 +25,7 @@ from unicorn.mips_const import (
 
 from emu.core import Bbk9588HwEmu
 from emu.core.defs import ScheduledCall
-from emu.core.defs import (
-    FirmwareKeySample,
-    GPIO_KEY_CODE_BITS,
-    RAM_BASE,
-    ScheduledTouchControllerEvent,
-    TOUCH_CALIBRATION_REFERENCE_POINTS,
-)
+from emu.core.defs import GPIO_KEY_CODE_BITS, RAM_BASE, ScheduledTouchControllerEvent, TOUCH_CALIBRATION_REFERENCE_POINTS
 from emu.core.framebuffer import png_bytes_from_rgb, render_rgb565_framebuffer, rgb565_raw_to_info_rgb
 from emu.tools.utils import access_to_dict, find_workspace_file
 
@@ -1210,11 +1204,7 @@ class FrontendState:
             self.emu.set_touch_controller_state(x, y, down)
         if key is not None:
             code, down = key
-            hit = self.emu.idle_loop_hits + 1
-            if self.args.key_input_mode in {"hardware", "both"}:
-                self.emu.set_key_controller_state(code, down)
-            if self.args.key_input_mode in {"sampler", "both"}:
-                self.emu.firmware_key_samples.append(FirmwareKeySample(code=code if down else 0, idle_hit=hit))
+            self.emu.set_key_controller_state(code, down)
 
     def step(self, steps: int) -> dict[str, object]:
         with self.lock:
@@ -1400,11 +1390,7 @@ class FrontendState:
             return self._queue_key(code, down)
         with self.lock:
             assert self.emu is not None
-            hit = self.emu.idle_loop_hits + 1
-            if self.args.key_input_mode in {"hardware", "both"}:
-                self.emu.set_key_controller_state(code & 0xFF, down)
-            if self.args.key_input_mode in {"sampler", "both"}:
-                self.emu.firmware_key_samples.append(FirmwareKeySample(code=(code & 0xFF) if down else 0, idle_hit=hit))
+            self.emu.set_key_controller_state(code & 0xFF, down)
         return self.step(self.args.input_steps)
 
     def touch(self, x: int, y: int, down: bool, advance: bool | None = None) -> dict[str, object]:
@@ -1626,7 +1612,6 @@ class FrontendState:
                 getattr(self.args, "completed_step_timer_after_auto_boot", False)
             ),
             "resource_cache16": self.args.resource_cache16_accelerator,
-            "key_input_mode": self.args.key_input_mode,
             "auto_calibration": self.args.auto_calibration,
             "auto_calibration_stage": self.auto_calibration_stage,
             "auto_calibration_stage_label": AUTO_BOOT_STAGE_LABELS.get(

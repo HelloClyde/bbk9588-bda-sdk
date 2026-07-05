@@ -223,7 +223,6 @@ function renderStatus(s) {
     ['run elapsed', formatElapsed(s.run_elapsed_seconds)],
     ['boot', s.boot_mode || ''],
     ['orientation', s.orientation || ''],
-    ['key mode', s.key_input_mode || ''],
     ['fast hooks', s.fast_hooks],
     ['step timer', `${s.completed_step_timer ? 'completed' : 'hook'}${s.completed_step_timer_after_auto_boot ? ':auto' : ''}`],
     ['res cache', s.resource_cache16],
@@ -728,16 +727,6 @@ def main(argv: list[str] | None = None) -> int:
         dest="completed_step_timer_after_auto_boot",
         action="store_false",
         help="Keep hook-observed timer source even after automatic cold boot finishes.",
-    )
-    ap.add_argument(
-        "--key-input-mode",
-        choices=["hardware", "sampler", "both"],
-        default="hardware",
-        help=(
-            "Frontend key delivery. hardware changes modeled GPIO/INTC state; "
-            "sampler uses the older 0x8005ce48 probe; both is a diagnostic "
-            "compatibility mode."
-        ),
     )
     ap.add_argument("--orientation", choices=["raw", "rot180", "cw90", "ccw90", "hflip", "vflip"], default="rot180")
     ap.add_argument("--profile-out", type=Path, help="Write a cProfile report when the frontend exits normally.")
