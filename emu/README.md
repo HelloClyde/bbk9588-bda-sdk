@@ -113,6 +113,34 @@ python .\emu\test\run_hwemu_regressions.py --thunder-smoke
 python .\emu\test\run_frontend_web_smoke.py --prefix frontend_web_smoke
 ```
 
+性能路径探针：
+
+```powershell
+python .\emu\test\run_perf_paths.py `
+  --case menu-tabs `
+  --state-in .\build\nav_menu_checkpoint.pkl `
+  --prefix perf_menu_tabs
+
+python .\emu\test\run_perf_paths.py `
+  --case tap-sequence `
+  --state-in .\build\nav_menu_checkpoint.pkl `
+  --action tap:tools-tab:210:287:1 `
+  --action key:ok:10:1 `
+  --action drag:scroll:120:250:120:100:8:1 `
+  --prefix perf_notepad_path_probe
+
+python .\emu\test\run_thunder_battle_benchmark.py `
+  --state-in .\build\thunder_battle_checkpoint.pkl `
+  --probe-seconds 5 `
+  --prefix perf_thunder_battle
+```
+
+性能探针默认不传 `--nand-image` 给 `app.py`，因此会使用前端入口自己的默认镜像选择；
+只有显式传入 `--nand-image` 时才覆盖这个起点。
+`tap-sequence` 支持有序 `--action`：`tap:name:x:y[:settle]`、`key:name:code[:settle]`、
+`drag:name:x1:y1:x2:y2[:steps][:settle]`，以及用于保存中间状态的
+`save:name:path[:settle]`。
+
 测试脚本会启动本地 HTTP 服务，使用 `/api/status`、`/api/command`、`/screen.png`
 和 `/ws` 来驱动仿真器并检查状态、输入队列和帧输出。
 

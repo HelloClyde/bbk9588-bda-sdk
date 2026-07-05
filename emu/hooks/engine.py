@@ -1,4 +1,24 @@
-"""Unicorn execution hooks and run loop for the BBK 9588 emulator."""
+"""Unicorn execution hooks and run loop for the BBK 9588 emulator.
+
+本文件是 hook 总入口。这里的 hook 分为几类：
+
+1. Unicorn 执行级 hook：
+   `UC_HOOK_CODE` 按 PC 拦截固件指令，`UC_HOOK_BLOCK` 按基本块观测执行流。
+   这一级不是硬件模型本身，而是在 Unicorn 执行器外层插入调度点。
+2. 硬件模拟 hook：
+   `UC_HOOK_MEM_READ/WRITE` 和 `_model_mmio()` 负责 GPIO、INTC、TCU、SADC、
+   NAND、UART、USB 等 MMIO 寄存器语义，属于硬件级模拟。
+3. 系统固件语义 hook：
+   `_on_code()` 中的 IRQ、WAIT、任务切换、输入采样、目录扫描等逻辑，是在
+   已知固件入口处补齐系统行为或规避 Unicorn/MIPS 绑定缺失的固件级模拟。
+4. 加速等效实现 hook：
+   `_direct_fast_code_hooks()` 注册的 bulk copy、NAND 循环、FAT/块设备、
+   surface/blit、busy delay 等热点，用 Python 一次性完成与固件循环等价的
+   内存/寄存器效果，然后把 PC 跳到固件原本会到达的位置。
+5. 观测/诊断 hook：
+   trace/stop/watch/block/hot-path-stats 只记录状态或在用户指定条件停止，
+   不应改变被模拟机语义。
+"""
 
 from __future__ import annotations
 
@@ -174,23 +194,43 @@ HOT_STORE_DELAY_BRANCH_PCS = frozenset(
 
 class HwEmuEngineMixin:
     def _install_hooks(self) -> None:
+        # 这是所有 Unicorn hook 的安装点。fast_hooks 开启时只在已知 PC 上
+        # 安装执行 hook，避免全局 code hook 的高开销；关闭时则每条指令都
+        # 进入 `_on_code()`，主要用于逆向分析和诊断。
         if self.fast_hooks:
             if self.fast_hook_image_branches:
+                # 观测/恢复 hook：在可能触发 Unicorn 异常的镜像分支前保存
+                # 寄存器快照，异常恢复时使用；不模拟硬件，也不加速固件。
                 for pc in sorted(self._image_recoverable_branch_pcs()):
                     self.uc.hook_add(UC_HOOK_CODE, self._on_recovery_snapshot_code, begin=pc, end=pc)
             direct_hooks = self._direct_fast_code_hooks()
             for pc, callback in sorted(direct_hooks.items()):
+                # 加速/语义直达 hook：每个 PC 对应一个专用 callback，能成功
+                # 处理就跳过固件热点路径，失败时回落到 `_on_code()`。
                 self.uc.hook_add(UC_HOOK_CODE, callback, begin=pc, end=pc)
             for pc in sorted(self._fast_code_hook_pcs() - set(direct_hooks)):
+                # 选择性执行级 hook：进入统一 dispatcher。这里混合了固件
+                # 语义补丁、输入/中断调度、观测点和少量非 direct 的加速路径。
                 self.uc.hook_add(UC_HOOK_CODE, self._on_code, begin=pc, end=pc)
         else:
+            # 诊断模式：全局 code hook，最慢但最容易看见所有执行路径。
             self.uc.hook_add(UC_HOOK_CODE, self._on_code)
         if self.block_hook:
+            # 观测 hook：按基本块记录最近 PC，并给外部中断一个粗粒度调度点。
             self.uc.hook_add(UC_HOOK_BLOCK, self._on_block)
         self._install_mem_hooks()
+        # 异常观测 hook：记录未映射读/写/取指，返回 False 让 Unicorn 按错误
+        # 终止；它不尝试补洞或自动映射内存。
         self.uc.hook_add(UC_HOOK_MEM_INVALID, self._on_invalid)
 
     def _direct_fast_code_hooks(self) -> dict[int, object]:
+        """返回直接绑定到具体 PC 的执行 hook。
+
+        这些 hook 大多是“加速等效实现”：读当前寄存器/内存，执行与固件函数或
+        循环相同的结果，写回寄存器/内存并调整 PC。少数是固件语义 hook，例如
+        WAIT/idle/IRQ poll/任务恢复；这些不是为了替换硬件，而是给系统固件一个
+        稳定的事件调度入口。
+        """
         if self.profile != "bbk9588-uboot":
             return {}
         trace_blocked = set(self.trace_pcs)
@@ -201,24 +241,39 @@ class HwEmuEngineMixin:
             if enabled and pc not in stop_blocked and (trace_safe or pc not in trace_blocked):
                 hooks[pc] = callback
 
+        # 固件延时循环加速：直接返回，保留计数和少量 trace。
         add(0x800043A0, self._on_busy_delay_code, not getattr(self, "busy_delay_static_patch", False))
+        # libc/固件内存热点加速：等价完成 memset/memcpy/行拷贝。
         add(0x80006BD0, self._on_memset_bulk_code)
         add(0x80006BF8, self._on_memcpy_bulk_code)
         add(0x800B36D0, self._on_row_copy_loop_code)
+        # 固件调试打印桩：模拟 printf 类函数返回，属于固件级语义 hook。
         add(0x800098C0, self._on_debug_print_stub_code)
+        # 系统事件调度入口：idle、WAIT、timer、scheduler，不是硬件寄存器本身，
+        # 但会触发输入、定时器和 IRQ 服务。
         add(0x80058CB4, self._on_no_event_poll_code)
         add(0x8005BCD4, self._on_wait_wake_code, trace_safe=True)
         add(0x80008A84, self._on_idle_loop_code, trace_safe=True)
         add(0x800087C4, self._on_timer_tick_code, trace_safe=True)
+        add(0x80007E08, self._on_scheduler_poll_code, trace_safe=True)
         add(0x800080F0, self._on_scheduler_dispatch_code, trace_safe=True)
+        add(0x80038A00, self._on_billing_dialog_loop_jump_code, trace_safe=True)
+        add(0x800CEA30, self._on_c200_jr_sp28_code, trace_safe=True)
+        add(0x800E1408, self._on_c200_jr_sp78_code, trace_safe=True)
+        # CP0 Status 快速路径：Unicorn 暴露的 CP0 能力有限，这里等价处理固件
+        # 关中断/恢复中断 helper，属于系统固件级加速。
         add(0x800A80F0, self._on_cp0_irq_disable_code, self.cp0_status_accelerator)
         add(0x800A8130, self._on_cp0_status_restore_code, self.cp0_status_accelerator)
+        # 任务上下文恢复：替固件批量恢复寄存器并切换 PC，是系统调度语义 hook。
         add(0x800A7B40, self._on_task_context_restore_code, trace_safe=True)
         add(0x800A7C18, self._on_task_context_restore_code, trace_safe=True)
         for pc in BDA_IRQ_POLL_PCS:
+            # BDA 轮询 IRQ 的固件级 hook：把硬件 pending 状态交给固件回调。
             add(pc, self._on_bda_irq_poll_code)
         for pc in HOT_STORE_DELAY_BRANCH_PCS:
+            # MIPS delay slot 修正/加速：处理分支延迟槽里的 MMIO/RAM store。
             add(pc, self._on_hot_store_delay_branch_code)
+        # Surface/LCD 绘图加速：等价实现固件绘图循环，同时标记 framebuffer dirty。
         add(0x8012BDF4, self._on_surface_setpixel_code, self.surface_pixel_accelerator)
         add(0x8012BEA4, self._on_surface_hline_code, self.surface_hline_accelerator)
         add(0x8012BF64, self._on_surface_color_span_code)
@@ -227,6 +282,8 @@ class HwEmuEngineMixin:
             add(pc, self._on_surface_transparent_blit_code)
         for pc in PORTRAIT_BLIT_LOOP_PCS:
             add(pc, self._on_portrait_blit_code)
+        # 文件系统、FAT、块设备和字符串/目录扫描加速：跳过大循环，但保持返回值、
+        # 缓冲区内容和必要事件记录与固件路径一致。
         add(0x800074A0, self._on_malloc_scan_code)
         add(0x800AC388, self._on_raster_copy_code)
         add(0x800BC2E0, self._on_rgb565_color_code)
@@ -234,7 +291,8 @@ class HwEmuEngineMixin:
         add(0x80173908, self._on_stack_clear32_delay_loop_code)
         add(0x80173C30, self._on_stack_clear32_delay_loop_code)
         add(0x8024227C, self._on_zero_pad_delay_loop_code)
-        add(0x81C0756C, self._on_bda_bounded_cstr_search_code)
+        for pc in (0x81C0756C, 0x81C1281C):
+            add(pc, self._on_bda_bounded_cstr_search_code)
         for pc in LFN_COPY_LOOP_PCS:
             add(pc, self._on_lfn_copy_code)
         for pc in FS_DIR_SCAN_BRANCH_PCS:
@@ -257,10 +315,14 @@ class HwEmuEngineMixin:
             add(pc, self._on_block_image_code)
 
         for pc in self._store_delay_branch_hook_pcs():
+            # 通用 delay-slot 保护 hook：解决 Unicorn 对 MIPS 分支延迟槽和 hook
+            # 组合的异常行为，按指令语义手动执行分支/延迟槽。
             add(pc, self._on_store_delay_branch_code, pc not in hooks)
         return hooks
 
     def _on_direct_fast_code(self, handler, uc, address: int, size: int, user_data) -> None:
+        # 专用加速 handler 返回 True 表示已经完成全部语义；返回 False 时回落到
+        # 通用 `_on_code()`，这样未知参数或边界情况仍由原固件路径执行。
         if self.profile == "bbk9588-uboot" and handler(address):
             return
         self._on_code(uc, address, size, user_data)
@@ -330,25 +392,21 @@ class HwEmuEngineMixin:
 
     def _on_cp0_irq_disable_code(self, uc, address: int, size: int, user_data) -> None:
         if self.profile == "bbk9588-uboot":
-            try:
-                status = uc.reg_read(UC_MIPS_REG_CP0_STATUS) & 0xFFFFFFFF
-                uc.reg_write(UC_MIPS_REG_CP0_STATUS, status & 0xFFFFFFFE)
-            except Exception:
-                status = 0x10000401
-            uc.reg_write(UC_MIPS_REG_2, status)
-            uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+            reg_type = self._mips_reg_type_u64
+            status = int(getattr(self, "cp0_status_shadow", 0x10000401)) & 0xFFFFFFFF
+            self.cp0_status_shadow = status & 0xFFFFFFFE
+            uc._reg_write(UC_MIPS_REG_2, reg_type, status)
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF)
             self.cp0_irq_disable_accel_count += 1
             return
         self._on_code(uc, address, size, user_data)
 
     def _on_cp0_status_restore_code(self, uc, address: int, size: int, user_data) -> None:
         if self.profile == "bbk9588-uboot":
-            status = uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
-            try:
-                uc.reg_write(UC_MIPS_REG_CP0_STATUS, status)
-            except Exception:
-                pass
-            uc.reg_write(UC_MIPS_REG_PC, uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF)
+            reg_type = self._mips_reg_type_u64
+            status = uc._reg_read(UC_MIPS_REG_4, reg_type, None) & 0xFFFFFFFF
+            self.cp0_status_shadow = status
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF)
             self.cp0_status_restore_accel_count += 1
             return
         self._on_code(uc, address, size, user_data)
@@ -413,9 +471,10 @@ class HwEmuEngineMixin:
     def _record_direct_idle_instruction(self, address: int) -> None:
         self.state.insn_count += 1
         self.state.last_pc = address
-        self.state.pcs.append(address)
-        if len(self.state.pcs) > 64:
-            del self.state.pcs[0]
+        if not self.state.pcs or self.state.pcs[-1] != address:
+            self.state.pcs.append(address)
+            if len(self.state.pcs) > 64:
+                del self.state.pcs[0]
 
     def _on_wait_wake_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
@@ -433,7 +492,7 @@ class HwEmuEngineMixin:
         if self._service_pending_irq_from_wait(address, 0x8005BCE8):
             return
         self._trace_event("wait-wake", pc=address, target=0x8005BCE8)
-        uc.reg_write(UC_MIPS_REG_PC, 0x8005BCE8)
+        uc._reg_write(UC_MIPS_REG_PC, self._mips_reg_type_u64, 0x8005BCE8)
 
     def _on_idle_loop_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
@@ -473,8 +532,12 @@ class HwEmuEngineMixin:
             uc.emu_stop()
             return
         self._record_direct_idle_instruction(address)
-        uc.reg_write(UC_MIPS_REG_31, 0x80008A8C)
-        uc.reg_write(UC_MIPS_REG_PC, 0x80007B10)
+        reg_type = self._mips_reg_type_u64
+        task_node = uc._reg_read(UC_MIPS_REG_6, reg_type, None) & 0xFFFFFFFF
+        flags = uc._reg_read(UC_MIPS_REG_2, reg_type, None) & 0xFF
+        if self._is_mapped_ram_va(task_node + 0x34, 1):
+            self._write_mem_va(task_node + 0x34, 1, flags)
+        uc._reg_write(UC_MIPS_REG_PC, reg_type, 0x80008A8C)
 
     def _on_timer_tick_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
@@ -490,6 +553,89 @@ class HwEmuEngineMixin:
             return
         self.timer_tick_count += 1
         self._service_gui_timer_entries(address)
+        if self.profile == "bbk9588-uboot" and address == 0x800087C4:
+            fields = self._read_block_va_safe(0x80473F08, 2)
+            if fields is not None and fields[1] == 1 and fields[0] != 0xFF:
+                self._write_mem_va(0x80473F08, 1, (fields[0] + 1) & 0xFF)
+            reg_type = self._mips_reg_type_u64
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF)
+
+    def _on_scheduler_poll_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
+        if self._handle_interrupt_return(address):
+            return
+        if self._maybe_deliver_external_interrupt(address):
+            return
+        if self.profile != "bbk9588-uboot" or address != 0x80007E08:
+            return
+
+        self.scheduler_poll_count += 1
+        reg_type = self._mips_reg_type_u64
+        ra = uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF
+        fields = self._read_block_va_safe(0x80473F08, 0x46)
+        if fields is None:
+            return
+        countdown = fields[0]
+        enabled = fields[1]
+        delay = fields[0x45]
+        if enabled != 1:
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, ra)
+            return
+
+        if self.scheduler_tick_clamp and (countdown != 0 or delay != 0):
+            self._write_mem_va(0x80473F08, 1, 0)
+            self._write_mem_va(0x80473F4D, 1, 0)
+            self._trace_event("scheduler-tick-clamp", pc=address, value=countdown, size=delay)
+            uc._reg_write(UC_MIPS_REG_31, reg_type, ra)
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, 0x800080F0)
+            return
+
+        if countdown == 0:
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, ra)
+            return
+
+        next_countdown = (countdown - 1) & 0xFF
+        self._write_mem_va(0x80473F08, 1, next_countdown)
+        if next_countdown != 0 or delay != 0:
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, ra)
+            return
+
+        uc._reg_write(UC_MIPS_REG_31, reg_type, ra)
+        uc._reg_write(UC_MIPS_REG_PC, reg_type, 0x800080F0)
+
+    def _on_billing_dialog_loop_jump_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot" and address == 0x80038A00:
+            reg_type = self._mips_reg_type_u64
+            uc._reg_write(UC_MIPS_REG_4, reg_type, uc._reg_read(UC_MIPS_REG_20, reg_type, None) & 0xFFFFFFFF)
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, 0x800386D8)
+            return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_c200_jr_sp28_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot" and address == 0x800CEA30:
+            reg_type = self._mips_reg_type_u64
+            target = uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF
+            sp = uc._reg_read(UC_MIPS_REG_29, reg_type, None) & 0xFFFFFFFF
+            uc._reg_write(UC_MIPS_REG_29, reg_type, (sp + 0x28) & 0xFFFFFFFF)
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, target)
+            return
+        self._on_code(uc, address, size, user_data)
+
+    def _on_c200_jr_sp78_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.profile == "bbk9588-uboot" and address == 0x800E1408:
+            reg_type = self._mips_reg_type_u64
+            target = uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF
+            sp = uc._reg_read(UC_MIPS_REG_29, reg_type, None) & 0xFFFFFFFF
+            uc._reg_write(UC_MIPS_REG_29, reg_type, (sp + 0x78) & 0xFFFFFFFF)
+            uc._reg_write(UC_MIPS_REG_PC, reg_type, target)
+            return
+        self._on_code(uc, address, size, user_data)
 
     def _on_scheduler_dispatch_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
@@ -503,6 +649,43 @@ class HwEmuEngineMixin:
             return
         if self._maybe_deliver_external_interrupt(address):
             return
+        if self.profile == "bbk9588-uboot" and address == 0x800080F0:
+            fields = self._read_block_va_safe(0x80473F08, 0x50)
+            if fields is None:
+                self.scheduler_dispatch_count += 1
+                return
+            countdown = fields[0]
+            last_task = fields[0x09]
+            current_slot = fields[0x30]
+            delay = fields[0x45]
+            if delay != 0 or countdown != 0:
+                self.scheduler_dispatch_count += 1
+                reg_type = self._mips_reg_type_u64
+                uc._reg_write(UC_MIPS_REG_PC, reg_type, uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF)
+                return
+            order_table = getattr(self, "_scheduler_order_table", None)
+            if order_table is None:
+                order_table = self._read_block_va_safe(0x8024A998, 0x100)
+                self._scheduler_order_table = order_table
+            if order_table is None or current_slot >= len(order_table):
+                self.scheduler_dispatch_count += 1
+                return
+            table_index = order_table[current_slot]
+            queue_offset = 0x38 + table_index
+            if queue_offset >= len(fields):
+                self.scheduler_dispatch_count += 1
+                return
+            next_slot = fields[queue_offset]
+            if next_slot >= len(order_table):
+                self.scheduler_dispatch_count += 1
+                return
+            next_task = (order_table[next_slot] + (table_index << 3)) & 0xFF
+            if next_task == last_task:
+                self._write_mem_va(0x80473F10, 1, next_task)
+                self.scheduler_dispatch_count += 1
+                reg_type = self._mips_reg_type_u64
+                uc._reg_write(UC_MIPS_REG_PC, reg_type, uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF)
+                return
         self.scheduler_dispatch_count += 1
 
     def _on_rgb565_color_code(self, uc, address: int, size: int, user_data) -> None:
@@ -1109,17 +1292,44 @@ class HwEmuEngineMixin:
         self._record_recovery_reg_snapshot(address)
 
     def _on_block(self, uc, address: int, size: int, user_data) -> None:
+        # 基本块级观测 hook：记录最近执行块，必要时触发外部中断调度。它不替代
+        # 固件函数，也不直接模拟设备寄存器。
         if getattr(self, "hot_path_stats", False):
             counts = self.block_dispatch_counts
             counts[address] = int(counts.get(address, 0)) + 1
         self.state.last_pc = address
-        self.state.pcs.append(address)
-        if len(self.state.pcs) > 64:
-            del self.state.pcs[0]
-        if self._maybe_deliver_external_interrupt(address):
+        pcs = self.state.pcs
+        if not pcs or pcs[-1] != address:
+            pcs.append(address)
+            if len(pcs) > 64:
+                del pcs[0]
+        if self.profile != "bbk9588-uboot":
+            return
+        suppress_pc = self.interrupt_suppress_pc_once
+        needs_irq_check = (
+            (suppress_pc is not None and address == suppress_pc)
+            or self.interrupt_return_pc is not None
+        )
+        if not needs_irq_check:
+            insn_count = self.timer_insn_count if self.completed_step_timer else self.state.insn_count
+            next_tcu_irq = self.next_tcu_irq_insn
+            if (
+                next_tcu_irq is not None
+                and insn_count >= next_tcu_irq
+                and ((self.tcu_enabled_mask & 0x3) & ~self.tcu_pending_mask)
+            ):
+                needs_irq_check = True
+            else:
+                next_irq24 = self.next_irq24_insn
+                needs_irq_check = next_irq24 is None or (
+                    insn_count >= next_irq24 and not (self.intc_pending_mask & (1 << 24))
+                )
+        if needs_irq_check and self._maybe_deliver_external_interrupt(address):
             self.uc.emu_stop()
 
     def _on_code(self, uc, address: int, size: int, user_data) -> None:
+        # 通用执行级 dispatcher。这里按 PC 分类调用各 mixin 的语义/加速/观测
+        # handler；每个 handler 只有在能完整保证寄存器、内存和 PC 结果时才返回。
         if getattr(self, "hot_path_stats", False):
             counts = self.on_code_dispatch_counts
             counts[address] = int(counts.get(address, 0)) + 1
@@ -2217,6 +2427,8 @@ class HwEmuEngineMixin:
         return True
 
     def _on_mem(self, uc, access: int, address: int, size: int, value: int, user_data) -> None:
+        # 内存级 hook。普通 RAM 不全局 hook；这里主要处理 MMIO、framebuffer
+        # dirty 标记、watch 观测和少量热寄存器快速读写。
         phys_address = va_to_phys(address)
         if access == UC_MEM_WRITE and size == 4:
             self.mmio_backing_u32_values.pop(phys_address, None)
@@ -2310,6 +2522,8 @@ class HwEmuEngineMixin:
         if (PHYS_MMIO_BASE <= device_address < PHYS_MMIO_BASE + MMIO_SIZE) or (
             EXT_BANK_BASE <= device_address < EXT_BANK_BASE + EXT_BANK_SIZE
         ):
+            # 硬件模拟 hook：把设备寄存器访问交给 `_model_mmio()`，再按需要记录
+            # 控制类 MMIO 最近访问和完整 trace。
             self._model_mmio(access, device_address, size, value)
             if self.suppress_hot_events:
                 self.suppressed_hot_event_count += 1
@@ -2426,6 +2640,8 @@ class HwEmuEngineMixin:
 
 
     def _on_invalid(self, uc, access: int, address: int, size: int, value: int, user_data) -> bool:
+        # 无效内存访问观测 hook：只记录上下文并让 Unicorn 报错停止，便于定位缺失
+        # 映射或未建模设备。
         pc = uc.reg_read(UC_MIPS_REG_PC)
         if access == UC_MEM_READ_UNMAPPED:
             kind = "read_unmapped"

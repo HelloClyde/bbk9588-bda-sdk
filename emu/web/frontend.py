@@ -23,6 +23,24 @@ from emu.web.frontend_state import (
 )
 
 
+def parse_frontend_scheduled_call(text: str) -> tuple[int, tuple[int, int, int, int], int]:
+    spec = text
+    idle_hit = 1
+    if "@" in spec:
+        spec, hit_s = spec.rsplit("@", 1)
+        idle_hit = int(hit_s, 0)
+    parts = spec.split(":")
+    if not 1 <= len(parts) <= 5:
+        raise argparse.ArgumentTypeError("call must be addr[:a0[:a1[:a2[:a3]]]][@idle_hit]")
+    va = int(parts[0], 0)
+    args = [0, 0, 0, 0]
+    for idx, value in enumerate(parts[1:]):
+        args[idx] = int(value, 0)
+    if idle_hit <= 0:
+        raise argparse.ArgumentTypeError("idle_hit must be positive")
+    return va, (args[0], args[1], args[2], args[3]), idle_hit
+
+
 def parse_page_range(value: str) -> tuple[int, int]:
     if ":" not in value:
         raise argparse.ArgumentTypeError("expected start:end")
@@ -620,6 +638,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200", help="Frontend cold-boot path. c200 matches the passing menu regression.")
     ap.add_argument("--state-in", type=Path, help="Load an emulator checkpoint when the frontend resets.")
+    ap.add_argument(
+        "--mem-write-hex",
+        action="append",
+        default=[],
+        help="Diagnostic: write bytes before running, as va:hexbytes. Intended for system-level scheduled-call probes.",
+    )
+    ap.add_argument(
+        "--scheduled-call",
+        action="append",
+        type=parse_frontend_scheduled_call,
+        default=[],
+        help="Diagnostic: call firmware function at idle, addr[:a0[:a1[:a2[:a3]]]][@idle_hit].",
+    )
     ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
     ap.add_argument(
         "--readonly-nand-page-range",
@@ -668,6 +699,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable automatic cold-boot touchscreen calibration input.",
     )
     ap.add_argument("--slow-global-code-hook", action="store_true", help="Diagnostic: hook every executed instruction instead of selected fast-hook PCs.")
+    ap.add_argument("--trace-pc", action="append", type=lambda value: int(value, 0), default=[], help="Diagnostic: selected PC to count/trace. Can be repeated.")
+    ap.add_argument("--trace-pc-detail", action="store_true", default=False, help="Record recent register snapshots for --trace-pc hits.")
     ap.add_argument("--no-cp0-status-accelerator", action="store_true", help="Diagnostic: disable CP0 status helper fast hooks.")
     ap.add_argument("--no-glyph-mask-accelerator", action="store_true", help="Diagnostic: disable the glyph-mask loop accelerator.")
     ap.add_argument("--block-image", action="store_true", help="Enable the legacy temporary logical block-device hook.")

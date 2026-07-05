@@ -1,4 +1,8 @@
-"""State persistence and diagnostic snapshots for the BBK 9588 emulator."""
+"""State persistence and diagnostic snapshots for the BBK 9588 emulator.
+
+本文件不是执行 hook，也不模拟硬件。它负责保存/恢复模拟器状态，以及把 MMIO、
+任务、输入、framebuffer、trace 等 hook 产生的状态整理成前端可读快照。
+"""
 
 from __future__ import annotations
 
@@ -56,6 +60,8 @@ from emu.tools.utils import va_to_phys
 
 
 class HwEmuStateMixin:
+    # 状态快照属于观测/持久化层。这里读取 hook 维护的数据，但不应新增会改变
+    # 固件执行语义的逻辑。
     def _state_regs(self) -> list[tuple[str, int]]:
         return [
             ("zero", UC_MIPS_REG_0),
@@ -98,7 +104,7 @@ class HwEmuStateMixin:
             "version": 1,
             "ram_size": self.ram_size,
             "regs": {name: self.uc.reg_read(reg) & 0xFFFFFFFF for name, reg in self._state_regs()},
-            "cp0_status": self.uc.reg_read(UC_MIPS_REG_CP0_STATUS) & 0xFFFFFFFF,
+            "cp0_status": int(getattr(self, "cp0_status_shadow", 0x10000401)) & 0xFFFFFFFF,
             "pc": self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF,
             "insn_count": self.state.insn_count,
             "mmio_regs": self.mmio_regs,
@@ -167,7 +173,8 @@ class HwEmuStateMixin:
                 self.uc.reg_write(reg, int(payload["regs"][name]) & 0xFFFFFFFF)
         self.pc = int(payload["regs"].get("pc", payload.get("pc", self.pc))) & 0xFFFFFFFF
         self.uc.reg_write(UC_MIPS_REG_PC, self.pc)
-        self.uc.reg_write(UC_MIPS_REG_CP0_STATUS, int(payload.get("cp0_status", 1)) & 0xFFFFFFFF)
+        self.cp0_status_shadow = int(payload.get("cp0_status", 1)) & 0xFFFFFFFF
+        self.uc.reg_write(UC_MIPS_REG_CP0_STATUS, self.cp0_status_shadow)
         self.state.insn_count = int(payload.get("insn_count", 1))
         self.state.last_pc = self.pc
         self.state.pcs = [self.pc]
@@ -315,7 +322,7 @@ class HwEmuStateMixin:
             ("pc", UC_MIPS_REG_PC),
         ]
         out = {name: f"0x{self.uc.reg_read(reg) & 0xFFFFFFFF:08x}" for name, reg in names}
-        out["cp0_status"] = f"0x{self.uc.reg_read(UC_MIPS_REG_CP0_STATUS) & 0xFFFFFFFF:08x}"
+        out["cp0_status"] = f"0x{int(getattr(self, 'cp0_status_shadow', 0x10000401)) & 0xFFFFFFFF:08x}"
         return out
 
     def _bda_runtime_snapshot(self) -> dict[str, object]:

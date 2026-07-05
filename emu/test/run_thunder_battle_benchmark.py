@@ -15,7 +15,6 @@ if __package__ in (None, ""):
 
 from emu.test.run_frontend_web_smoke import (
     BUILD,
-    DEFAULT_NAND,
     WebSocketClient,
     find_free_port,
     http_json,
@@ -68,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=0, help="Use 0 to start a private frontend.")
     ap.add_argument("--use-existing", action="store_true")
-    ap.add_argument("--nand-image", type=Path, default=DEFAULT_NAND)
+    ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--state-in", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="thunder_battle_benchmark")

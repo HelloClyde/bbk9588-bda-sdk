@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+# 本文件是硬件级模拟 hook 的主体，配合 `engine._on_mem()` 响应 MMIO 读写。
+# 它关注设备寄存器语义，而不是固件函数调用：
+# - GPIO/INTC/TCU/SADC/UDC/UART：维护寄存器状态、pending IRQ、触摸/按键电平。
+# - NAND 控制器：按命令/地址/数据窗口模拟读页、写页、擦除和 OOB 访问。
+# - NAND 循环加速：仍属于硬件数据窗口的等效快速路径，只在读写窗口语义明确时
+#   批量搬运数据；未知情况回落到逐次 MMIO。
+
 from unicorn import UC_MEM_READ, UC_MEM_WRITE
 from unicorn.mips_const import (
     UC_MIPS_REG_2,
@@ -41,6 +48,8 @@ GPIO_DYNAMIC_BACKING_ADDRS = tuple(
 
 
 class HwEmuDeviceMixin:
+    # 这里的 helper 都服务于 MMIO 硬件模型。`_handle_nand_*_accelerator`
+    # 虽然由 code hook 触发，但加速的是固件反复读写 NAND 数据窗口这一硬件交互。
     def _sync_sadc_status_backing(self) -> None:
         self._write_mmio_value(SADC_STATUS, 4, self.sadc_status_event & 0xFF)
 
@@ -385,6 +394,8 @@ class HwEmuDeviceMixin:
         return data
 
     def _handle_nand_data_loop_accelerator(self, pc: int) -> bool:
+        # 硬件数据窗口加速 hook：把固件逐字节/逐字读取 NAND DATA 的循环合并成
+        # 一次批量读，并保持 NAND 当前页、列和读指针状态。
         if not self.nand_loop_accelerator:
             return False
         if pc in (0x80183E0C, 0x80183E10):
@@ -423,6 +434,7 @@ class HwEmuDeviceMixin:
         return True
 
     def _handle_nand_ready_wait(self, pc: int) -> bool:
+        # NAND ready 等待加速：当前 NAND 模型是同步完成，固件 ready helper 可直接返回。
         if not self.fast_hooks or pc != 0x801838FC:
             return False
         ra = self.uc.reg_read(UC_MIPS_REG_31) & 0xFFFFFFFF
@@ -434,6 +446,7 @@ class HwEmuDeviceMixin:
         return True
 
     def _handle_nand_marker_check(self, pc: int) -> bool:
+        # NAND 坏块/OOB 标记检查加速：直接读取镜像或 overlay 中的 OOB marker。
         if not self.fast_hooks or pc != 0x80183958:
             return False
         block = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
@@ -477,6 +490,7 @@ class HwEmuDeviceMixin:
         return True
 
     def _handle_nand_oob_read(self, pc: int) -> bool:
+        # NAND OOB 读取加速：等价完成固件 OOB read helper 的内存写回。
         if not self.fast_hooks or pc != 0x80184300:
             return False
         page = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
@@ -526,6 +540,7 @@ class HwEmuDeviceMixin:
         return True
 
     def _handle_nand_program_loop_accelerator(self, pc: int) -> bool:
+        # NAND program 数据循环加速：把固件写 DATA 窗口的循环收集到 program buffer。
         if self.nand_cmd != 0x80:
             return False
         if pc == 0x80184140:
@@ -570,6 +585,7 @@ class HwEmuDeviceMixin:
         return True
 
     def _handle_nand_program_branch_loop_accelerator(self, pc: int) -> bool:
+        # NAND program 分支延迟槽变体：处理已经在 v0 中取出的当前字节，再批量追加尾部。
         if self.nand_cmd != 0x80:
             return False
         if pc == 0x80184150:
@@ -654,6 +670,8 @@ class HwEmuDeviceMixin:
             del self.nand_latch_writes[0]
 
     def _model_mmio(self, access: int, address: int, size: int, value: int) -> None:
+        # MMIO 硬件模型入口。读写副作用在这里落地：寄存器镜像、IRQ pending、
+        # NAND latch、UART 输出、SADC 触摸状态等都从这个函数更新。
         if self.profile != "bbk9588-uboot":
             return
 

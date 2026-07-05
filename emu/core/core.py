@@ -304,6 +304,7 @@ class Bbk9588HwEmu(
         self.surface_pixel_accelerator = surface_pixel_accelerator
         self.surface_hline_accelerator = surface_hline_accelerator
         self.cp0_status_accelerator = cp0_status_accelerator
+        self.cp0_status_shadow = 0x10000401
         self.font_helper_accelerator = font_helper_accelerator
         self.gui_ring_pump = gui_ring_pump
         self.suppress_hot_events = suppress_hot_events
@@ -428,6 +429,7 @@ class Bbk9588HwEmu(
         self.event_queue_snapshots: list[dict[str, object]] = []
         self.state = TraceState(image=image, base=base, pc=pc, ram_size=ram_size)
         self.uc = Uc(UC_ARCH_MIPS, UC_MODE_32 | UC_MODE_LITTLE_ENDIAN)
+        self._mips_reg_type_u64 = self.uc._select_reg_class(UC_MIPS_REG_PC)
         self._map_memory()
         self._load_payload()
         self._apply_profile()

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# 本文件只做观测/诊断 hook：记录事件、调用、选定 PC 的寄存器/栈/字符串快照。
+# 它不应该改变被模拟固件的寄存器、内存、PC 或硬件状态。
+
 import struct
 
 from unicorn.mips_const import (
@@ -26,6 +29,8 @@ from emu.tools.utils import va_to_phys
 
 
 class HwEmuTraceMixin:
+    # trace helper 被其他 hook 调用，用于解释“为什么某个 hook 生效”或记录热点。
+    # 如果需要改变模拟语义，应放到 engine/devices/fastpaths/input/interrupts 等模块。
     def _trace_event(self, kind: str, **values: int) -> None:
         if self.suppress_hot_events and kind in {
             "memset-bulk",

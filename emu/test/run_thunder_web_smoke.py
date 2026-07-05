@@ -21,7 +21,6 @@ from urllib.parse import quote
 from emu.tools.inspect_combined_nand_fat import Fat16View, extract_fat_from_nand
 from emu.test.run_frontend_web_smoke import (
     BUILD,
-    DEFAULT_NAND,
     WebSocketClient,
     fetch_screen_digest,
     find_free_port,
@@ -423,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=0, help="Use 0 to start a private frontend.")
     ap.add_argument("--use-existing", action="store_true")
-    ap.add_argument("--nand-image", type=Path, default=DEFAULT_NAND)
+    ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="thunder_web_smoke")
     ap.add_argument("--boot-timeout", type=int, default=240)
@@ -437,6 +436,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--completed-step-timer-at-thunder-menu", action="store_true", default=False)
     ap.add_argument("--no-cp0-status-accelerator", action="store_true", default=False)
     ap.add_argument("--no-glyph-mask-accelerator", action="store_true", default=False)
+    ap.add_argument("--frontend-profile-out", type=Path)
+    ap.add_argument("--worker-profile-out", type=Path)
+    ap.add_argument("--hot-path-stats", action="store_true", default=False)
     ap.add_argument("--event-probe", action="store_true", default=False)
     ap.add_argument("--battle-state-out", type=Path, help="Save a frontend checkpoint after Thunder reaches battle.")
     ns = ap.parse_args(argv)
@@ -477,6 +479,10 @@ def main(argv: list[str] | None = None) -> int:
             captures.append(menu_capture)
 
             poll_status = lambda: http_json(ns.host, port, "GET", "/api/status")
+            if pet_popup_capture_like(menu_capture):
+                key_press(ws, KEY_DISMISS_PET, poll_status=poll_status)
+                menu_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "00_menu_dismiss_pet", 1.0)
+                captures.append(menu_capture)
             tap(ws, 168, 286, poll_status=poll_status)
             entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment", 1.0)
             if pet_popup_capture_like(entertainment_capture):
@@ -484,42 +490,21 @@ def main(argv: list[str] | None = None) -> int:
                 entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_dismiss_pet", 1.0)
                 tap(ws, 168, 286, poll_status=poll_status)
                 entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_retry", 1.0)
-            tap(ws, 120, 70, poll_status=poll_status)
-            entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid", 1.0)
-            if pet_popup_capture_like(entertainment_capture):
-                key_press(ws, KEY_DISMISS_PET, poll_status=poll_status)
-                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid_dismiss_pet", 1.0))
-                tap(ws, 120, 70, poll_status=poll_status)
-                entertainment_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "01_entertainment_grid_retry", 1.0)
             captures.append(entertainment_capture)
 
-            grid_capture, grid_opened = tap_until_capture_predicate(
-                ws,
-                ns.host,
-                port,
-                ns.out_dir,
-                ns.prefix,
-                "02_game_grid",
-                120,
-                45,
-                game_grid_capture_like,
-                attempts=2,
-                timeout=4.0,
-            )
-            if not grid_opened:
-                grid_capture, grid_opened = tap_until_capture_predicate(
-                    ws,
-                    ns.host,
-                    port,
-                    ns.out_dir,
-                    ns.prefix,
-                    "02_game_grid_open",
-                    120,
-                    45,
-                    game_grid_capture_like,
-                    attempts=3,
-                    timeout=4.0,
-                )
+            grid_capture = entertainment_capture
+            grid_opened = False
+            for index in range(1, 5):
+                tap(ws, 198, 84, poll_status=poll_status)
+                grid_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, f"02_game_grid_r{index}", 0.8)
+                captures.append(grid_capture)
+                if game_grid_capture_like(grid_capture):
+                    grid_opened = True
+            if grid_opened:
+                # Keep the default-image path aligned with the known-good saved
+                # checkpoint route. Earlier pages can look grid-like but keep a
+                # different launcher focus, which opens the wrong app.
+                grid_opened = game_grid_capture_like(grid_capture)
             captures.append(grid_capture)
             grid_status = http_json(ns.host, port, "GET", "/api/status")
             interactions.append(
@@ -529,27 +514,59 @@ def main(argv: list[str] | None = None) -> int:
                     "status": summarize_status(grid_status),
                 }
             )
+            thunder_selected = False
             if not grid_opened:
-                failures.append("Entertainment world did not open before Thunder selection")
+                failures.append("Entertainment game grid did not open before Entertainment World selection")
             else:
-                select_capture, selected_thunder = tap_until_capture_changes(
-                    ws,
-                    ns.host,
-                    port,
-                    ns.out_dir,
-                    ns.prefix,
-                    "03_select_thunder",
-                    120,
-                    250,
-                    str(grid_capture.get("sha256") or ""),
-                    attempts=2,
-                    timeout=2.0,
+                # In the app.py default NAND image Thunder is under:
+                # 娱乐 tab -> game grid -> 娱乐天地 -> 雷霆战机.
+                key_press(ws, KEY_LEFT, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "03_select_ent_world_left", 0.8))
+                tap(ws, 120, 72, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "04_tap_ent_world", 1.5))
+                tap(ws, 150, 306, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "05_bottom_open_ent_world", 1.5))
+                key_press(ws, KEY_RIGHT, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "06_ent_world_right", 0.4))
+                key_press(ws, KEY_OK, poll_status=poll_status)
+                captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "07_ent_world_ok", 2.0))
+                key_press(ws, KEY_LEFT, poll_status=poll_status)
+                world_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "08_ent_world_grid", 0.4)
+                captures.append(world_capture)
+                thunder_world_opened = str(world_capture.get("sha256") or "") != str(grid_capture.get("sha256") or "")
+                interactions.append(
+                    {
+                        "step": "open-entertainment-world-list",
+                        "digest_changed": thunder_world_opened,
+                        "status": summarize_status(http_json(ns.host, port, "GET", "/api/status")),
+                    }
                 )
-                captures.append(select_capture)
-                if not selected_thunder:
-                    failures.append("Thunder icon selection did not change the game grid")
+                if not thunder_world_opened:
+                    failures.append("Entertainment World list did not open before Thunder selection")
+                else:
+                    select_capture, selected_thunder = tap_until_capture_changes(
+                        ws,
+                        ns.host,
+                        port,
+                        ns.out_dir,
+                        ns.prefix,
+                        "09_select_thunder",
+                        135,
+                        260,
+                        str(world_capture.get("sha256") or ""),
+                        attempts=2,
+                        timeout=2.0,
+                    )
+                    captures.append(select_capture)
+                    if not selected_thunder:
+                        failures.append("Thunder icon selection did not change the Entertainment World grid")
+                    thunder_selected = selected_thunder
+                    tap(ws, 135, 260, poll_status=poll_status)
+                    captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "10_open_thunder_touch", 2.0))
+                    tap(ws, 150, 306, poll_status=poll_status)
+                    captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "11_open_thunder_toolbar", 2.0))
 
-            if grid_opened:
+            if thunder_selected:
                 key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
                 captures.append(capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "04_loading_or_payment", 3.0))
                 entry_status = http_json(ns.host, port, "GET", "/api/status")

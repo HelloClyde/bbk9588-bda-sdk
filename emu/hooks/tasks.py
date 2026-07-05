@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# 本文件是系统固件级 hook：理解 C200 固件的任务节点和上下文保存布局，在已知
+# 调度入口处保存/恢复 MIPS 寄存器。它不是硬件模拟，也不是单纯 trace；它补齐
+# 的是固件任务调度语义，并为前端提供任务表观测快照。
+
 import ctypes
 import struct
 
@@ -44,6 +48,8 @@ from emu.core.defs import RAM_BASE
 
 
 class HwEmuTaskMixin:
+    # 任务上下文 hook 由 `engine._on_task_context_restore_code()` 触发。只有在
+    # 栈帧、任务节点和寄存器布局都能验证时才接管，否则应回落到固件原路径。
     TASK_CONTEXT_REG_OFFSETS = (
         (UC_MIPS_REG_31, 0x00),
         (UC_MIPS_REG_30, 0x04),
@@ -150,6 +156,7 @@ class HwEmuTaskMixin:
         }
 
     def _capture_task_event(self, kind: str, pc: int) -> None:
+        # 观测 hook：记录任务链表/当前任务变化，供状态面板和调试使用。
         s0 = self.uc.reg_read(UC_MIPS_REG_16) & 0xFFFFFFFF
         s1 = self.uc.reg_read(UC_MIPS_REG_17) & 0xFFFFFFFF
         s2 = self.uc.reg_read(UC_MIPS_REG_18) & 0xFFFFFFFF
@@ -275,7 +282,7 @@ class HwEmuTaskMixin:
             for reg, reg_type, index in self._task_context_reg_read_plan():
                 values[index] = self.uc._reg_read(reg, reg_type, None) & 0xFFFFFFFF
             try:
-                values[0x6C // 4] = self.uc.reg_read(UC_MIPS_REG_CP0_STATUS) & 0xFFFFFFFF
+                values[0x6C // 4] = int(getattr(self, "cp0_status_shadow", 0x10000401)) & 0xFFFFFFFF
             except Exception:
                 values[0x6C // 4] = 0x10000401
             try:
@@ -305,6 +312,7 @@ class HwEmuTaskMixin:
                 tuple((reg, reg_type, values[index]) for reg, reg_type, index in self._task_context_reg_write_plan())
             )
         try:
+            self.cp0_status_shadow = values[0x6C // 4] & 0xFFFFFFFF
             self.uc.reg_write(UC_MIPS_REG_CP0_STATUS, values[0x6C // 4])
         except Exception:
             pass
@@ -319,6 +327,7 @@ class HwEmuTaskMixin:
         return target
 
     def _handle_task_context_restore(self, pc: int, save_current: bool) -> bool:
+        # 系统固件级 hook：等价执行任务上下文切换，批量保存/恢复寄存器和 PC。
         try:
             target_node = struct.unpack_from("<I", self.uc.mem_read(0x00473F30, 4))[0]
             current_node = struct.unpack_from("<I", self.uc.mem_read(0x00473F50, 4))[0]

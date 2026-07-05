@@ -1,4 +1,16 @@
-"""Code-hook selection policy for the BBK 9588 emulator."""
+"""Code-hook selection policy for the BBK 9588 emulator.
+
+本文件只决定“哪些 PC 需要被 Unicorn 执行 hook 拦截”，不实现 hook 语义。
+
+分类说明：
+- `BASE_FAST_CODE_HOOK_PCS`：默认选择性 code hook 集合，包含系统固件入口、
+  已知硬件交互点、观测点和可加速热点。实际语义在 `engine.py` 分派。
+- `EPILOGUE_JR_FIX_PCS`：Unicorn/MIPS 返回延迟槽修正点，属于执行器兼容层。
+- `_store_delay_branch_hook_pcs()`：MIPS store-in-delay-slot 修正点，既保护硬件
+  MMIO 写入，也避免 Unicorn 在 hooked delay slot 上重复执行。
+- `_image_*_pcs()`：从固件镜像扫描出的候选 hook，主要用于诊断、恢复和临时扩大
+  覆盖面；默认路径仍优先使用已知稳定 PC。
+"""
 
 from __future__ import annotations
 
@@ -188,6 +200,8 @@ BASE_FAST_CODE_HOOK_PCS = frozenset(
 
 class HwEmuHookPolicyMixin:
     def _fast_code_hook_pcs(self) -> set[int]:
+        # 执行 hook 的总入口集合：用户指定 trace/stop/scheduled-call 必须加入；
+        # 已知固件和硬件交互点作为默认 fast hook；可选镜像扫描用于诊断扩展。
         pcs = set(self.trace_pcs)
         pcs.update(self.stop_pcs)
         pcs.update(call.return_pc for call in self.scheduled_calls)
@@ -204,6 +218,8 @@ class HwEmuHookPolicyMixin:
         return pcs
 
     def _store_delay_branch_hook_pcs(self) -> set[int]:
+        # delay-slot hook 是执行器兼容层，不是业务功能。它只在 Unicorn 无法可靠
+        # 原生执行的分支+store 组合上启用。
         cached = getattr(self, "store_delay_branch_pcs", None)
         if cached:
             return cached
@@ -217,6 +233,7 @@ class HwEmuHookPolicyMixin:
         return pcs
 
     def _image_store_delay_branch_pcs(self) -> set[int]:
+        # 诊断扫描：找出镜像里所有“分支 + sb/sh/sw 延迟槽”的候选点。
         data = self.image.read_bytes()
         pcs: set[int] = set()
         for off in range(0, len(data) - 7, 4):
@@ -230,6 +247,7 @@ class HwEmuHookPolicyMixin:
         return pcs
 
     def _image_jal_pcs(self) -> set[int]:
+        # 观测扫描：把 jal 指令和目标函数入口加入 hook 集合，便于记录调用路径。
         data = self.image.read_bytes()
         pcs: set[int] = set()
         for off in range(0, len(data) - 3, 4):
@@ -242,6 +260,7 @@ class HwEmuHookPolicyMixin:
         return pcs
 
     def _image_recoverable_branch_pcs(self) -> set[int]:
+        # 恢复辅助扫描：用于在可能触发 Unicorn 异常的指令前保存寄存器快照。
         data = self.image.read_bytes()
         pcs: set[int] = set()
         for off in range(0, len(data) - 3, 4):

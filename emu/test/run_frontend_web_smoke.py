@@ -323,25 +323,53 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         args.host,
         "--port",
         str(port),
-        "--nand-image",
-        str(args.nand_image),
         "--worker-slice-seconds",
         str(args.worker_slice_seconds),
         "--frame-push-min-interval",
         str(args.frame_push_min_interval),
         "--quiet",
     ]
+    nand_image = getattr(args, "nand_image", None)
+    if nand_image is not None:
+        cmd += ["--nand-image", str(nand_image)]
     if bool(getattr(args, "completed_step_timer", False)):
         cmd.append("--completed-step-timer")
     if bool(getattr(args, "completed_step_timer_after_auto_boot", False)):
         cmd.append("--completed-step-timer-after-auto-boot")
+    if bool(getattr(args, "scheduler_tick_clamp", False)):
+        cmd.append("--scheduler-tick-clamp")
     if bool(getattr(args, "no_cp0_status_accelerator", False)):
         cmd.append("--no-cp0-status-accelerator")
     if bool(getattr(args, "no_glyph_mask_accelerator", False)):
         cmd.append("--no-glyph-mask-accelerator")
+    for pc in getattr(args, "trace_pc", []) or []:
+        cmd += ["--trace-pc", f"0x{int(pc) & 0xFFFFFFFF:x}"]
+    if bool(getattr(args, "trace_pc_detail", False)):
+        cmd.append("--trace-pc-detail")
     state_in = getattr(args, "state_in", None)
     if state_in is not None:
         cmd += ["--state-in", str(state_in)]
+    for spec in getattr(args, "mem_write_hex", []) or []:
+        cmd += ["--mem-write-hex", str(spec)]
+    for call in getattr(args, "scheduled_call", []) or []:
+        if hasattr(call, "va"):
+            call_va = int(call.va)
+            call_args = tuple(call.args)
+            idle_hit = int(call.idle_hit)
+        else:
+            call_va, call_args, idle_hit = call
+            call_va = int(call_va)
+            call_args = tuple(call_args)
+            idle_hit = int(idle_hit)
+        arg_count = len(call_args)
+        while arg_count > 0 and int(call_args[arg_count - 1]) == 0:
+            arg_count -= 1
+        args_text = ":".join(f"0x{value & 0xFFFFFFFF:x}" for value in call_args[:arg_count])
+        call_text = f"0x{call_va:x}"
+        if args_text:
+            call_text += f":{args_text}"
+        call_text += f"@{idle_hit}"
+        cmd += ["--scheduled-call", call_text]
     profile_out = getattr(args, "frontend_profile_out", None)
     if profile_out is not None:
         cmd += ["--profile-out", str(profile_out)]
@@ -400,7 +428,14 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
         "store_delay_branch_counts": status.get("store_delay_branch_counts"),
         "on_code_dispatch_counts": status.get("on_code_dispatch_counts"),
         "block_dispatch_counts": status.get("block_dispatch_counts"),
+        "recoveries": status.get("recoveries"),
+        "trace_pc": status.get("trace_pc"),
         "scheduler": scheduler,
+        "tasks": status.get("tasks"),
+        "event_queue": status.get("event_queue"),
+        "display_event_queue": status.get("display_event_queue"),
+        "recent_event_queue_snapshots": status.get("recent_event_queue_snapshots"),
+        "recent_gui_ring_pump_events": status.get("recent_gui_ring_pump_events"),
         "frame_push": status.get("frame_push"),
         "ws": status.get("ws"),
     }
@@ -530,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=0, help="Use 0 to start a private frontend on a free port.")
     ap.add_argument("--use-existing", action="store_true", help="Connect to an already running frontend instead of starting one.")
-    ap.add_argument("--nand-image", type=Path, default=DEFAULT_NAND)
+    ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="hwemu_frontend_web_smoke")
     ap.add_argument("--boot-timeout", type=int, default=480)

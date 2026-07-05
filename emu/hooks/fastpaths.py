@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+# 本文件实现“加速等效 hook”。这些 hook 不模拟单个硬件寄存器，也不是纯观测；
+# 它们在已知固件 PC 上接管热点函数/循环，用 Python 一次完成与固件路径等价的
+# 内存、寄存器和 PC 更新。边界条件不确定时必须返回 False，交回原固件执行。
+#
+# 主要覆盖：
+# - 块设备、FAT16、目录项、长文件名、资源缓存等系统固件 I/O 热点。
+# - memset/memcpy、byte/halfword/row/raster/glyph copy 等内存搬运热点。
+# - boot/logo/fullscreen/portrait blit 等图形热点，并同步 framebuffer dirty。
+# - busy delay、no-event poll、malloc/free scan 等确定性轮询/扫描热点。
+
 import struct
 
 from unicorn.mips_const import (
@@ -57,6 +67,9 @@ PORTRAIT_BLIT_LOOP_PCS = frozenset(
 
 
 class HwEmuFastpathMixin:
+    # 本 mixin 的 `_handle_*` 都由 `engine.py` 的 code hook 调用。命名里带
+    # `block`/`fat`/`surface` 的函数常常模拟的是“固件函数效果”，不是物理硬件
+    # 总线；真正的硬件 MMIO 模型在 `devices.py` 和 `engine._on_mem()`。
     def _read_c_string_bytes_va_safe(self, va: int, limit: int = 4096) -> bytes | None:
         if not self._is_mapped_ram_va(va, 1):
             return None
@@ -72,8 +85,8 @@ class HwEmuFastpathMixin:
         return None
 
     def _handle_bda_bounded_cstr_search(self, pc: int) -> bool:
-        """Accelerate Album's bounded search helper without changing results."""
-        if not self.fast_hooks or pc != 0x81C0756C:
+        """加速等效 hook：替代 native BDA runtime 的有界 C 字符串搜索 helper。"""
+        if not self.fast_hooks or pc not in (0x81C0756C, 0x81C1281C):
             return False
         haystack_va = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
         needle_va = self.uc.reg_read(UC_MIPS_REG_5) & 0xFFFFFFFF

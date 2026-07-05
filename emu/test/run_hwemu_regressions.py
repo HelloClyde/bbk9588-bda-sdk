@@ -38,6 +38,10 @@ def run_command(name: str, cmd: list[str], timeout: int) -> dict[str, object]:
     }
 
 
+def maybe_nand_args(path: Path | None) -> list[str]:
+    return [] if path is None else ["--nand-image", str(path)]
+
+
 def latest_summary(prefix: str) -> dict[str, object]:
     path = BUILD / f"{prefix}_summary.json"
     if not path.is_file():
@@ -47,7 +51,7 @@ def latest_summary(prefix: str) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run BBK9588 web-backend regression checks.")
-    ap.add_argument("--nand-image", type=Path, default=BUILD / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin")
+    ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--summary-json", type=Path, default=BUILD / "hwemu_regression_summary.json")
     ap.add_argument("--timeout", type=int, default=240)
     ap.add_argument("--host", default="127.0.0.1")
@@ -78,8 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.host,
                 "--port",
                 str(args.port),
-                "--nand-image",
-                str(args.nand_image),
+                *maybe_nand_args(args.nand_image),
                 "--prefix",
                 frontend_prefix,
             ],
@@ -99,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.host,
                     "--port",
                     str(args.port),
-                    "--nand-image",
-                    str(args.nand_image),
+                    *maybe_nand_args(args.nand_image),
                     "--prefix",
                     album_prefix,
                 ],
@@ -120,8 +122,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.host,
                     "--port",
                     str(args.port),
-                    "--nand-image",
-                    str(args.nand_image),
+                    *maybe_nand_args(args.nand_image),
                     "--prefix",
                     thunder_prefix,
                 ],

@@ -1,4 +1,11 @@
-"""Input, scheduled event, and touchscreen helpers for the BBK 9588 emulator."""
+"""Input, scheduled event, and touchscreen helpers for the BBK 9588 emulator.
+
+本文件主要是系统固件级 hook，不是物理按键矩阵的完整硬件模型：
+- scheduled poke/call：测试或前端请求在 idle 点注入内存写/固件函数调用。
+- firmware key/touch sample：在已知固件扫描入口注入按键和触摸采样结果。
+- key/touch controller state：同时维护 GPIO/SADC 等硬件侧状态，供 MMIO 模型读取。
+- stop/input-node：观测/诊断 hook，用于在指定输入队列状态停止。
+"""
 
 from __future__ import annotations
 
@@ -30,7 +37,10 @@ from emu.core.defs import (
 
 
 class HwEmuInputMixin:
+    # 输入相关 hook 多数从 `engine._on_code()` 的 idle/poll/scan PC 进入。
+    # 这些 hook 的目标是让真实固件消费事件，而不是绕过整套 UI 事件系统。
     def _apply_stop_input_node_conditions(self, pc: int) -> bool:
+        # 观测/诊断 hook：看到指定输入节点状态后停止仿真。
         for condition in self.stop_input_nodes:
             if condition.pc is not None and pc != condition.pc:
                 continue
@@ -50,6 +60,7 @@ class HwEmuInputMixin:
         return False
 
     def _apply_scheduled_pokes(self, pc: int) -> None:
+        # 测试注入 hook：在指定 idle 命中次数后写一段内存。
         for poke in self.scheduled_pokes:
             if poke.applied or poke.idle_hit != self.idle_loop_hits:
                 continue
@@ -68,6 +79,7 @@ class HwEmuInputMixin:
             self._trace_event("poke-va", pc=pc, addr=poke.va, value=poke.value, size=poke.size)
 
     def _apply_scheduled_calls(self, pc: int) -> bool:
+        # 固件调用注入 hook：设置 a0-a3/sp/ra/pc，让真实固件函数自己执行。
         for call in self.scheduled_calls:
             if call.applied or call.idle_hit != self.idle_loop_hits:
                 continue
@@ -115,6 +127,8 @@ class HwEmuInputMixin:
             self._trace_event("call-return", pc=pc, addr=call.va, value=self.uc.reg_read(UC_MIPS_REG_2), size=4)
 
     def _apply_firmware_key_sample(self, pc: int) -> bool:
+        # 固件按键采样 hook：跳入固件按键扫描函数，后续 forced scan 只负责给
+        # 该扫描函数一个确定的键值。
         for sample in self.firmware_key_samples:
             if sample.applied or sample.idle_hit != self.idle_loop_hits:
                 continue
@@ -158,6 +172,7 @@ class HwEmuInputMixin:
             return
 
     def _handle_forced_key_scan(self, pc: int) -> bool:
+        # 固件级等效 hook：替代底层 scan helper 的返回值，不直接模拟键盘硬件矩阵。
         if self.pending_forced_scan_code is None:
             return False
         code = self.pending_forced_scan_code
@@ -177,6 +192,7 @@ class HwEmuInputMixin:
         return True
 
     def _apply_touch_sample(self, pc: int) -> bool:
+        # 固件触摸采样 hook：驱动真实触摸采样路径，或在指定 PC 直接写触摸全局量。
         for sample in self.touch_samples:
             if sample.applied:
                 continue
@@ -436,11 +452,11 @@ class HwEmuInputMixin:
         return applied
 
     def set_key_controller_state(self, code: int, down: bool, pc: int | None = None) -> bool:
-        """Set modeled physical key GPIO state.
+        """硬件侧输入状态 hook：维护按键 GPIO 电平和中断标志。
 
-        C200's scanner at 0x8001b464 reads active-low GPIO pin registers. Keep
-        a persistent pressed-code set and derive GPIO words from the idle level
-        plus every currently held key on the same port.
+        C200 的扫描函数 0x8001b464 读取低电平有效的 GPIO pin。这里保留当前
+        按下的键集合，并从 idle level 叠加同一端口上的所有按键，供后续 MMIO
+        read hook 读到真实固件期望的 GPIO word。
         """
         if code not in GPIO_KEY_CODE_BITS:
             return False
@@ -623,12 +639,11 @@ class HwEmuInputMixin:
             self._write_mem_va(0x807F7118, 2, raw_y)
 
     def set_touch_controller_state(self, x: int, y: int, down: bool, pc: int | None = None) -> None:
-        """Set the modeled touchscreen controller state.
+        """硬件侧触摸状态 hook：维护 SADC、pen GPIO 和触摸中断状态。
 
-        The frontend passes coordinates in the firmware touchscreen space.
-        C200 reads raw 12-bit SADC samples into 0x807f7112/7114, then its
-        own calibration matrix converts them to logical coordinates at
-        0x807f7116/7118 and 0x80370fc8/0x80370fcc.
+        前端传入固件触摸坐标。C200 会先把 12-bit SADC 原始采样读到
+        0x807f7112/7114，再用自己的校准矩阵转换到 0x807f7116/7118 和
+        0x80370fc8/0x80370fcc 的逻辑坐标。
         """
         if pc is None:
             pc = self.uc.reg_read(UC_MIPS_REG_PC) & 0xFFFFFFFF

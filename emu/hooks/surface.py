@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+# 本文件负责图形/Surface 相关 hook：
+# - `_handle_surface_*` 和 blit/copy handler 是固件绘图函数的加速等效实现。
+# - LCD mirror 和 framebuffer dirty 是模拟器前端需要的观测/同步层。
+# - 这些 hook 不模拟 LCD 控制器寄存器；LCD/MMIO 状态仍由设备模型处理。
+# - 所有绘图加速必须保持 surface buffer、镜像 framebuffer 和返回寄存器一致。
+
 import struct
 import time
 
@@ -63,6 +69,8 @@ SURFACE_TRANSPARENT_BLIT_PCS = frozenset(
 
 
 class HwEmuSurfaceMixin:
+    # Surface hook 由 `engine.py` 在固定绘图 PC 上调用。它们的作用是跳过
+    # 固件逐像素循环，同时保留画面结果和前端刷新通知。
     def _perf_add(self, name: str, elapsed: float, *, size: int = 0, count: int = 1) -> None:
         stats = getattr(self, "perf_counters", None)
         if stats is None:
@@ -242,6 +250,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _mark_framebuffer_dirty(self, pc: int, addr: int, size: int, reason: str) -> None:
+        # 观测/前端同步 hook：记录 framebuffer 被改动的位置，必要时立即推送画面。
         self.framebuffer_dirty_seq = (self.framebuffer_dirty_seq + 1) & 0xFFFFFFFF
         self.framebuffer_dirty_last_raw = (
             self.framebuffer_dirty_seq,
@@ -345,6 +354,7 @@ class HwEmuSurfaceMixin:
         return pitch, buffer_va
 
     def _handle_surface_setpixel(self, pc: int) -> bool:
+        # 绘图加速 hook：等价实现固件 setpixel 函数。
         if not self.fast_hooks or not self.surface_pixel_accelerator or pc != 0x8012BDF4:
             return False
         surface = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
@@ -386,6 +396,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _handle_surface_hline(self, pc: int) -> bool:
+        # 绘图加速 hook：等价实现固件水平线绘制函数。
         if not self.fast_hooks or not self.surface_hline_accelerator or pc != 0x8012BEA4:
             return False
         surface = self.uc.reg_read(UC_MIPS_REG_4) & 0xFFFFFFFF
@@ -431,6 +442,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _handle_surface_color_span_loop(self, pc: int) -> bool:
+        # 绘图循环加速 hook：批量写入一段 RGB565 像素。
         if not self.fast_hooks or pc != 0x8012BF64:
             return False
         surface = self.uc.reg_read(UC_MIPS_REG_21) & 0xFFFFFFFF  # s5
@@ -502,6 +514,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _handle_surface_read_span_loop(self, pc: int) -> bool:
+        # 绘图读回加速 hook：批量从 surface 读取一段 RGB565 像素。
         if not self.fast_hooks or pc != 0x8012BFE8:
             return False
         surface = self.uc.reg_read(UC_MIPS_REG_21) & 0xFFFFFFFF  # s5
@@ -601,6 +614,7 @@ class HwEmuSurfaceMixin:
         return surface, x, y, width, height, buffer_va, stride, pitch, surface_buffer
 
     def _handle_surface_block_read(self, pc: int) -> bool:
+        # 块读取加速 hook：等价实现 surface rectangle read。
         if not self.fast_hooks or pc != 0x8012C3D0:
             return False
         args = self._surface_block_args(pc)
@@ -642,6 +656,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _handle_surface_block_write(self, pc: int) -> bool:
+        # 块写入加速 hook：等价实现 surface rectangle write，并标记画面 dirty。
         if not self.fast_hooks or pc != 0x8012C1BC:
             return False
         args = self._surface_block_args(pc)
@@ -687,6 +702,7 @@ class HwEmuSurfaceMixin:
         return True
 
     def _handle_surface_transparent_blit(self, pc: int) -> bool:
+        # 透明 blit 加速 hook：跳过透明色像素，批量写非透明 span。
         if not self.fast_hooks or pc not in SURFACE_TRANSPARENT_BLIT_PCS:
             return False
         perf_start = time.perf_counter()

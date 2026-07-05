@@ -24,6 +24,7 @@ from unicorn.mips_const import (
 )
 
 from emu.core import Bbk9588HwEmu
+from emu.core.defs import ScheduledCall
 from emu.core.defs import (
     FirmwareKeySample,
     GPIO_KEY_CODE_BITS,
@@ -361,6 +362,14 @@ class FrontendState:
                 if self.args.auto_calibration and self.args.boot_mode == "c200" and self.args.state_in is None
                 else ()
             )
+            trace_pcs = tuple(dict.fromkeys([*auto_boot_trace_pcs, *getattr(self.args, "trace_pc", [])]))
+            scheduled_calls = []
+            for item in getattr(self.args, "scheduled_call", []) or []:
+                if isinstance(item, ScheduledCall):
+                    scheduled_calls.append(item)
+                else:
+                    va, args, idle_hit = item
+                    scheduled_calls.append(ScheduledCall(va=int(va), args=tuple(args), idle_hit=int(idle_hit)))
             self.emu = Bbk9588HwEmu(
                 image=image,
                 base=base,
@@ -382,8 +391,9 @@ class FrontendState:
                 resource_cache16_accelerator=self.args.resource_cache16_accelerator,
                 glyph_mask_accelerator=not getattr(self.args, "no_glyph_mask_accelerator", False),
                 cp0_status_accelerator=not getattr(self.args, "no_cp0_status_accelerator", False),
-                trace_pcs=auto_boot_trace_pcs,
-                trace_pc_detail=False,
+                trace_pcs=trace_pcs,
+                trace_pc_detail=bool(getattr(self.args, "trace_pc_detail", False)),
+                scheduled_calls=scheduled_calls,
                 completed_step_timer=bool(getattr(self.args, "completed_step_timer", False)),
                 suppress_hot_events=True,
                 hot_path_stats=bool(getattr(self.args, "hot_path_stats", False)),
@@ -393,6 +403,13 @@ class FrontendState:
             self.emu.framebuffer_dirty_callback = self._on_framebuffer_dirty
             if self.args.state_in is not None:
                 self.emu.load_emulator_state(self.args.state_in)
+            for spec in getattr(self.args, "mem_write_hex", []) or []:
+                if ":" not in spec:
+                    raise ValueError("--mem-write-hex must be va:hexbytes")
+                va_text, hex_text = spec.split(":", 1)
+                data = bytes.fromhex(hex_text)
+                va = int(va_text, 0)
+                self.emu.uc.mem_write(va & 0x1FFFFFFF if va >= 0x80000000 else va, data)
             self.last_error = None
             self.crash_snapshot = None
             self.last_frame = None
@@ -1631,6 +1648,7 @@ class FrontendState:
                 "file_read_loop": getattr(self.emu, "file_read_loop_accel_count", 0),
                 "lfn_copy": getattr(self.emu, "lfn_copy_accel_count", 0),
                 "dirent_copy": getattr(self.emu, "dirent_copy_accel_count", 0),
+                "bda_cstr_search": getattr(self.emu, "bda_cstr_search_accel_count", 0),
                 "free_scan": getattr(self.emu, "free_scan_accel_count", 0),
                 "halfword_copy": getattr(self.emu, "halfword_copy_accel_count", 0),
                 "raster_copy": getattr(self.emu, "raster_loop_accel_count", 0),
@@ -1693,6 +1711,13 @@ class FrontendState:
                     reverse=True,
                 )[:24]
             ],
+            "trace_pc": {
+                "counts": {
+                    f"0x{pc:08x}": int(count)
+                    for pc, count in sorted(getattr(self.emu, "trace_pc_counts", {}).items())
+                },
+                "recent_hits": list(getattr(self.emu, "trace_pc_hits", [])[-128:]),
+            },
             "job": job,
             "input_worker_pending": self.input_worker_pending,
             "input_wake_count": self.input_wake_count,
@@ -1705,6 +1730,7 @@ class FrontendState:
             "app_idle_loop_hits": self.emu.app_idle_loop_hits,
             "events": deque_tail(state.events, events_limit),
             "invalid": [access_to_dict(a) for a in state.invalid[-4:]],
+            "recoveries": list(state.recoveries[-events_limit:]),
             "scheduler": scheduler,
             "framebuffer": self.last_frame,
             "framebuffer_dirty_seq": getattr(self.emu, "framebuffer_dirty_seq", 0),
@@ -1747,6 +1773,12 @@ class FrontendState:
             snapshot["file_read_loop_events"] = list(getattr(self.emu, "file_read_loop_events", [])[-32:])
             snapshot["native_bda_event_probe"] = self._native_bda_event_probe_locked()
             snapshot["input"] = self.emu.input_snapshot()
+        if detail == "full" or bool(getattr(self.emu, "hot_path_stats", False)):
+            snapshot["tasks"] = self.emu.task_table_snapshot()
+            snapshot["event_queue"] = self.emu._queue_object_snapshot(self.emu._read_u32_va_safe(0x80473F6C))
+            snapshot["display_event_queue"] = self.emu._display_event_queue_snapshot()
+            snapshot["recent_event_queue_snapshots"] = self.emu.event_queue_snapshots[-16:]
+            snapshot["recent_gui_ring_pump_events"] = self.emu.gui_ring_pump_events[-16:]
         return snapshot
 
     def _publish_snapshot_locked(self) -> None:

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+# 本文件是系统固件级中断 hook 和部分硬件定时状态模型：
+# - TCU/IRQ24 deadline 和 pending mask 属于硬件侧状态模拟。
+# - WAIT/BDA poll/interrupt return 入口属于固件级 hook，用真实固件 handler 消费 IRQ。
+# - 直接 CP0 异常注入当前保守禁用，因为 Unicorn MIPS 绑定缺少完整 EPC/Cause；
+#   因此中断主要从 WAIT/poll hook 服务。
+
 from unicorn.mips_const import (
     UC_MIPS_REG_4,
     UC_MIPS_REG_26,
@@ -14,6 +20,8 @@ from emu.core.defs import GPIO_MAIN_IRQ_TO_FLAG_ADDR, GPIO_MAIN_IRQ_TO_PORT
 
 
 class HwEmuInterruptMixin:
+    # 中断 hook 连接硬件 pending 状态和固件调度入口。它不尝试完整实现 MIPS CP0
+    # 异常栈，只在已知安全的固件入口服务 IRQ。
     def _timer_now(self) -> int:
         if self.completed_step_timer:
             return int(self.timer_insn_count)
@@ -136,6 +144,7 @@ class HwEmuInterruptMixin:
         self.tcu_period_insn = max(5_000, min(compare, 5_000_000))
 
     def _handle_interrupt_return(self, pc: int) -> bool:
+        # 固件级 hook：识别中断返回 helper，把 PC 恢复到被中断位置。
         if pc not in (0x800A7DC0, 0x800A7FD8, 0x800A80E8) or self.interrupt_return_pc is None:
             return False
         target = self.interrupt_return_pc
@@ -162,7 +171,32 @@ class HwEmuInterruptMixin:
             or 0x800051BC <= pc < 0x800053B0
         )
 
+    def _block_interrupt_check_needed(self, pc: int) -> bool:
+        if self.profile != "bbk9588-uboot":
+            return False
+        if self.interrupt_suppress_pc_once is not None and pc == self.interrupt_suppress_pc_once:
+            return True
+        if self.interrupt_return_pc is not None:
+            return True
+        if self.completed_step_timer:
+            insn_count = self.timer_insn_count
+        else:
+            insn_count = self.state.insn_count
+        next_tcu_irq = self.next_tcu_irq_insn
+        if (
+            next_tcu_irq is not None
+            and insn_count >= next_tcu_irq
+            and ((self.tcu_enabled_mask & 0x3) & ~self.tcu_pending_mask)
+        ):
+            return True
+        next_irq24 = self.next_irq24_insn
+        if next_irq24 is None:
+            return True
+        return insn_count >= next_irq24 and not (self.intc_pending_mask & (1 << 24))
+
     def _maybe_deliver_external_interrupt(self, pc: int) -> bool:
+        # 中断投递调度 hook：刷新硬件 pending 状态。直接跳异常入口目前关闭，
+        # 因为没有 EPC/Cause 会破坏固件上下文。
         if self.profile != "bbk9588-uboot":
             return False
         if self.completed_step_timer:
@@ -170,12 +204,16 @@ class HwEmuInterruptMixin:
         else:
             insn_count = self.state.insn_count
         next_tcu_irq = self.next_tcu_irq_insn
-        if next_tcu_irq is not None and insn_count >= next_tcu_irq:
+        if (
+            next_tcu_irq is not None
+            and insn_count >= next_tcu_irq
+            and ((self.tcu_enabled_mask & 0x3) & ~self.tcu_pending_mask)
+        ):
             self._refresh_tcu_pending()
         next_irq24 = self.next_irq24_insn
         if next_irq24 is None:
             self.next_irq24_insn = insn_count + self.irq24_period_insn
-        elif insn_count >= next_irq24:
+        elif insn_count >= next_irq24 and not (self.intc_pending_mask & (1 << 24)):
             self._refresh_irq24_pending()
         if self.interrupt_suppress_pc_once is not None and pc == self.interrupt_suppress_pc_once:
             self._trace_event("external-interrupt-suppress-once", pc=pc)
@@ -214,6 +252,8 @@ class HwEmuInterruptMixin:
         return True
 
     def _service_pending_irq_from_wait(self, pc: int, return_pc: int) -> bool:
+        # 固件 WAIT/poll 服务 hook：从 modeled pending mask 中选出 IRQ，跳入固件
+        # 注册的 handler，让系统固件自己完成上层事件分发。
         if self.intc_pending_mask == 0:
             return False
         self._refresh_gpio_pending()
