@@ -378,6 +378,9 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         cmd += ["--worker-profile-out", str(worker_profile_out)]
     if bool(getattr(args, "hot_path_stats", False)):
         cmd.append("--hot-path-stats")
+    run_internal_chunk_steps = getattr(args, "run_internal_chunk_steps", None)
+    if run_internal_chunk_steps is not None:
+        cmd += ["--run-internal-chunk-steps", str(run_internal_chunk_steps)]
     return subprocess.Popen(
         cmd,
         cwd=ROOT,

@@ -99,7 +99,7 @@ from emu.core.defs import (
     TraceState,
 )
 from emu.hooks.fastpaths import PORTRAIT_BLIT_LOOP_PCS
-from emu.hooks.surface import SURFACE_TRANSPARENT_BLIT_PCS
+from emu.hooks.surface import GUI_PALETTE_COLOR_PC, SURFACE_TRANSPARENT_BLIT_PCS
 from emu.tools.utils import va_to_phys
 
 
@@ -253,6 +253,7 @@ class HwEmuEngineMixin:
         # 但会触发输入、定时器和 IRQ 服务。
         add(0x80058CB4, self._on_no_event_poll_code)
         add(0x8005BCD4, self._on_wait_wake_code, trace_safe=True)
+        add(0x80008A60, self._on_idle_loop_entry_code, self.cp0_status_accelerator, trace_safe=True)
         add(0x80008A84, self._on_idle_loop_code, trace_safe=True)
         add(0x800087C4, self._on_timer_tick_code, trace_safe=True)
         add(0x80007E08, self._on_scheduler_poll_code, trace_safe=True)
@@ -274,6 +275,8 @@ class HwEmuEngineMixin:
             # MIPS delay slot 修正/加速：处理分支延迟槽里的 MMIO/RAM store。
             add(pc, self._on_hot_store_delay_branch_code)
         # Surface/LCD 绘图加速：等价实现固件绘图循环，同时标记 framebuffer dirty。
+        add(0x800B68C0, self._on_gui_putpixel_code, self.surface_pixel_accelerator)
+        add(GUI_PALETTE_COLOR_PC, self._on_gui_palette_color_code, self.surface_pixel_accelerator)
         add(0x8012BDF4, self._on_surface_setpixel_code, self.surface_pixel_accelerator)
         add(0x8012BEA4, self._on_surface_hline_code, self.surface_hline_accelerator)
         add(0x8012BF64, self._on_surface_color_span_code)
@@ -476,6 +479,66 @@ class HwEmuEngineMixin:
             if len(self.state.pcs) > 64:
                 del self.state.pcs[0]
 
+    def _has_unapplied_idle_injections(self) -> bool:
+        return (
+            any(not poke.applied for poke in self.scheduled_pokes)
+            or any(not call.applied for call in self.scheduled_calls)
+            or any(not sample.applied and sample.pc_hit is None for sample in self.touch_samples)
+            or any(not event.applied for event in self.gui_key_events)
+            or any(not event.applied for event in self.gui_touch_events)
+            or any(not event.applied for event in self.touch_controller_events)
+            or any(not event.applied for event in self.key_controller_events)
+            or bool(self.mmio_pulses)
+        )
+
+    def _native_bda_loaded_for_idle_fast_forward(self) -> bool:
+        word0 = self._read_u32_va_safe(0x81C00020) or 0
+        word1 = self._read_u32_va_safe(0x81C00024) or 0
+        return word0 not in (0, 0xFFFFFFFF) and word1 not in (0, 0xFFFFFFFF)
+
+    def _fast_forward_idle_to_irq_deadline(self, address: int) -> None:
+        if self.profile != "bbk9588-uboot":
+            return
+        if not self._native_bda_loaded_for_idle_fast_forward():
+            return
+        if self.intc_pending_mask != 0 or self.tcu_pending_mask != 0:
+            return
+        if self.interrupt_return_pc is not None or self.interrupt_suppress_pc_once is not None:
+            return
+        if self._has_unapplied_idle_injections():
+            return
+
+        now = self._timer_now()
+        deadlines: list[int] = []
+        if self.next_tcu_irq_insn is not None and ((self.tcu_enabled_mask & 0x3) & ~self.tcu_pending_mask):
+            deadlines.append(int(self.next_tcu_irq_insn))
+        if self.next_irq24_insn is None:
+            self.next_irq24_insn = now + self.irq24_period_insn
+        elif not (self.intc_pending_mask & (1 << 24)):
+            deadlines.append(int(self.next_irq24_insn))
+        if not deadlines:
+            return
+
+        target = min(deadlines)
+        delta = min(max(0, target - now), 1_000_000)
+        if delta <= 1:
+            return
+        if self.completed_step_timer:
+            self.timer_insn_count += delta
+        else:
+            self.state.insn_count += delta
+            self.timer_insn_count += delta
+        count = self._read_u32_va_safe(0x80473F0C)
+        if count is not None:
+            self._write_u32_va(0x80473F0C, (count + delta) & 0xFFFFFFFF)
+        self.idle_loop_hits += delta
+        self.idle_fast_forward_count += 1
+        self.idle_fast_forward_insns += delta
+        if self.idle_fast_forward_count <= 8 or self.idle_fast_forward_count % 1024 == 0:
+            self._trace_event("idle-fast-forward", pc=address, value=delta, size=self.idle_fast_forward_count, addr=target)
+        self._refresh_tcu_pending()
+        self._refresh_irq24_pending()
+
     def _on_wait_wake_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
             if not self.trace_pc_detail:
@@ -523,6 +586,7 @@ class HwEmuEngineMixin:
             return
         if self._apply_gui_ring_pump(address):
             return
+        self._fast_forward_idle_to_irq_deadline(address)
         if self._service_pending_irq_from_wait(address, 0x80008A8C):
             return
         if self.idle_stop_hits > 0 and self.idle_loop_hits >= self.idle_stop_hits:
@@ -536,6 +600,29 @@ class HwEmuEngineMixin:
         if self._is_mapped_ram_va(task_node + 0x34, 1):
             self._write_mem_va(task_node + 0x34, 1, flags)
         uc._reg_write(UC_MIPS_REG_PC, reg_type, 0x80008A8C)
+
+    def _on_idle_loop_entry_code(self, uc, address: int, size: int, user_data) -> None:
+        if self.trace_pcs:
+            if not self.trace_pc_detail:
+                counts = self.trace_pc_counts
+                if address in counts:
+                    counts[address] += 1
+            else:
+                self._trace_selected_pc(address)
+        if self._handle_interrupt_return(address):
+            return
+        if self._maybe_deliver_external_interrupt(address):
+            return
+        if self.profile != "bbk9588-uboot" or address != 0x80008A60:
+            self._on_code(uc, address, size, user_data)
+            return
+
+        count = self._read_u32_va_safe(0x80473F0C)
+        if count is not None:
+            self._write_u32_va(0x80473F0C, (count + 1) & 0xFFFFFFFF)
+        self.cp0_irq_disable_accel_count += 1
+        self.cp0_status_restore_accel_count += 1
+        uc._reg_write(UC_MIPS_REG_PC, self._mips_reg_type_u64, 0x80008A84)
 
     def _on_timer_tick_code(self, uc, address: int, size: int, user_data) -> None:
         if self.trace_pcs:
@@ -822,6 +909,12 @@ class HwEmuEngineMixin:
 
     def _on_surface_setpixel_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_surface_setpixel, uc, address, size, user_data)
+
+    def _on_gui_putpixel_code(self, uc, address: int, size: int, user_data) -> None:
+        self._on_direct_fast_code(self._handle_gui_putpixel, uc, address, size, user_data)
+
+    def _on_gui_palette_color_code(self, uc, address: int, size: int, user_data) -> None:
+        self._on_direct_fast_code(self._handle_gui_palette_color, uc, address, size, user_data)
 
     def _on_surface_hline_code(self, uc, address: int, size: int, user_data) -> None:
         self._on_direct_fast_code(self._handle_surface_hline, uc, address, size, user_data)
