@@ -533,6 +533,11 @@ class HwEmuStateMixin:
             "logo_strip_blit_accel_count": self.logo_strip_blit_accel_count,
             "halfword_copy_accel_count": self.halfword_copy_accel_count,
             "surface": {
+                "gui_putpixel_accel_count": self.surface_gui_putpixel_accel_count,
+                "gui_putpixel_cache_hits": getattr(self, "surface_gui_putpixel_cache_hits", 0),
+                "gui_putpixel_cache_misses": getattr(self, "surface_gui_putpixel_cache_misses", 0),
+                "gui_putpixel_cache_size": len(getattr(self, "surface_gui_putpixel_cache", {}) or {}),
+                "gui_palette_accel_count": getattr(self, "surface_gui_palette_accel_count", 0),
                 "setpixel_accel_count": self.surface_setpixel_accel_count,
                 "hline_accel_count": self.surface_hline_accel_count,
                 "color_span_accel_count": self.surface_color_span_accel_count,
@@ -547,6 +552,10 @@ class HwEmuStateMixin:
                     mode: events[-32:] for mode, events in sorted(self.surface_events_by_mode.items())
                 },
             },
+            "surface_gui_putpixel_accel_count": self.surface_gui_putpixel_accel_count,
+            "surface_gui_putpixel_cache_hits": getattr(self, "surface_gui_putpixel_cache_hits", 0),
+            "surface_gui_putpixel_cache_misses": getattr(self, "surface_gui_putpixel_cache_misses", 0),
+            "surface_gui_palette_accel_count": getattr(self, "surface_gui_palette_accel_count", 0),
             "surface_setpixel_accel_count": self.surface_setpixel_accel_count,
             "surface_hline_accel_count": self.surface_hline_accel_count,
             "surface_color_span_accel_count": self.surface_color_span_accel_count,
@@ -577,6 +586,10 @@ class HwEmuStateMixin:
             "recent_sadc_accesses": self.recent_sadc_accesses[-128:],
             "idle_loop_hits": self.idle_loop_hits,
             "app_idle_loop_hits": self.app_idle_loop_hits,
+            "idle_fast_forward": {
+                "count": self.idle_fast_forward_count,
+                "insns": self.idle_fast_forward_insns,
+            },
         }
 
     def _display_globals_snapshot(self) -> dict[str, object]:

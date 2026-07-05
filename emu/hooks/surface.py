@@ -67,6 +67,16 @@ SURFACE_TRANSPARENT_BLIT_PCS = frozenset(
     }
 )
 
+GUI_PUTPIXEL_PC = 0x800B68C0
+GUI_PALETTE_COLOR_PC = 0x800BD36C
+GUI_PALETTE_TABLE_VA = 0x80825640
+DISPLAY_SYSTEM_TABLE_VA = 0x80474030
+
+
+def _s32(value: int) -> int:
+    value &= 0xFFFFFFFF
+    return value - 0x100000000 if value & 0x80000000 else value
+
 
 class HwEmuSurfaceMixin:
     # Surface hook 由 `engine.py` 在固定绘图 PC 上调用。它们的作用是跳过
@@ -352,6 +362,219 @@ class HwEmuSurfaceMixin:
         if pitch == 0 or buffer_va == 0:
             return None
         return pitch, buffer_va
+
+    def _rect_contains_point(self, rect: int, x: int, y: int) -> bool | None:
+        data = self._read_block_va_safe(rect, 0x10)
+        if data is None or len(data) != 0x10:
+            return None
+        left, top, right, bottom = struct.unpack_from("<IIII", data)
+        return _s32(left) <= x < _s32(right) and _s32(top) <= y < _s32(bottom)
+
+    def _display_table_matches_gui_putpixel_fastpath(self) -> bool:
+        cached = getattr(self, "_gui_putpixel_display_table_ok", None)
+        if cached is True:
+            return True
+        table = self._read_u32_va_safe(DISPLAY_SYSTEM_TABLE_VA) or 0
+        if table == 0:
+            self._gui_putpixel_display_table_ok = False
+            return False
+        ok = (
+            (self._read_u32_va_safe(table + 0x44) or 0) == 0x800A8D50
+            and (self._read_u32_va_safe(table + 0x54) or 0) == 0x800A8E2C
+            and (self._read_u32_va_safe(table + 0x58) or 0) == 0x800A8E3C
+            and (self._read_u32_va_safe(table + 0xB0) or 0) == 0x800AA2A4
+        )
+        self._gui_putpixel_display_table_ok = ok
+        return ok
+
+    def _load_gui_putpixel_cache_entry(self, obj: int) -> dict[str, object] | None:
+        if not self._is_mapped_ram_va(obj, 0xD0):
+            return None
+        obj_data = self._read_block_va_safe(obj, 0xD0)
+        if obj_data is None or len(obj_data) != 0xD0:
+            return None
+        if struct.unpack_from("<I", obj_data, 0x04)[0] == 0x82:
+            return None
+        if struct.unpack_from("<I", obj_data, 0x70)[0] != 0:
+            return None
+
+        surface = struct.unpack_from("<I", obj_data, 0x10)[0]
+        if surface == 0 or not self._is_mapped_ram_va(surface, 0x70):
+            return None
+        surface_data = self._read_block_va_safe(surface, 0x70)
+        if surface_data is None or len(surface_data) != 0x70:
+            return None
+        if struct.unpack_from("<I", surface_data, 0x6C)[0] != 0x8012BDF4:
+            return None
+        width = struct.unpack_from("<I", surface_data, 0x00)[0]
+        height = struct.unpack_from("<I", surface_data, 0x04)[0]
+        pitch = struct.unpack_from("<I", surface_data, 0x18)[0]
+        buffer_va = struct.unpack_from("<I", surface_data, 0x44)[0]
+        if width == 0 or height == 0 or pitch == 0 or buffer_va == 0:
+            return None
+
+        child_rects: list[tuple[int, int, int, int]] = []
+        child = struct.unpack_from("<I", obj_data, 0xC0)[0]
+        seen = 0
+        while child != 0 and seen < 128:
+            child_data = self._read_block_va_safe(child, 0x14)
+            if child_data is None or len(child_data) != 0x14:
+                return None
+            left, top, right, bottom, child = struct.unpack_from("<IIIII", child_data)
+            child_rects.append((_s32(left), _s32(top), _s32(right), _s32(bottom)))
+            seen += 1
+        if child != 0:
+            return None
+
+        entry: dict[str, object] = {
+            "obj_sig": obj_data[0x04:0x74] + obj_data[0xB0:0xC4],
+            "surface_sig": surface_data[0x00:0x08] + surface_data[0x18:0x1C] + surface_data[0x44:0x48] + surface_data[0x6C:0x70],
+            "surface": surface,
+            "offset_x": _s32(struct.unpack_from("<I", obj_data, 0x40)[0]),
+            "offset_y": _s32(struct.unpack_from("<I", obj_data, 0x44)[0]),
+            "obj_rect": tuple(_s32(v) for v in struct.unpack_from("<IIII", obj_data, 0xB0)),
+            "child_rects": child_rects,
+            "width": int(width),
+            "height": int(height),
+            "pitch": int(pitch),
+            "buffer_va": int(buffer_va),
+            "mirror_config": self._lcd_mirror_config(),
+            "validate_count": 0,
+        }
+        cache = getattr(self, "surface_gui_putpixel_cache", None)
+        if cache is None:
+            cache = {}
+            self.surface_gui_putpixel_cache = cache
+        cache[obj] = entry
+        self.surface_gui_putpixel_cache_misses = getattr(self, "surface_gui_putpixel_cache_misses", 0) + 1
+        return entry
+
+    def _get_gui_putpixel_cache_entry(self, obj: int, *, force_validate: bool = False) -> dict[str, object] | None:
+        cache = getattr(self, "surface_gui_putpixel_cache", None)
+        entry = cache.get(obj) if cache is not None else None
+        if entry is None:
+            return self._load_gui_putpixel_cache_entry(obj)
+        validate_count = (int(entry.get("validate_count", 0)) + 1) & 0xFFFFFFFF
+        entry["validate_count"] = validate_count
+        if not force_validate and (validate_count & 0x3FF) != 0:
+            self.surface_gui_putpixel_cache_hits = getattr(self, "surface_gui_putpixel_cache_hits", 0) + 1
+            return entry
+        obj_data = self._read_block_va_safe(obj, 0xD0)
+        surface = int(entry["surface"])
+        surface_data = self._read_block_va_safe(surface, 0x70)
+        if (
+            obj_data is None
+            or len(obj_data) != 0xD0
+            or surface_data is None
+            or len(surface_data) != 0x70
+            or obj_data[0x04:0x74] + obj_data[0xB0:0xC4] != entry["obj_sig"]
+            or surface_data[0x00:0x08] + surface_data[0x18:0x1C] + surface_data[0x44:0x48] + surface_data[0x6C:0x70]
+            != entry["surface_sig"]
+        ):
+            return self._load_gui_putpixel_cache_entry(obj)
+        if force_validate:
+            entry["mirror_config"] = self._lcd_mirror_config()
+        self.surface_gui_putpixel_cache_hits = getattr(self, "surface_gui_putpixel_cache_hits", 0) + 1
+        return entry
+
+    def _handle_gui_putpixel(self, pc: int) -> bool:
+        # 系统 GUI 单点绘制加速：等价折叠 GUI+0x368 -> display clip ->
+        # surface setpixel 的常见路径。只在系统函数表和对象结构完全匹配时触发。
+        if not self.fast_hooks or not self.surface_pixel_accelerator or pc != GUI_PUTPIXEL_PC:
+            return False
+        uc = self.uc
+        reg_type = self._mips_reg_type_u64
+        obj = uc._reg_read(UC_MIPS_REG_4, reg_type, None) & 0xFFFFFFFF
+        if obj == 0:
+            return False
+        if not self._display_table_matches_gui_putpixel_fastpath():
+            return False
+        raw_x = _s32(uc._reg_read(UC_MIPS_REG_5, reg_type, None))
+        raw_y = _s32(uc._reg_read(UC_MIPS_REG_6, reg_type, None))
+        entry = self._get_gui_putpixel_cache_entry(obj, force_validate=(raw_x == 0))
+        if entry is None:
+            return False
+
+        x = raw_x
+        y = raw_y
+        x += int(entry["offset_x"])
+        y += int(entry["offset_y"])
+        color = uc._reg_read(UC_MIPS_REG_7, reg_type, None) & 0xFFFF
+        return_pc = uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF
+
+        should_draw = False
+        left, top, right, bottom = entry["obj_rect"]  # type: ignore[misc]
+        if left <= x < right and top <= y < bottom:
+            for cleft, ctop, cright, cbottom in entry["child_rects"]:  # type: ignore[assignment]
+                if cleft <= x < cright and ctop <= y < cbottom:
+                    should_draw = True
+                    break
+
+        if should_draw:
+            if x < 0 or y < 0:
+                uc._reg_write(UC_MIPS_REG_2, reg_type, 0)
+                uc._reg_write(UC_MIPS_REG_PC, reg_type, return_pc)
+                return True
+            width = int(entry["width"])
+            height = int(entry["height"])
+            if x >= width or y >= height:
+                uc._reg_write(UC_MIPS_REG_2, reg_type, 0)
+                uc._reg_write(UC_MIPS_REG_PC, reg_type, return_pc)
+                return True
+            pitch = int(entry["pitch"])
+            buffer_va = int(entry["buffer_va"])
+            dest = (buffer_va + y * pitch + x * 2) & 0xFFFFFFFF
+            if not self._is_mapped_ram_va(dest, 2):
+                return False
+            mirror_config = entry.get("mirror_config")
+            if mirror_config is not None:
+                self._mirror_lcd_pixel_with_config(mirror_config, pc, x, y, color)  # type: ignore[arg-type]
+            self.uc.mem_write(va_to_phys(dest), struct.pack("<H", color))
+            self._mark_framebuffer_dirty(pc, dest, 2, "surface-setpixel")
+            self.surface_gui_putpixel_accel_count += 1
+            self.surface_setpixel_accel_count += 1
+            self._record_surface_event(
+                "gui-putpixel",
+                pc,
+                surface=int(entry["surface"]),
+                buffer=buffer_va,
+                x=x,
+                y=y,
+                width=1,
+                height=1,
+                pitch=pitch,
+                color=color,
+                addr=dest,
+            )
+
+        uc._reg_write(UC_MIPS_REG_2, reg_type, 0)
+        uc._reg_write(UC_MIPS_REG_PC, reg_type, return_pc)
+        return True
+
+    def _handle_gui_palette_color(self, pc: int) -> bool:
+        # 系统 GUI 调色板查询：GUI+0x2fc。固件实现只做范围检查并从
+        # 17 项 RGB565/颜色表取值；失败时返回 -1。
+        if not self.fast_hooks or not self.surface_pixel_accelerator or pc != GUI_PALETTE_COLOR_PC:
+            return False
+        uc = self.uc
+        reg_type = self._mips_reg_type_u64
+        index = uc._reg_read(UC_MIPS_REG_4, reg_type, None) & 0xFFFFFFFF
+        return_pc = uc._reg_read(UC_MIPS_REG_31, reg_type, None) & 0xFFFFFFFF
+        if index >= 0x11:
+            value = 0xFFFFFFFF
+        else:
+            palette = getattr(self, "surface_gui_palette_cache", None)
+            if palette is None:
+                data = self._read_block_va_safe(GUI_PALETTE_TABLE_VA, 0x11 * 4)
+                if data is None or len(data) != 0x11 * 4:
+                    return False
+                palette = struct.unpack("<17I", data)
+                self.surface_gui_palette_cache = palette
+            value = int(palette[index]) & 0xFFFFFFFF
+        uc._reg_write(UC_MIPS_REG_2, reg_type, value)
+        uc._reg_write(UC_MIPS_REG_PC, reg_type, return_pc)
+        self.surface_gui_palette_accel_count += 1
+        return True
 
     def _handle_surface_setpixel(self, pc: int) -> bool:
         # 绘图加速 hook：等价实现固件 setpixel 函数。

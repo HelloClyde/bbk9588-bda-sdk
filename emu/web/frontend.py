@@ -614,14 +614,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--worker-slice-seconds",
         type=float,
-        default=0.02,
+        default=0.1,
         help="Wall-clock timeout for each frontend worker timeslice, keeping input/status responsive in tight loops.",
     )
     ap.add_argument(
         "--run-internal-chunk-steps",
         type=int,
-        default=100_000,
-        help="Maximum Unicorn emu_start count inside one frontend worker slice. Lower values improve yield points; 100000 matches the previous default.",
+        default=500_000,
+        help="Maximum Unicorn emu_start count inside one frontend worker slice. Lower values improve yield points.",
     )
     ap.add_argument(
         "--frame-push-min-interval",

@@ -334,6 +334,12 @@ class Bbk9588HwEmu(
         self.cache_scan_tail_accel_count = 0
         self.logo_strip_blit_accel_count = 0
         self.free_scan_accel_count = 0
+        self.surface_gui_putpixel_accel_count = 0
+        self.surface_gui_putpixel_cache_hits = 0
+        self.surface_gui_putpixel_cache_misses = 0
+        self.surface_gui_putpixel_cache: dict[int, dict[str, object]] = {}
+        self.surface_gui_palette_accel_count = 0
+        self.surface_gui_palette_cache: tuple[int, ...] | None = None
         self.surface_setpixel_accel_count = 0
         self.surface_hline_accel_count = 0
         self.surface_color_span_accel_count = 0
@@ -366,6 +372,8 @@ class Bbk9588HwEmu(
         self.preexecuted_jr_delay_pc: int | None = None
         self.idle_loop_hits = 0
         self.app_idle_loop_hits = 0
+        self.idle_fast_forward_count = 0
+        self.idle_fast_forward_insns = 0
         self.wait_wake_count = 0
         self.timer_tick_count = 0
         self.gui_timer_tick_count = 0
