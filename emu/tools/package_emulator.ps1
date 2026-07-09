@@ -1,0 +1,147 @@
+param(
+    [string]$Version = "",
+    [string]$PackageName = "bbk9588-emulator",
+    [string]$OutputDir = "",
+    [string]$StagingDir = ""
+)
+
+$ErrorActionPreference = "Stop"
+
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+if (-not $OutputDir) {
+    $OutputDir = Join-Path $RepoRoot "build\dist"
+}
+if (-not $StagingDir) {
+    $StagingDir = Join-Path $RepoRoot "build\package"
+}
+
+if (-not $Version) {
+    $Version = $env:GITHUB_REF_NAME
+}
+if (-not $Version) {
+    try {
+        $Version = (git -C $RepoRoot rev-parse --short HEAD).Trim()
+    } catch {
+        $Version = "local"
+    }
+}
+
+$SafeVersion = ($Version -replace '[^A-Za-z0-9._-]', '-').Trim("-")
+if (-not $SafeVersion) {
+    $SafeVersion = "local"
+}
+
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$StagingDir = [System.IO.Path]::GetFullPath($StagingDir)
+$BuildRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "build"))
+foreach ($path in @($OutputDir, $StagingDir)) {
+    if (-not $path.StartsWith($BuildRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to write package output outside build/: $path"
+    }
+}
+
+$PackageRoot = Join-Path $StagingDir "$PackageName-$SafeVersion"
+$ZipPath = Join-Path $OutputDir "$PackageName-$SafeVersion.zip"
+$ShaPath = "$ZipPath.sha256"
+
+if (Test-Path -LiteralPath $PackageRoot) {
+    Remove-Item -LiteralPath $PackageRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $PackageRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+
+foreach ($file in @("README.md", "CONTRIBUTING.md", "DATA_NOTICE.md", "requirements.txt")) {
+    $source = Join-Path $RepoRoot $file
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $PackageRoot $file)
+    }
+}
+
+Copy-Item -LiteralPath (Join-Path $RepoRoot "emu") -Destination (Join-Path $PackageRoot "emu") -Recurse
+
+$excludedDirectoryNames = @(
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist"
+)
+Get-ChildItem -LiteralPath $PackageRoot -Directory -Recurse -Force | Where-Object {
+    $excludedDirectoryNames -contains $_.Name
+} | Sort-Object FullName -Descending | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+}
+
+Get-ChildItem -LiteralPath $PackageRoot -Directory -Recurse -Force -Filter "__pycache__" |
+    Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $PackageRoot -File -Recurse -Force | Where-Object {
+    $_.Extension.ToLowerInvariant() -in @(".pyc", ".pyo")
+} |
+    Remove-Item -Force
+
+$forbiddenExtensions = @(
+    ".a",
+    ".bda",
+    ".bin",
+    ".dba",
+    ".dll",
+    ".dlx",
+    ".dylib",
+    ".elf",
+    ".exe",
+    ".lib",
+    ".map",
+    ".o",
+    ".obj",
+    ".pdb",
+    ".so"
+)
+$forbidden = Get-ChildItem -LiteralPath $PackageRoot -File -Recurse -Force | Where-Object {
+    $forbiddenExtensions -contains $_.Extension.ToLowerInvariant()
+}
+if ($forbidden) {
+    $list = ($forbidden | Select-Object -First 20 | ForEach-Object { $_.FullName }) -join "`n"
+    throw "Package contains firmware/build binary files:`n$list"
+}
+
+$manifestPath = Join-Path $PackageRoot "MANIFEST.txt"
+$files = Get-ChildItem -LiteralPath $PackageRoot -File -Recurse -Force | Sort-Object FullName
+$packageRootPrefix = $PackageRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+$manifest = foreach ($file in $files) {
+    $fullName = [System.IO.Path]::GetFullPath($file.FullName)
+    if (-not $fullName.StartsWith($packageRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Package manifest path escaped package root: $fullName"
+    }
+    $relative = $fullName.Substring($packageRootPrefix.Length).Replace("\", "/")
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+    "$hash  $relative"
+}
+$manifest | Set-Content -LiteralPath $manifestPath -Encoding ascii
+
+if (Test-Path -LiteralPath $ZipPath) {
+    Remove-Item -LiteralPath $ZipPath -Force
+}
+if (Test-Path -LiteralPath $ShaPath) {
+    Remove-Item -LiteralPath $ShaPath -Force
+}
+
+Compress-Archive -LiteralPath $PackageRoot -DestinationPath $ZipPath -CompressionLevel Optimal
+$zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ZipPath).Hash.ToLowerInvariant()
+"$zipHash  $(Split-Path -Leaf $ZipPath)" | Set-Content -LiteralPath $ShaPath -Encoding ascii
+
+$result = [ordered]@{
+    version = $SafeVersion
+    package_root = $PackageRoot
+    zip_path = $ZipPath
+    sha256_path = $ShaPath
+    artifact_name = "$PackageName-$SafeVersion"
+    sha256 = $zipHash
+}
+
+if ($env:GITHUB_OUTPUT) {
+    foreach ($key in $result.Keys) {
+        "$key=$($result[$key])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+    }
+}
+
+$result | ConvertTo-Json -Depth 3

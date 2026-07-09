@@ -138,6 +138,29 @@ Run a bounded smoke launch:
 python .\emu\qemu_app.py --boot-mode uboot --timeout 10
 ```
 
+## Package and Release
+
+Create a local emulator package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\emu\tools\package_emulator.ps1 -Version emu-local
+```
+
+Default output:
+
+```text
+build/dist/bbk9588-emulator-emu-local.zip
+build/dist/bbk9588-emulator-emu-local.zip.sha256
+```
+
+GitHub Actions publishes the same package to the repository Releases page from
+`.github/workflows/release-emulator.yml`.
+
+- Push a tag named `emu-v*` or `v*` to publish automatically.
+- Or run the `Release emulator` workflow manually and provide a version.
+- Release archives intentionally exclude dumped firmware, NAND images, BDA
+  applications, and local build output.
+
 ## Current Status
 
 The QEMU backend reaches the system UI, supports framebuffer output through the

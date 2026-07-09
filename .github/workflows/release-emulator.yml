@@ -1,0 +1,147 @@
+name: Release emulator
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release/package version, for example emu-v0.1.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+      - "emu-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package emulator
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python and PowerShell files
+        run: |
+          Get-ChildItem emu -Filter *.py -Recurse | ForEach-Object {
+            python -m py_compile $_.FullName
+          }
+
+          foreach ($script in @(
+            "emu/tools/build_runtime_images.ps1",
+            "emu/tools/package_emulator.ps1",
+            "emu/qemu/scripts/build_qemu_windows.ps1"
+          )) {
+            $tokens = $null
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors) {
+              $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
+              throw "PowerShell parse failed: $script"
+            }
+          }
+
+      - name: Package emulator
+        id: package
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          if (-not $version) {
+            $version = "${{ github.ref_name }}"
+          }
+          ./emu/tools/package_emulator.ps1 -Version $version
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            ${{ steps.package.outputs.zip_path }}
+            ${{ steps.package.outputs.sha256_path }}
+          if-no-files-found: error
+
+      - name: Write release notes
+        id: notes
+        run: |
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          $sha256Line = Get-Content -LiteralPath "${{ steps.package.outputs.sha256_path }}"
+          $notes = @(
+            "BBK 9588 emulator package.",
+            "",
+            "Contents:",
+            "- QEMU system-emulation Python launcher and web frontend.",
+            "- QEMU bbk9588 source overlay, patch, and Windows build scripts.",
+            "- FAT/NAND image construction tools and emulator setup docs.",
+            "",
+            "Not included:",
+            "- Dumped firmware, NAND images, BDA applications, or local build output.",
+            "",
+            "SHA256:",
+            '```',
+            $sha256Line,
+            '```'
+          )
+          $notes | Set-Content -LiteralPath $notesPath -Encoding utf8
+          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          function Invoke-Gh {
+            & gh @args
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh failed with exit code ${LASTEXITCODE}: gh $($args -join ' ')"
+            }
+          }
+
+          $version = "${{ steps.package.outputs.version }}"
+          $tag = "${{ github.ref_name }}"
+          if ("${{ github.ref_type }}" -ne "tag") {
+            $tag = $version
+          }
+
+          $title = "BBK 9588 Emulator $version"
+          $zipPath = "${{ steps.package.outputs.zip_path }}"
+          $shaPath = "${{ steps.package.outputs.sha256_path }}"
+          $notesPath = "${{ steps.notes.outputs.path }}"
+
+          $releaseExists = $false
+          $oldErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $viewExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $oldErrorActionPreference
+          if ($viewExitCode -eq 0) {
+            $releaseExists = $true
+          }
+
+          if ($releaseExists) {
+            Invoke-Gh release upload $tag $zipPath $shaPath --clobber --repo $env:GITHUB_REPOSITORY
+            Invoke-Gh release edit $tag --title $title --notes-file $notesPath --repo $env:GITHUB_REPOSITORY
+          } else {
+            if ("${{ github.event.inputs.prerelease }}" -eq "true") {
+              Invoke-Gh release create $tag $zipPath $shaPath --title $title --notes-file $notesPath --target "${{ github.sha }}" --repo $env:GITHUB_REPOSITORY --prerelease
+            } else {
+              Invoke-Gh release create $tag $zipPath $shaPath --title $title --notes-file $notesPath --target "${{ github.sha }}" --repo $env:GITHUB_REPOSITORY
+            }
+          }
