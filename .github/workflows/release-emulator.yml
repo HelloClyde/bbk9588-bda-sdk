@@ -64,6 +64,34 @@ jobs:
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-capstone
 
+      - name: Locate MSYS2 UCRT64 bash
+        run: |
+          $candidates = @()
+          $candidates += Get-Command -All bash.exe -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Source
+          if ($env:RUNNER_TEMP) {
+            $candidates += Join-Path $env:RUNNER_TEMP "msys64\usr\bin\bash.exe"
+          }
+          $candidates += "C:\msys64\usr\bin\bash.exe"
+
+          $candidates = $candidates |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+            Sort-Object -Unique
+
+          foreach ($candidate in $candidates) {
+            $msysUsrDir = Split-Path -Parent (Split-Path -Parent $candidate)
+            $msysRoot = Split-Path -Parent $msysUsrDir
+            $gcc = Join-Path $msysRoot "ucrt64\bin\gcc.exe"
+            if (Test-Path -LiteralPath $gcc) {
+              Write-Host "MSYS2_BASH=$candidate"
+              "MSYS2_BASH=$candidate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              return
+            }
+            Write-Host "skip MSYS2 candidate without UCRT gcc: $candidate"
+          }
+
+          throw "could not locate MSYS2 UCRT64 bash with gcc.exe; candidates: $($candidates -join ', ')"
+
       - name: Validate Python and PowerShell files
         run: |
           Get-ChildItem emu -Filter *.py -Recurse | ForEach-Object {
@@ -112,7 +140,7 @@ jobs:
           $sourceRootPosix = Convert-ToMsysPath $sourceRoot
           $archivePosix = Convert-ToMsysPath $archive
           $sourceTop = "qemu-${env:QEMU_VERSION}"
-          & C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; tar -C '$sourceRootPosix' --exclude='$sourceTop/roms' --exclude='$sourceTop/tests' -xf '$archivePosix'"
+          & $env:MSYS2_BASH -lc "set -euo pipefail; tar -C '$sourceRootPosix' --exclude='$sourceTop/roms' --exclude='$sourceTop/tests' -xf '$archivePosix'"
           if ($LASTEXITCODE -ne 0) {
             throw "failed to extract QEMU source archive"
           }
@@ -125,7 +153,7 @@ jobs:
           ./emu/qemu/scripts/build_qemu_windows.ps1 `
             -QemuSource $qemuSource `
             -BuildDir $qemuBuild `
-            -MsysBash C:\msys64\usr\bin\bash.exe `
+            -MsysBash $env:MSYS2_BASH `
             -UseOverlay `
             -Jobs $jobs
 
@@ -138,7 +166,7 @@ jobs:
             -QemuExe $qemuExe `
             -RuntimeDir $runtimeDir `
             -OutputExeName bbk9588-qemu-system-mipsel.exe `
-            -MsysBash C:\msys64\usr\bin\bash.exe
+            -MsysBash $env:MSYS2_BASH
 
       - name: Probe packaged emulator binary
         run: |
