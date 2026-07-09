@@ -140,7 +140,7 @@ jobs:
           $sourceRootPosix = Convert-ToMsysPath $sourceRoot
           $archivePosix = Convert-ToMsysPath $archive
           $sourceTop = "qemu-${env:QEMU_VERSION}"
-          & $env:MSYS2_BASH -lc "set -euo pipefail; tar -C '$sourceRootPosix' --exclude='$sourceTop/roms' --exclude='$sourceTop/tests' -xf '$archivePosix'"
+          & $env:MSYS2_BASH -lc "set -euo pipefail; tar -C '$sourceRootPosix' --exclude='$sourceTop/roms' --exclude='$sourceTop/tests/lcitool' -xf '$archivePosix'"
           if ($LASTEXITCODE -ne 0) {
             throw "failed to extract QEMU source archive"
           }
