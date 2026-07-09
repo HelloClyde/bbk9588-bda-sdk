@@ -1,11 +1,10 @@
-# Firmware and Runtime Images
+# 固件与运行时镜像
 
-The repository intentionally does not publish dumped firmware, NAND images, or
-commercial application resources. Keep those files local and ignored by Git.
+公开仓库不发布固件、NAND 镜像或商业应用资源。用户和开发者需要自行准备本地 dump。
 
-## Expected Local Layout
+## 本地目录约定
 
-From the repository root:
+从仓库根目录或 release 包根目录看，应放置：
 
 ```text
 系统/
@@ -19,20 +18,19 @@ From the repository root:
   ...
 ```
 
-The Python launchers search the workspace for `C200.bin` and
-`u_boot_9588_4740.bin`. Non-ASCII paths are copied into
-`build/qemu_payloads/` before QEMU launch because QEMU command-line path
-handling is more reliable with ASCII paths on Windows.
+Python 启动器会在工作区中查找 `C200.bin` 和 `u_boot_9588_4740.bin`。如果路径包含中文，
+启动器会把 payload 复制到 `build/qemu_payloads/`，避免 Windows 下 QEMU 命令行路径处理
+不稳定。
 
-## Build FAT and NAND Images
+## 构建 FAT 与 NAND
 
-Use the wrapper:
+推荐使用 wrapper：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\emu\tools\build_runtime_images.ps1
 ```
 
-Manual equivalent:
+等价的手动步骤：
 
 ```powershell
 python .\emu\tools\make_fat16_image.py `
@@ -51,23 +49,33 @@ python .\emu\tools\stamp_ftl_oob.py `
   --fat-page-base 0x1c40
 ```
 
-The final `_ftloob` image is the one used by the QEMU frontend by default.
+前端默认使用最终的 `_ftloob` 镜像：
 
-## Runtime Copy Behavior
+```text
+build/bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin
+```
 
-QEMU receives a writable copy of the NAND image under
-`build/qemu_nand_runs/`. The source image in `build/` is not mutated during a
-normal frontend session.
+## 运行时写入策略
 
-## GitHub Publishing Rule
+QEMU 前端会把源 NAND 镜像复制到：
 
-Do not commit:
+```text
+build/qemu_nand_runs/
+```
+
+普通前端会话不会直接修改 `build/` 下的源镜像。
+
+## 发布规则
+
+不要提交：
 
 - `系统/`
 - `应用/`
 - `build/`
 - `*.bin`
 - `*.bda`
-- generated screenshots or traces
+- `*.dba`
+- `*.dlx`
+- 批量截图、trace、完整反汇编和临时分析输出
 
-The `.gitignore` already excludes these paths and extensions.
+`.gitignore` 已排除这些路径和扩展名。

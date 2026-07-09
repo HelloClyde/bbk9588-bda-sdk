@@ -1,111 +1,68 @@
-# BBK 9588 Emulator
+# BBK 9588 硬件模拟器
 
-This directory contains the emulator runtime that should be published with the
-project:
+`emu/` 是 BBK 9588 的 QEMU system emulation 实现。目标是让真实系统镜像在自定义
+`bbk9588` machine 上运行，并通过本地 Web 前端显示 LCD、发送触摸和按键事件。
 
-- Python launcher and Web frontend for the emulator.
-- QEMU process backend for the `bbk9588` system machine.
-- Image-building tools for the local firmware/resource dump.
-- QEMU patch and build scripts needed to reproduce the custom
-  `qemu-system-mipsel.exe`.
-- User-facing docs for setup, images, launch commands, and current limits.
+公开仓库和 release 包不包含固件、NAND 镜像或应用资源。所有 `系统/`、`应用/`、
+`build/` 下的数据都应保持本地化。
 
-The public repository should not include dumped firmware, NAND images, or BDA
-applications. Those files stay under ignored local paths such as `系统/`,
-`应用/`, and `build/`.
+## 用户路径：下载 release 包
 
-## Layout
+Release 包中已经包含：
+
+- `bin/bbk9588-qemu-system-mipsel.exe` 和 QEMU runtime DLL。
+- `start-web.cmd` / `start-web.ps1`。
+- Web 前端 `emu/web/`。
+- NAND/FAT 镜像构建工具 `emu/tools/`。
+- GitHub Actions 构建时附带的 `python/` runtime。
+
+把本地 dump 放在 release 包根目录：
 
 ```text
-emu/
-  app.py                         Web frontend entry point
-  qemu_app.py                    QEMU command/probe entry point
-  core/                          Shared framebuffer helpers
-  web/                           Local browser frontend and HTTP API
-  tools/                         FAT/NAND image construction tools
-  qemu/
-    system.py                    QEMU process backend and command builder
-    source-overlay/              Full modified QEMU source files
-    patches/                     Patch for the custom QEMU machine
-    scripts/                     QEMU patch/build scripts
-    README.md                    QEMU build and integration guide
-  docs/
-    images.md                    Firmware/resource image preparation guide
+系统/
+  数据/
+    C200.bin
+    u_boot_9588_4740.bin
+应用/
 ```
 
-## Requirements
+然后双击 `start-web.cmd`，或运行：
 
-- Windows 10/11.
-- Python 3.11+.
-- MSYS2 UCRT64 toolchain for building custom QEMU.
-- A QEMU source checkout matching the patch target. Current patch target:
-  QEMU `v11.0.0`.
-- Local device dump files:
-  - `系统/数据/C200.bin`
-  - `系统/数据/u_boot_9588_4740.bin`
-  - `系统/` and `应用/` resource trees
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start-web.ps1
+```
 
-Install Python dependencies from the repository root:
+浏览器入口：
+
+```text
+http://127.0.0.1:8000/
+```
+
+## 开发路径：源码仓库运行
+
+安装 Python 依赖：
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-## Build QEMU
+准备本地 dump：
 
-Apply the bundled QEMU patch:
-
-```powershell
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src
+```text
+系统/
+  数据/
+    C200.bin
+    u_boot_9588_4740.bin
+应用/
 ```
 
-The same modified files are also stored as a full source overlay under
-`emu/qemu/source-overlay/`. To install by copying the overlay instead of using
-`git apply`:
-
-```powershell
-python .\emu\qemu\scripts\install_qemu_overlay.py --qemu-source E:\qemu-src
-```
-
-Build the patched `qemu-system-mipsel.exe` on Windows/MSYS2:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.ps1 `
-  -QemuSource E:\qemu-src `
-  -BuildDir E:\qemu-src\build-bbk9588-win
-```
-
-The launcher also searches `E:\qemu-src\build-bbk9588-win` automatically, so
-the default Web command works after a successful build.
-
-See [qemu/README.md](qemu/README.md) for details.
-
-## Build Runtime Images
-
-The QEMU backend expects a disposable NAND image generated from the local
-firmware/resource dump. Build it from the repository root:
+构建 runtime NAND：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\emu\tools\build_runtime_images.ps1
 ```
 
-Default output:
-
-```text
-build/bbk9588_fat_page1c40.img
-build/bbk9588_nand_c200_fat_page1c40.bin
-build/bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin
-```
-
-The frontend uses
-`build/bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin` when present.
-
-See [docs/images.md](docs/images.md) for the source file layout and manual
-commands.
-
-## Run Web Frontend
-
-Start the QEMU Web frontend:
+构建或指定自定义 QEMU 后启动 Web 前端：
 
 ```powershell
 python -m emu.web.frontend `
@@ -115,66 +72,88 @@ python -m emu.web.frontend `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
-Then open:
+## 目录结构
 
 ```text
-http://127.0.0.1:8000
+emu/
+  app.py                         Web 前端快捷入口
+  qemu_app.py                    QEMU 命令行 probe / dry-run 入口
+  core/                          framebuffer、PNG 等共享工具
+  web/                           本地 HTTP/WebSocket 前端
+  tools/                         FAT/NAND 镜像、runtime 收集、release 校验工具
+  packaging/                     release 包根目录脚本和 README 模板
+  docs/                          架构、镜像、开发流程文档
+  test/                          单元测试和 Web smoke 脚本
+  qemu/
+    system.py                    QEMU 进程后端、命令构建、监控和设备交互
+    source-overlay/              覆盖到 QEMU 11.0.0 的修改源码
+    patches/                     对应 patch
+    scripts/                     QEMU overlay/patch/build 脚本
 ```
 
-For diagnostics, add QEMU machine options with repeated
-`--qemu-machine-option name=value`.
+更多说明：
 
-## Probe QEMU Without Web
+- [docs/architecture.md](docs/architecture.md)：模拟器组件边界。
+- [docs/images.md](docs/images.md)：本地 dump 与 NAND/FAT 镜像。
+- [docs/development.md](docs/development.md)：代码规范、测试和发布检查。
+- [qemu/README.md](qemu/README.md)：QEMU overlay 和 Windows 构建。
 
-Print the generated QEMU command:
+## 构建 QEMU
+
+源码仓库不 vendoring 完整 QEMU 树，只保存 overlay 和 patch。当前目标版本：
+
+```text
+QEMU 11.0.0
+```
+
+本地构建：
 
 ```powershell
-python .\emu\qemu_app.py --boot-mode uboot --dry-run
+powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.ps1 `
+  -QemuSource E:\qemu-src `
+  -BuildDir E:\qemu-src\build-bbk9588-win `
+  -UseOverlay
 ```
 
-Run a bounded smoke launch:
+GitHub Actions release workflow 会自动下载 QEMU 11.0.0、应用 overlay、构建
+`qemu-system-mipsel.exe`，并在 release 包中改名为：
 
-```powershell
-python .\emu\qemu_app.py --boot-mode uboot --timeout 10
+```text
+bin/bbk9588-qemu-system-mipsel.exe
 ```
 
-## Package and Release
+## 打包与发布
 
-Create a local emulator package:
+本地打包源码 profile：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\emu\tools\package_emulator.ps1 -Version emu-local
 ```
 
-Default output:
+GitHub release 包由 `.github/workflows/release-emulator.yml` 生成。触发方式：
+
+- push tag：`emu-v*` 或 `v*`
+- workflow 进入默认分支后，也可以手动运行 `Release emulator`
+
+打包完成后会生成：
 
 ```text
-build/dist/bbk9588-emulator-emu-local.zip
-build/dist/bbk9588-emulator-emu-local.zip.sha256
+build/dist/bbk9588-emulator-版本.zip
+build/dist/bbk9588-emulator-版本.zip.sha256
 ```
 
-GitHub Actions publishes the same package to the repository Releases page from
-`.github/workflows/release-emulator.yml`.
+release runtime 包会用校验脚本检查结构：
 
-- Push a tag named `emu-v*` or `v*` to publish automatically.
-- Or run the `Release emulator` workflow manually and provide a version.
-- The workflow downloads QEMU 11.0.0, applies the bbk9588 overlay, builds
-  `qemu-system-mipsel.exe`, renames the packaged binary to
-  `bin/bbk9588-qemu-system-mipsel.exe`, and copies its runtime DLLs.
-- Release archives include the web frontend, root `start-web.cmd` /
-  `start-web.ps1` launchers, and a bundled Python runtime when built by
-  GitHub Actions.
-- Release archives intentionally exclude dumped firmware, NAND images, BDA
-  applications, and local build output.
+```powershell
+python .\emu\tools\validate_release_package.py .\build\dist\bbk9588-emulator-版本.zip --runtime
+```
 
-## Current Status
+## 当前状态
 
-The QEMU backend reaches the system UI, supports framebuffer output through the
-QEMU frame chardev, accepts frontend touch/key input, and can launch multiple
-built-in applications. It is still an in-progress SoC model:
+QEMU 后端已经能进入系统 UI，支持 framebuffer 输出、Web 前端触摸/按键输入，并能打开多
+个内置应用。仍在推进的部分：
 
-- Some menu icon/resource rendering paths are still imperfect.
-- The storage/NAND/FTL/FAT/cache model needs more work before all app resource
-  paths match real hardware.
-- Diagnostic machine properties and TCG helpers remain in the QEMU patch, but
-  the default launcher path should not rely on Python/GDB firmware hooks.
+- NAND/FTL/FAT/cache 路径仍需继续靠硬件模型完善。
+- 部分主菜单资源渲染路径仍有兼容性问题。
+- 诊断 machine property 和 TCG helper 仍保留在 QEMU patch 中，但默认运行路径不应依赖
+  Python/GDB 固件 hook。

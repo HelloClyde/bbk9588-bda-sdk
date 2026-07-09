@@ -6928,7 +6928,11 @@ def find_qemu(executable: str = DEFAULT_QEMU_EXECUTABLE) -> str | None:
     names = [executable]
     if not executable.lower().endswith(".exe"):
         names.append(executable + ".exe")
+    if executable == DEFAULT_QEMU_EXECUTABLE:
+        names.append("bbk9588-qemu-system-mipsel.exe")
+    package_root = Path(__file__).resolve().parents[2]
     roots = [
+        package_root / "bin",
         Path("E:/qemu-src/build-bbk9588-win"),
         Path("E:/qemu-src/build"),
         Path("E:/qemu"),

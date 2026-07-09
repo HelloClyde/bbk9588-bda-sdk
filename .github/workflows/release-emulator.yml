@@ -163,6 +163,10 @@ jobs:
             -QemuRuntimeDir "${{ steps.qemu-runtime.outputs.runtime_dir }}" `
             -PythonRoot $pythonRoot
 
+      - name: Validate release package
+        run: |
+          python ./emu/tools/validate_release_package.py "${{ steps.package.outputs.zip_path }}" --runtime
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:

@@ -1,71 +1,42 @@
-# QEMU bbk9588 Machine
+# QEMU `bbk9588` Machine
 
-The QEMU backend uses a custom `bbk9588` MIPS system machine. The project does
-not vendor the full QEMU tree, but it does include the complete modified source
-files as an overlay plus a patch that can be applied to a clean QEMU checkout.
-
-Source overlay:
+模拟器使用自定义 QEMU `bbk9588` MIPS system machine。仓库不包含完整 QEMU 源码，只保存：
 
 ```text
-emu/qemu/source-overlay/
-```
-
-Patch file:
-
-```text
+emu/qemu/source-overlay/              完整修改后的覆盖文件
 emu/qemu/patches/qemu-v11.0.0-bbk9588.patch
 ```
 
-Patch target:
+目标 QEMU 版本：
 
 ```text
-QEMU v11.0.0
+QEMU 11.0.0
 ```
 
-## Apply Patch
+## 安装 Overlay
 
-```powershell
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src
-```
-
-## Install Source Overlay
-
-The overlay copies the full modified files into a QEMU checkout:
+把 overlay 复制进一个干净 QEMU checkout：
 
 ```powershell
 python .\emu\qemu\scripts\install_qemu_overlay.py --qemu-source E:\qemu-src
 ```
 
-Check whether a checkout already matches the overlay:
+检查 checkout 是否已经匹配 overlay：
 
 ```powershell
 python .\emu\qemu\scripts\install_qemu_overlay.py --qemu-source E:\qemu-src --check
 ```
 
-Dry check only:
+也可以使用 patch：
 
 ```powershell
 python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src --check
+python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src
 ```
 
-Reverse check/remove:
+## Windows 构建
 
-```powershell
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src --reverse --check
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src --reverse
-```
-
-## Build on Windows
-
-Install MSYS2 and UCRT64 dependencies, then run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.ps1 `
-  -QemuSource E:\qemu-src `
-  -BuildDir E:\qemu-src\build-bbk9588-win
-```
-
-To build after installing the source overlay instead of applying the patch:
+安装 MSYS2 UCRT64 依赖后运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.ps1 `
@@ -74,29 +45,21 @@ powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.p
   -UseOverlay
 ```
 
-The script runs QEMU configure if the build directory does not already contain
-`build.ninja`, then builds `qemu-system-mipsel.exe`.
-
-Default output:
+脚本会在缺少 `build.ninja` 时运行 QEMU configure，然后构建：
 
 ```text
 E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
-## Launcher Integration
-
-`emu.qemu.system.find_qemu()` searches these locations before `PATH`:
+Release workflow 会把它复制并改名为：
 
 ```text
-E:\qemu-src\build-bbk9588-win
-E:\qemu-src\build
-E:\qemu
-C:\Program Files\qemu
-C:\Program Files (x86)\qemu
-%USERPROFILE%\AppData\Local\qemu
+bin/bbk9588-qemu-system-mipsel.exe
 ```
 
-The Web frontend should usually be started with:
+## 前端集成
+
+开发环境启动：
 
 ```powershell
 python -m emu.web.frontend `
@@ -104,12 +67,21 @@ python -m emu.web.frontend `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
-## Notes
+release 包启动脚本会显式传入：
 
-- `hw/mips/bbk9588.c` models the board, RAM, firmware loading, LCD/frame
-  chardev, input chardev, NAND/MSC/FTL-facing storage behavior, timers,
-  interrupts, GPIO/SADC touch state, and compatibility diagnostics.
-- The patch also contains small target/mips instrumentation/helper changes used
-  by the current machine model and diagnostics.
-- Machine options can be passed through the frontend with repeated
-  `--qemu-machine-option`.
+```text
+bin/bbk9588-qemu-system-mipsel.exe
+```
+
+## 模型范围
+
+`hw/mips/bbk9588.c` 当前负责：
+
+- RAM 与 firmware 加载。
+- LCD/frame chardev。
+- input chardev。
+- NAND/MSC/FTL 相关存储行为。
+- timer、interrupt、GPIO/SADC touch 状态。
+- 兼容性诊断寄存器和 machine property。
+
+patch 还包含少量 `target/mips` 侧 instrumentation/helper，用于当前 machine model 和诊断。

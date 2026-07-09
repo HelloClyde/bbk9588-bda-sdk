@@ -1,24 +1,26 @@
-# Data Notice
+# 数据发布边界
 
-This repository is intended to contain reverse-engineering notes, tools, SDK
-experiments, and source examples only.
+本仓库只应包含源码、脚本、补丁、文档、示例和人工整理后的逆向结论。
 
-Do not publish original BBK firmware, dictionary databases, application BDAs,
-DLX resources, audio files, bundled toolchains, or other copyrighted device
-dump contents unless you have the rights to redistribute them.
+不要发布或提交以下内容，除非你明确拥有再分发权利：
 
-The local workspace used during research may contain these directories:
+- BBK 原始固件、NAND 镜像、bootloader、系统数据库和字典数据。
+- 商业应用 BDA、DBA、DLX、图片、音频、视频和其它资源文件。
+- 从设备 dump 直接复制出来的完整目录。
+- 自动生成的 BDA/DLX、完整反汇编、运行 trace、截图批量输出。
+- 下载的工具链压缩包和解压后的工具链目录。
+
+本地研究目录约定：
 
 ```text
 系统/
 应用/
 build/
+tools/g++-.../
 ```
 
-They are ignored by `.gitignore`. Scripts and notes may refer to paths under
-those directories, but users should provide their own local dump.
+这些路径已由 `.gitignore` 排除。脚本和文档可以引用这些路径，但公开仓库、workflow
+产物和 release 包不能包含其中的数据。
 
-The setup script can download a public MIPS little-endian toolchain archive
-under `tools/` so the SDK can build native BDA files locally. Do not commit the
-downloaded archive or the extracted toolchain directory; both are generated
-local state.
+Release 包只发布可复现的模拟器 runtime：编译好的 bbk9588 QEMU、Web 前端、启动脚本、
+Python runtime 和镜像构建工具。用户需要自行把合法来源的本地 dump 放到 release 包旁边。

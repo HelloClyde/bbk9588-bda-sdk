@@ -103,10 +103,14 @@ $allowedBinaryRoots = New-Object System.Collections.Generic.List[string]
 if ($QemuRuntimeDir) {
     foreach ($relative in @(
         "emu\packaging",
+        "emu\qemu\README.md",
+        "emu\qemu\check_source_tree.py",
         "emu\qemu\patches",
         "emu\qemu\scripts",
         "emu\qemu\source-overlay",
-        "emu\test"
+        "emu\test",
+        "emu\tools\collect_qemu_runtime.ps1",
+        "emu\tools\package_emulator.ps1"
     )) {
         $path = Join-Path $PackageRoot $relative
         if (Test-Path -LiteralPath $path) {

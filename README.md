@@ -1,94 +1,61 @@
-﻿# BBK 9588 Native BDA SDK and Toolchain
+# BBK 9588 Native BDA SDK 与硬件模拟器
 
-An experimental native `*.bda` SDK and build toolchain for the BBK / Bubugao
-9588 learning device, with reverse-engineering notes used to discover the app
-format and system APIs.
+这是一个面向步步高 / BBK 9588 学习机的逆向研究项目，包含两条主线：
 
-The project currently covers:
+- 原生 `*.bda` 应用格式、DLX 资源格式、系统 API 和实验性 MIPS SDK。
+- 基于 QEMU system emulation 的硬件模拟器，用真实系统镜像启动 Web 前端。
 
-- native BDA header decoding and checksum repair
-- no-template native BDA packaging
-- menu title/category/icon experiments
-- DLX resource inspection, extraction, and rebuilding
-- a freestanding MIPS little-endian C SDK draft
-- hardware-tested probes for filesystem, GUI, input, text, image, audio, and
-  emulator-related APIs
-- a separate hardware-emulator work area for booting the real system image
-- an experimental USB mass-storage debug bridge for faster hardware probing
-- per-application reverse-engineering reports for bundled apps
+项目仍处于研究阶段。公开仓库只保存源码、脚本、文档和可复现的补丁；固件、NAND
+镜像、原始 BDA/DLX 资源和设备 dump 不应提交。
 
-## Repository Layout
+## 当前能力
 
-```text
-reverse/                 Python build/reverse-engineering tools
-reverse/examples/        Freestanding C/ASM BDA probe sources
-emu/                     Hardware emulator app, frontend, hooks, tools, tests
-reverse/sdk/             Experimental native SDK header and API notes
-reverse/reports/         Per-BDA analysis reports and indexes
-tools/                   Toolchain notes and local install/cache location
-scripts/                 Setup/helper scripts
-requirements.txt         Python package requirements
-DATA_NOTICE.md           What should not be committed
-```
+- 解码 BDA 头部、修复校验和、生成无模板原生 BDA。
+- 构建 MIPS little-endian C/ASM 示例程序。
+- 检查、提取和重建 DLX/VX 资源。
+- 维护硬件验证过的文件系统、GUI、输入、文本、图像和资源调用笔记。
+- 用自定义 QEMU `bbk9588` machine 启动真实系统镜像，并通过本地 Web 前端交互。
+- 通过 GitHub Actions 构建 Windows runtime release 包。
 
-Local-only directories are intentionally ignored:
+## 目录结构
 
 ```text
-system-dump/              local device system dump, ignored
-app-dump/                 local device application/data dump, ignored
-build/                    generated BDA/DLX/probe outputs
-tools/g++-.../            extracted local compiler directory
+emu/                     QEMU 硬件模拟器、Web 前端、镜像工具、发布脚本
+reverse/                 BDA/DLX 逆向、SDK 实验、硬件探针和分析工具
+reverse/examples/        原生 C/ASM BDA 示例
+reverse/sdk/             实验性 SDK 头文件与 API 笔记
+reverse/reports/         人工整理后的逆向报告
+scripts/                 仓库级辅助脚本
+tools/                   工具链说明和本地工具缓存位置
+.github/workflows/       CI / release workflow
+DATA_NOTICE.md           数据和版权边界
+CONTRIBUTING.md          贡献约定
 ```
 
-## Status
+本地研究数据会被 `.gitignore` 排除：
 
-This is research code. Some APIs are confirmed on real hardware; many are still
-named with `_LIKE` because their ABI or lifetime rules are not fully proven.
+```text
+系统/                    本地设备系统 dump
+应用/                    本地设备应用/resource dump
+build/                   生成的镜像、BDA、截图、release 包和临时文件
+tools/g++-.../           本地解压的交叉编译器
+```
 
-Hardware-confirmed highlights:
+## 快速开始
 
-- BDA apps are MIPS32 little-endian native code, not ELF.
-- Common native entry is file offset `0x95f8`, runtime VA `0x81c00020`.
-- BDA headers use an XOR-encoded metadata area plus a byte-sum checksum.
-- No-template C and ASM BDAs can be built from scratch and shown in the menu.
-- Custom menu title, category, and icon generation works.
-- DLX files are resource containers whose image entries often contain VX blocks.
-- `text_A.dlx` can be opened and decoded from a custom app; VX drawing works.
-
-See [reverse/sdk/README.md](reverse/sdk/README.md) for SDK details and
-[reverse/native_toolchain_notes.md](reverse/native_toolchain_notes.md) for the
-toolchain notes. The hardware emulator lives in
-[emu/](emu/) with its own
-[README](emu/README.md), `app.py` frontend entry point, hook modules, NAND image
-helpers, and smoke-test entry points.
-
-## Setup
-
-Install Python dependencies:
+安装 Python 依赖：
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-For C builds, download and unpack the MIPS little-endian toolchain:
+构建原生 BDA 需要 MIPS little-endian 工具链：
 
 ```powershell
 .\scripts\setup_toolchain.ps1
 ```
 
-It provides:
-
-```text
-mipsel-none-elf-gcc
-mipsel-none-elf-objcopy
-```
-
-The setup script downloads `g++-mipsel-none-elf-15.2.0.zip` from the public
-grumpycoder/PCSX-Redux toolchain mirror when it is not already cached locally.
-The build scripts then search `tools/g++-mipsel-none-elf-*/bin/` automatically,
-or you can pass `--prefix` to use another compatible toolchain.
-
-## Build a Minimal Native BDA
+构建一个最小 BDA：
 
 ```powershell
 python reverse\bda_compile_c.py reverse\examples\hello_msgbox.c `
@@ -98,65 +65,57 @@ python reverse\bda_compile_c.py reverse\examples\hello_msgbox.c `
   -o build\HelloBDA.bda
 ```
 
-With a custom icon:
-
-```powershell
-python reverse\bda_compile_c.py reverse\examples\notpl_demo_msgbox.c `
-  --no-template `
-  --title NoTplDemo `
-  --category 9 `
-  --icon-png path\to\icon.png `
-  --icon-background 14245c `
-  -o build\NoTplDemo.bda
-```
-
-## Inspect BDA and DLX Files
+检查 BDA/DLX：
 
 ```powershell
 python reverse\bda_probe.py path\to\calculator.bda
 python reverse\bda_disasm_preview.py path\to\calculator.bda --count 80
 python reverse\dlx_inspect.py path\to\text_A.dlx
-python reverse\dlx_extract.py path\to\text_A.dlx -o build\text_A_extract
 ```
 
-## USB Debug Bridge
+## 模拟器
 
-Build the resident debug bridge:
+模拟器位于 [emu/](emu/)，入口说明见 [emu/README.md](emu/README.md)。
+
+开发者常用命令：
 
 ```powershell
-python reverse\bda_compile_c.py reverse\examples\usb_debug_bridge.c `
-  --no-template `
-  --title UsbDebug `
-  --category 9 `
-  -o build\UsbDebugBridge.bda
+powershell -ExecutionPolicy Bypass -File .\emu\tools\build_runtime_images.ps1
+python -m emu.web.frontend --boot-mode uboot --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
-Copy it to the device application directory, run it on the device, then use the
-host helper:
+Release 包由 `.github/workflows/release-emulator.yml` 构建。包内包含编译好的
+`bin/bbk9588-qemu-system-mipsel.exe`、QEMU 运行 DLL、Web 前端、启动脚本和
+Python runtime。公开 release 不包含固件和应用资源，用户需要自行提供本地 dump。
+
+## 质量检查
+
+提交前至少运行：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --tail
-python tools\usb_debug_host.py --drive F: -c status
-python tools\usb_debug_host.py --drive F: -c "msg hello"
-python tools\usb_debug_host.py --drive F: -c quit
-```
-
-See [reverse/sdk/usb_debug_notes.md](reverse/sdk/usb_debug_notes.md).
-
-## Publishing Notes
-
-Before pushing to GitHub, check:
-
-```powershell
+python -m py_compile (Get-ChildItem emu -Filter *.py -Recurse).FullName
+git diff --check
 git status --short
 ```
 
-Source, scripts, and documentation should appear. Original dump contents,
-generated BDAs/DLXs, downloaded toolchain archives, and extracted local
-toolchains should remain ignored. See
-[DATA_NOTICE.md](DATA_NOTICE.md).
+发布包结构可以用脚本校验：
+
+```powershell
+python .\emu\tools\validate_release_package.py .\build\dist\bbk9588-emulator-版本.zip --runtime
+```
+
+## 发布边界
+
+请不要提交：
+
+- `系统/`、`应用/`、`build/`
+- 原始固件、NAND 镜像、BDA、DBA、DLX、字典库、音频和图片资源
+- 下载的工具链压缩包或解压目录
+- 自动生成的长日志、反汇编全文、截图和临时 trace
+
+更多说明见 [DATA_NOTICE.md](DATA_NOTICE.md)。
 
 ## License
 
-No license has been selected yet. Add a `LICENSE` file before accepting outside
-contributions or redistributing substantial code.
+本项目尚未选择统一开源许可证。QEMU overlay 中保留了上游文件原有的 GPL/LGPL/MIT
+许可证头。正式接收外部贡献或重新分发大规模代码前，需要补充仓库级 `LICENSE`。

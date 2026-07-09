@@ -22,7 +22,10 @@ def iter_overlay_files(overlay: Path) -> list[Path]:
     return sorted(
         path
         for path in overlay.rglob("*")
-        if path.is_file() and path.name != "README.md"
+        if path.is_file()
+        and path.name != "README.md"
+        and path.suffix not in {".pyc", ".pyo"}
+        and "__pycache__" not in path.parts
     )
 
 

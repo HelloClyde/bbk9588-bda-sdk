@@ -65,6 +65,8 @@ $configure = @"
 set -euo pipefail
 export MSYSTEM=UCRT64
 export PATH=/ucrt64/bin:/usr/bin:`$PATH
+export CC=gcc
+export CXX=g++
 mkdir -p "$buildPosix"
 cd "$buildPosix"
 if [ ! -f build.ninja ] || [ "$($Reconfigure.IsPresent)" = "True" ]; then
