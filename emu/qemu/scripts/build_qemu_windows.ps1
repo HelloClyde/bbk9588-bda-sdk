@@ -81,8 +81,9 @@ export CXX="$gxx"
 export PKG_CONFIG="$pkgConfig"
 export PYTHON="$python"
 echo "MSYS2 toolchain:"
-command -v gcc
-gcc --version | head -n 1
+echo "PATH=`$PATH"
+command -v gcc || true
+ls -l /ucrt64/bin/gcc.exe "$gcc" || true
 "$gcc" --version | head -n 1
 "$python" --version
 "$pkgConfig" --version
