@@ -2,12 +2,37 @@ param(
     [string]$Version = "",
     [string]$PackageName = "bbk9588-emulator",
     [string]$OutputDir = "",
-    [string]$StagingDir = ""
+    [string]$StagingDir = "",
+    [string]$QemuRuntimeDir = "",
+    [string]$PythonRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+
+function Copy-DirectoryContents([string]$Source, [string]$Destination) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $Destination $_.Name) -Recurse -Force
+    }
+}
+
+function Add-AllowedBinaryRoot([System.Collections.Generic.List[string]]$Roots, [string]$Path) {
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+    $Roots.Add($full) | Out-Null
+}
+
+function Test-IsUnderAnyRoot([string]$Path, [System.Collections.Generic.List[string]]$Roots) {
+    $full = [System.IO.Path]::GetFullPath($Path)
+    foreach ($root in $Roots) {
+        if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 if (-not $OutputDir) {
     $OutputDir = Join-Path $RepoRoot "build\dist"
 }
@@ -50,14 +75,84 @@ if (Test-Path -LiteralPath $PackageRoot) {
 New-Item -ItemType Directory -Force -Path $PackageRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
+$releaseReadme = Join-Path $RepoRoot "emu\packaging\RELEASE_README.md"
 foreach ($file in @("README.md", "CONTRIBUTING.md", "DATA_NOTICE.md", "requirements.txt")) {
     $source = Join-Path $RepoRoot $file
     if (Test-Path -LiteralPath $source) {
-        Copy-Item -LiteralPath $source -Destination (Join-Path $PackageRoot $file)
+        $destinationName = $file
+        if ($file -eq "README.md" -and (Test-Path -LiteralPath $releaseReadme)) {
+            $destinationName = "PROJECT_README.md"
+        }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $PackageRoot $destinationName)
     }
+}
+if (Test-Path -LiteralPath $releaseReadme) {
+    Copy-Item -LiteralPath $releaseReadme -Destination (Join-Path $PackageRoot "README.md") -Force
 }
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot "emu") -Destination (Join-Path $PackageRoot "emu") -Recurse
+
+foreach ($file in @("start-web.ps1", "start-web.cmd")) {
+    $source = Join-Path $RepoRoot ("emu\packaging\" + $file)
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $PackageRoot $file) -Force
+    }
+}
+
+$allowedBinaryRoots = New-Object System.Collections.Generic.List[string]
+if ($QemuRuntimeDir) {
+    foreach ($relative in @(
+        "emu\packaging",
+        "emu\qemu\patches",
+        "emu\qemu\scripts",
+        "emu\qemu\source-overlay",
+        "emu\test"
+    )) {
+        $path = Join-Path $PackageRoot $relative
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
+
+    $runtimeSource = [System.IO.Path]::GetFullPath($QemuRuntimeDir)
+    $runtimeBin = Join-Path $runtimeSource "bin"
+    $runtimeExe = Join-Path $runtimeBin "bbk9588-qemu-system-mipsel.exe"
+    if (-not (Test-Path -LiteralPath $runtimeExe)) {
+        throw "Packaged QEMU runtime is missing bbk9588-qemu-system-mipsel.exe: $runtimeExe"
+    }
+    Copy-DirectoryContents $runtimeSource $PackageRoot
+    Add-AllowedBinaryRoot $allowedBinaryRoots (Join-Path $PackageRoot "bin")
+}
+
+if ($PythonRoot) {
+    $pythonSource = [System.IO.Path]::GetFullPath($PythonRoot)
+    if (-not (Test-Path -LiteralPath (Join-Path $pythonSource "python.exe"))) {
+        throw "Python runtime root does not contain python.exe: $pythonSource"
+    }
+    $pythonDest = Join-Path $PackageRoot "python"
+    New-Item -ItemType Directory -Force -Path $pythonDest | Out-Null
+    foreach ($item in @("DLLs", "Lib")) {
+        $source = Join-Path $pythonSource $item
+        if (Test-Path -LiteralPath $source) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $pythonDest $item) -Recurse -Force
+        }
+    }
+    Get-ChildItem -LiteralPath $pythonSource -File -Force | Where-Object {
+        $_.Name -match "^(pythonw?\.exe|python[0-9]+\.dll|vcruntime.*\.dll|LICENSE.*)$"
+    } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $pythonDest $_.Name) -Force
+    }
+    foreach ($path in @(
+        (Join-Path $pythonDest "Lib\test"),
+        (Join-Path $pythonDest "Lib\site-packages"),
+        (Join-Path $pythonDest "Lib\ensurepip")
+    )) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
+    Add-AllowedBinaryRoot $allowedBinaryRoots $pythonDest
+}
 
 $excludedDirectoryNames = @(
     ".mypy_cache",
@@ -97,11 +192,28 @@ $forbiddenExtensions = @(
     ".so"
 )
 $forbidden = Get-ChildItem -LiteralPath $PackageRoot -File -Recurse -Force | Where-Object {
-    $forbiddenExtensions -contains $_.Extension.ToLowerInvariant()
+    ($forbiddenExtensions -contains $_.Extension.ToLowerInvariant()) -and
+        -not (Test-IsUnderAnyRoot $_.FullName $allowedBinaryRoots)
 }
 if ($forbidden) {
     $list = ($forbidden | Select-Object -First 20 | ForEach-Object { $_.FullName }) -join "`n"
     throw "Package contains firmware/build binary files:`n$list"
+}
+
+foreach ($required in @(
+    "README.md",
+    "start-web.ps1",
+    "start-web.cmd",
+    "emu\web\frontend.py",
+    "emu\tools\build_runtime_images.ps1"
+)) {
+    $path = Join-Path $PackageRoot $required
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Required runtime package file is missing: $required"
+    }
+}
+if ($QemuRuntimeDir -and -not (Test-Path -LiteralPath (Join-Path $PackageRoot "bin\bbk9588-qemu-system-mipsel.exe"))) {
+    throw "Required packaged emulator executable is missing: bin\bbk9588-qemu-system-mipsel.exe"
 }
 
 $manifestPath = Join-Path $PackageRoot "MANIFEST.txt"

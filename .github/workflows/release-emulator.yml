@@ -1,5 +1,8 @@
 name: Release emulator
 
+env:
+  QEMU_VERSION: "11.0.0"
+
 on:
   workflow_dispatch:
     inputs:
@@ -24,6 +27,7 @@ jobs:
   package:
     name: Package emulator
     runs-on: windows-latest
+    timeout-minutes: 180
     defaults:
       run:
         shell: pwsh
@@ -37,6 +41,29 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up MSYS2 UCRT64 build toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            git
+            tar
+            xz
+            patch
+            make
+            diffutils
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-pixman
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-capstone
+
       - name: Validate Python and PowerShell files
         run: |
           Get-ChildItem emu -Filter *.py -Recurse | ForEach-Object {
@@ -45,8 +72,10 @@ jobs:
 
           foreach ($script in @(
             "emu/tools/build_runtime_images.ps1",
+            "emu/tools/collect_qemu_runtime.ps1",
             "emu/tools/package_emulator.ps1",
-            "emu/qemu/scripts/build_qemu_windows.ps1"
+            "emu/qemu/scripts/build_qemu_windows.ps1",
+            "emu/packaging/start-web.ps1"
           )) {
             $tokens = $null
             $errors = $null
@@ -61,6 +90,62 @@ jobs:
             }
           }
 
+      - name: Download QEMU source
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+
+          function Convert-ToMsysPath([string]$Path) {
+            $full = [System.IO.Path]::GetFullPath($Path).Replace("\", "/")
+            if ($full -match "^([A-Za-z]):/(.*)$") {
+              return "/" + $Matches[1].ToLowerInvariant() + "/" + $Matches[2]
+            }
+            return $full
+          }
+
+          $downloadDir = Join-Path $env:GITHUB_WORKSPACE "build\downloads"
+          $sourceRoot = Join-Path $env:GITHUB_WORKSPACE "build\qemu-source"
+          New-Item -ItemType Directory -Force -Path $downloadDir, $sourceRoot | Out-Null
+
+          $archive = Join-Path $downloadDir "qemu-${env:QEMU_VERSION}.tar.xz"
+          Invoke-WebRequest -Uri "https://download.qemu.org/qemu-${env:QEMU_VERSION}.tar.xz" -OutFile $archive
+
+          $sourceRootPosix = Convert-ToMsysPath $sourceRoot
+          $archivePosix = Convert-ToMsysPath $archive
+          & C:\msys64\usr\bin\bash.exe -lc "set -euo pipefail; tar -C '$sourceRootPosix' -xf '$archivePosix'"
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to extract QEMU source archive"
+          }
+
+      - name: Build bbk9588 QEMU
+        run: |
+          $qemuSource = Join-Path $env:GITHUB_WORKSPACE "build\qemu-source\qemu-${env:QEMU_VERSION}"
+          $qemuBuild = Join-Path $env:GITHUB_WORKSPACE "build\qemu-build"
+          $jobs = [Math]::Max(2, [Math]::Min(4, [int]$env:NUMBER_OF_PROCESSORS))
+          ./emu/qemu/scripts/build_qemu_windows.ps1 `
+            -QemuSource $qemuSource `
+            -BuildDir $qemuBuild `
+            -MsysBash C:\msys64\usr\bin\bash.exe `
+            -UseOverlay `
+            -Jobs $jobs
+
+      - name: Collect bbk9588 QEMU runtime
+        id: qemu-runtime
+        run: |
+          $qemuExe = Join-Path $env:GITHUB_WORKSPACE "build\qemu-build\qemu-system-mipsel.exe"
+          $runtimeDir = Join-Path $env:GITHUB_WORKSPACE "build\qemu-runtime"
+          ./emu/tools/collect_qemu_runtime.ps1 `
+            -QemuExe $qemuExe `
+            -RuntimeDir $runtimeDir `
+            -OutputExeName bbk9588-qemu-system-mipsel.exe `
+            -MsysBash C:\msys64\usr\bin\bash.exe
+
+      - name: Probe packaged emulator binary
+        run: |
+          & "${{ steps.qemu-runtime.outputs.qemu_exe }}" --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "packaged QEMU probe failed"
+          }
+
       - name: Package emulator
         id: package
         run: |
@@ -68,7 +153,14 @@ jobs:
           if (-not $version) {
             $version = "${{ github.ref_name }}"
           }
-          ./emu/tools/package_emulator.ps1 -Version $version
+          $pythonRoot = $env:pythonLocation
+          if (-not $pythonRoot) {
+            $pythonRoot = Split-Path -Parent (Get-Command python).Source
+          }
+          ./emu/tools/package_emulator.ps1 `
+            -Version $version `
+            -QemuRuntimeDir "${{ steps.qemu-runtime.outputs.runtime_dir }}" `
+            -PythonRoot $pythonRoot
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -88,9 +180,9 @@ jobs:
             "BBK 9588 emulator package.",
             "",
             "Contents:",
-            "- QEMU system-emulation Python launcher and web frontend.",
-            "- QEMU bbk9588 source overlay, patch, and Windows build scripts.",
-            "- FAT/NAND image construction tools and emulator setup docs.",
+            "- Compiled bbk9588 QEMU runtime: bin/bbk9588-qemu-system-mipsel.exe.",
+            "- Web frontend and root start-web launch scripts.",
+            "- Python runtime and FAT/NAND image construction tools.",
             "",
             "Not included:",
             "- Dumped firmware, NAND images, BDA applications, or local build output.",

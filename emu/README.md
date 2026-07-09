@@ -158,6 +158,12 @@ GitHub Actions publishes the same package to the repository Releases page from
 
 - Push a tag named `emu-v*` or `v*` to publish automatically.
 - Or run the `Release emulator` workflow manually and provide a version.
+- The workflow downloads QEMU 11.0.0, applies the bbk9588 overlay, builds
+  `qemu-system-mipsel.exe`, renames the packaged binary to
+  `bin/bbk9588-qemu-system-mipsel.exe`, and copies its runtime DLLs.
+- Release archives include the web frontend, root `start-web.cmd` /
+  `start-web.ps1` launchers, and a bundled Python runtime when built by
+  GitHub Actions.
 - Release archives intentionally exclude dumped firmware, NAND images, BDA
   applications, and local build output.
 
