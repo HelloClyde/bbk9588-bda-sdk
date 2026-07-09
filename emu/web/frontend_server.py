@@ -216,6 +216,37 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._json(self.state.logs(limit))
             elif parsed.path == "/screen.png":
                 self._send(200, self.state.dump_frame(), "image/png")
+            elif parsed.path == "/debug/rgb565.png":
+                qs = parse_qs(parsed.query)
+                addr_text = qs.get("addr", [""])[0]
+                if not addr_text:
+                    raise ValueError("missing addr")
+                addr = int(addr_text, 0)
+                width = int(qs.get("w", ["240"])[0])
+                height = int(qs.get("h", ["320"])[0])
+                stride = int(qs.get("stride", [str(width)])[0])
+                orientation = qs.get("orientation", ["raw"])[0]
+                self._send(
+                    200,
+                    self.state.dump_qemu_guest_rgb565(
+                        addr,
+                        width=width,
+                        height=height,
+                        stride_pixels=stride,
+                        orientation=orientation,
+                    ),
+                    "image/png",
+                )
+            elif parsed.path == "/debug/mem.bin":
+                qs = parse_qs(parsed.query)
+                addr_text = qs.get("addr", [""])[0]
+                if not addr_text:
+                    raise ValueError("missing addr")
+                addr = int(addr_text, 0)
+                size = int(qs.get("size", ["0"])[0])
+                if size <= 0 or size > 4 * 1024 * 1024:
+                    raise ValueError("invalid size")
+                self._send(200, self.state.dump_qemu_guest_memory(addr, size), "application/octet-stream")
             else:
                 ctype = mimetypes.guess_type(parsed.path)[0] or "text/plain"
                 self._send(404, b"not found", ctype)

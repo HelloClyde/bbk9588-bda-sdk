@@ -138,8 +138,43 @@ def build_tree(paths: list[Path]) -> FsNode:
             raise FileNotFoundError(source)
         node = read_node(source, source.name)
         root.children.append(node)
+    add_bbk_compat_aliases(root)
     assign_short_names(root)
     return root
+
+
+def find_child_dir(node: FsNode, name: str) -> FsNode | None:
+    for child in node.children:
+        if child.is_dir and child.name == name:
+            return child
+    return None
+
+
+def find_child(node: FsNode, name: str) -> FsNode | None:
+    for child in node.children:
+        if child.name == name:
+            return child
+    return None
+
+
+def add_bbk_compat_aliases(root: FsNode) -> None:
+    system = find_child_dir(root, "系统")
+    if system is None or find_child(system, "SysTp.cfg") is not None:
+        return
+    data_dir = find_child_dir(system, "数据")
+    if data_dir is None:
+        return
+    systp = find_child(data_dir, "SysTp.cfg")
+    if systp is None or systp.is_dir or systp.source is None:
+        return
+    system.children.append(
+        FsNode(
+            name="SysTp.cfg",
+            source=systp.source,
+            is_dir=False,
+            size=systp.size,
+        )
+    )
 
 
 def read_node(path: Path, name: str) -> FsNode:

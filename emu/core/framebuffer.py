@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Protocol
 
-from emu.core.defs import RAM_BASE
+RAM_BASE = 0x80000000
 
 
 class FramebufferReader(Protocol):
@@ -123,7 +123,7 @@ def orient_rgb(
 
 
 def render_rgb565_framebuffer(
-    emu: Bbk9588HwEmu,
+    emu: object,
     addr: int,
     offset_bytes: int,
     width: int,
@@ -224,7 +224,7 @@ def rgb565_raw_to_info_rgb(
 
 
 def dump_rgb565_framebuffer(
-    emu: Bbk9588HwEmu,
+    emu: object,
     path: Path,
     addr: int,
     offset_bytes: int,
@@ -258,7 +258,7 @@ def dump_rgb565_framebuffer(
 
 
 def scan_rgb565_framebuffers(
-    emu: Bbk9588HwEmu,
+    emu: object,
     width: int,
     height: int,
     stride_pixels: int,

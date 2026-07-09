@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Small local web frontend for the BBK 9588 hardware emulator."""
+"""Small local web frontend for the BBK 9588 QEMU system emulator."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from emu.qemu.system import DEFAULT_QEMU_EXECUTABLE, DEFAULT_QEMU_MACHINE
 from emu.web.frontend_server import FrontendHandler as Handler
 from emu.web.frontend_state import (
     FrontendState,
@@ -21,38 +22,6 @@ from emu.web.frontend_state import (
     display_to_touch_point,
     raw_to_display_point,
 )
-
-
-def parse_frontend_scheduled_call(text: str) -> tuple[int, tuple[int, int, int, int], int]:
-    spec = text
-    idle_hit = 1
-    if "@" in spec:
-        spec, hit_s = spec.rsplit("@", 1)
-        idle_hit = int(hit_s, 0)
-    parts = spec.split(":")
-    if not 1 <= len(parts) <= 5:
-        raise argparse.ArgumentTypeError("call must be addr[:a0[:a1[:a2[:a3]]]][@idle_hit]")
-    va = int(parts[0], 0)
-    args = [0, 0, 0, 0]
-    for idx, value in enumerate(parts[1:]):
-        args[idx] = int(value, 0)
-    if idle_hit <= 0:
-        raise argparse.ArgumentTypeError("idle_hit must be positive")
-    return va, (args[0], args[1], args[2], args[3]), idle_hit
-
-
-def parse_page_range(value: str) -> tuple[int, int]:
-    if ":" not in value:
-        raise argparse.ArgumentTypeError("expected start:end")
-    start_text, end_text = value.split(":", 1)
-    try:
-        start = int(start_text, 0)
-        end = int(end_text, 0)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
-    if start < 0 or end <= start:
-        raise argparse.ArgumentTypeError("range must satisfy 0 <= start < end")
-    return start, end
 
 
 HTML = r"""<!doctype html>
@@ -151,9 +120,12 @@ let wsOpenPromise = null;
 let continuousActive = false;
 let pointerActive = false;
 let activePointerId = null;
+let touchDownAt = 0;
+let pendingTouchReleaseTimer = null;
 let currentOrientation = 'rot180';
 let rgb565Lut = null;
 let rawImageData = null;
+const minTouchHoldMs = 180;
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -199,6 +171,21 @@ function sendTouchAt(clientX, clientY, down, phase, source = 'pointer', clamp = 
   });
   return true;
 }
+function cancelPendingTouchRelease() {
+  if (pendingTouchReleaseTimer) {
+    clearTimeout(pendingTouchReleaseTimer);
+    pendingTouchReleaseTimer = null;
+  }
+}
+function sendTouchReleaseAt(clientX, clientY, phase, source = 'pointer', clamp = true) {
+  const elapsed = performance.now() - touchDownAt;
+  const delay = Math.max(0, minTouchHoldMs - elapsed);
+  cancelPendingTouchRelease();
+  pendingTouchReleaseTimer = setTimeout(() => {
+    pendingTouchReleaseTimer = null;
+    sendTouchAt(clientX, clientY, false, phase, source, clamp);
+  }, delay);
+}
 function formatElapsed(seconds) {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '';
   const total = Math.max(0, Math.floor(Number(seconds)));
@@ -214,6 +201,41 @@ function formatJobSteps(job) {
   const total = job.total_steps || 'inf';
   return `${job.observed_insn_delta ?? 0}/${job.requested_done_steps ?? job.done_steps}/${total}`;
 }
+function qemuCp0Status(s) {
+  return s.cp0 || s.qemu?.cp0 || null;
+}
+function formatQemuException(s) {
+  const cp0 = qemuCp0Status(s);
+  if (!cp0) return '';
+  const exc = cp0.exception || '';
+  if (!exc) return '';
+  if (exc === 'interrupt' && !cp0.exl && !cp0.erl && cp0.pending_enabled_interrupts === '0x00') {
+    return '';
+  }
+  return exc;
+}
+function formatQemuIrq(s) {
+  const cp0 = qemuCp0Status(s);
+  if (!cp0) return '';
+  const pending = cp0.pending_interrupts || '';
+  const enabled = cp0.pending_enabled_interrupts || '';
+  const suffix = cp0.exception === 'interrupt' && !cp0.exl && !cp0.erl && enabled === '0x00' ? ' pending' : '';
+  return `${pending}/${enabled}${suffix}`;
+}
+function formatLastInput(s) {
+  const ev = s.last_input_event;
+  if (!ev) return '';
+  const age = ev.at ? `${Math.max(0, (Date.now() / 1000 - Number(ev.at))).toFixed(1)}s` : '';
+  const result = ev.result || {};
+  if (ev.kind === 'touch') {
+    const display = ev.display_x !== undefined ? ` d=${ev.display_x},${ev.display_y}` : '';
+    return `${ev.down ? 'down' : 'up'} ${ev.x},${ev.y}${display} ${ev.accepted ? 'ok' : 'fail'} writes=${result.bbk_input_write_count ?? ''} ${age}`;
+  }
+  if (ev.kind === 'key') {
+    return `${ev.down ? 'down' : 'up'} ${ev.code} ${ev.accepted ? 'ok' : 'fail'} writes=${result.bbk_input_write_count ?? ''} ${age}`;
+  }
+  return JSON.stringify(ev);
+}
 function renderStatus(s) {
   currentOrientation = s.orientation || currentOrientation;
   autoBootEl.checked = Boolean(s.auto_calibration);
@@ -223,39 +245,22 @@ function renderStatus(s) {
     ['run elapsed', formatElapsed(s.run_elapsed_seconds)],
     ['boot', s.boot_mode || ''],
     ['orientation', s.orientation || ''],
-    ['fast hooks', s.fast_hooks],
-    ['step timer', `${s.completed_step_timer ? 'completed' : 'hook'}${s.completed_step_timer_after_auto_boot ? ':auto' : ''}`],
-    ['res cache', s.resource_cache16],
     ['auto boot', `${s.auto_calibration ? 'on' : 'off'}:${s.auto_calibration_stage_label || s.auto_calibration_stage || 0}`],
     ['touch queue', s.pending_touches ?? 0],
     ['key queue', s.pending_keys ?? 0],
     ['input wake', s.input_wake_count ?? 0],
-    ['busy delay', s.busy_delay_accel ?? 0],
-    ['busy patch', s.busy_delay_static_patch ? 'on' : 'off'],
-    ['ftl scan', s.ftl_scan_accel ?? 0],
-    ['cache scan', s.cache_scan_tail_accel ?? 0],
-    ['hot logs', s.suppressed_hot_events ?? 0],
-    ['poll accel', s.no_event_poll_accel ?? 0],
-    ['frame hook', s.frame_push?.hook_count ?? 0],
+    ['last input', formatLastInput(s)],
     ['frame queued', `${s.frame_push?.queued_count ?? 0}/${s.queued_frames ?? 0}`],
-    ['frame throttle', s.frame_push?.throttle_count ?? 0],
-    ['frame replace', s.frame_push?.replace_count ?? 0],
-    ['frame drop', s.frame_push?.drop_count ?? 0],
+    ['frame sent', s.frame_push?.ws_sent_count ?? 0],
     ['job', s.job?.name || ''],
     ['job mode', s.job?.mode || ''],
     ['job status', s.job?.status || ''],
     ['job elapsed', s.job ? formatElapsed(s.job.elapsed_seconds) : ''],
-    ['job speed', s.job?.steps_per_second ? `${Math.round(s.job.steps_per_second)}/s` : ''],
-    ['req speed', s.job?.requested_steps_per_second ? `${Math.round(s.job.requested_steps_per_second)}/s` : ''],
-    ['job chunk', s.job?.chunk_steps || ''],
-    ['run slice', s.run_internal_chunk_steps || ''],
-    ['last slice', s.job ? `${s.job.last_slice_steps || 0}${s.job.last_slice_timed_out ? ' timeout' : ''}` : ''],
-    ['job steps', formatJobSteps(s.job)],
     ['stop', s.stop_reason || ''],
-    ['insn', s.insn_count],
     ['pc', s.pc],
-    ['idle', s.idle_loop_hits],
-    ['app idle', s.app_idle_loop_hits],
+    ['qemu region', s.qemu_pc_region || s.qemu_pc_classification?.region || s.qemu_pc_classification?.name || ''],
+    ['qemu exc', formatQemuException(s)],
+    ['qemu irq', formatQemuIrq(s)],
     ['wait', s.scheduler?.wait_wake_count ?? ''],
     ['tick', s.scheduler?.timer_tick_count ?? ''],
     ['dispatch', s.scheduler?.scheduler_dispatch_count ?? ''],
@@ -534,9 +539,11 @@ window.addEventListener('keyup', ev => {
 screen.addEventListener('pointerdown', ev => {
   ev.preventDefault();
   ev.stopPropagation();
+  cancelPendingTouchRelease();
   if (sendTouchAt(ev.clientX, ev.clientY, true, 'down', ev.pointerType || 'pointer')) {
     pointerActive = true;
     activePointerId = ev.pointerId;
+    touchDownAt = performance.now();
     screen.setPointerCapture?.(ev.pointerId);
   }
 });
@@ -544,13 +551,14 @@ screen.addEventListener('pointermove', ev => {
   if (!pointerActive || ev.pointerId !== activePointerId) return;
   ev.preventDefault();
   ev.stopPropagation();
+  cancelPendingTouchRelease();
   sendTouchAt(ev.clientX, ev.clientY, true, 'move', ev.pointerType || 'pointer', true);
 });
 screen.addEventListener('pointerup', ev => {
   if (!pointerActive || ev.pointerId !== activePointerId) return;
   ev.preventDefault();
   ev.stopPropagation();
-  sendTouchAt(ev.clientX, ev.clientY, false, 'up', ev.pointerType || 'pointer', true);
+  sendTouchReleaseAt(ev.clientX, ev.clientY, 'up', ev.pointerType || 'pointer', true);
   pointerActive = false;
   activePointerId = null;
   screen.releasePointerCapture?.(ev.pointerId);
@@ -559,7 +567,7 @@ screen.addEventListener('pointercancel', ev => {
   if (!pointerActive || ev.pointerId !== activePointerId) return;
   ev.preventDefault();
   ev.stopPropagation();
-  sendTouchAt(ev.clientX, ev.clientY, false, 'cancel', ev.pointerType || 'pointer', true);
+  sendTouchReleaseAt(ev.clientX, ev.clientY, 'cancel', ev.pointerType || 'pointer', true);
   pointerActive = false;
   activePointerId = null;
 });
@@ -567,24 +575,32 @@ screen.addEventListener('mousedown', ev => {
   if (window.PointerEvent) return;
   ev.preventDefault();
   ev.stopPropagation();
-  if (sendTouchAt(ev.clientX, ev.clientY, true, 'down', 'mouse')) pointerActive = true;
+  cancelPendingTouchRelease();
+  if (sendTouchAt(ev.clientX, ev.clientY, true, 'down', 'mouse')) {
+    pointerActive = true;
+    touchDownAt = performance.now();
+  }
 });
 window.addEventListener('mouseup', ev => {
   if (window.PointerEvent || !pointerActive) return;
-  sendTouchAt(ev.clientX, ev.clientY, false, 'up', 'mouse', true);
+  sendTouchReleaseAt(ev.clientX, ev.clientY, 'up', 'mouse', true);
   pointerActive = false;
 });
 screen.addEventListener('touchstart', ev => {
   if (window.PointerEvent) return;
   ev.preventDefault();
   const t = ev.changedTouches[0];
-  if (t && sendTouchAt(t.clientX, t.clientY, true, 'down', 'touch')) pointerActive = true;
+  cancelPendingTouchRelease();
+  if (t && sendTouchAt(t.clientX, t.clientY, true, 'down', 'touch')) {
+    pointerActive = true;
+    touchDownAt = performance.now();
+  }
 }, {passive:false});
 screen.addEventListener('touchend', ev => {
   if (window.PointerEvent || !pointerActive) return;
   ev.preventDefault();
   const t = ev.changedTouches[0];
-  if (t) sendTouchAt(t.clientX, t.clientY, false, 'up', 'touch', true);
+  if (t) sendTouchReleaseAt(t.clientX, t.clientY, 'up', 'touch', true);
   pointerActive = false;
 }, {passive:false});
 connectWs();
@@ -598,36 +614,15 @@ Handler.html = HTML
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Serve a local BBK 9588 emulator frontend.")
+    ap = argparse.ArgumentParser(description="Serve a local BBK 9588 QEMU frontend.")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=9588)
+    ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--ram-mb", type=int, default=160)
-    ap.add_argument("--trace-limit", type=int, default=5000)
-    ap.add_argument("--boot-steps", type=int, default=6_000_000)
-    ap.add_argument("--input-steps", type=int, default=500_000)
-    ap.add_argument(
-        "--worker-slice-steps",
-        type=int,
-        default=250_000,
-        help="Maximum emulated steps per frontend worker timeslice before publishing status/frames.",
-    )
-    ap.add_argument(
-        "--worker-slice-seconds",
-        type=float,
-        default=0.1,
-        help="Wall-clock timeout for each frontend worker timeslice, keeping input/status responsive in tight loops.",
-    )
-    ap.add_argument(
-        "--run-internal-chunk-steps",
-        type=int,
-        default=500_000,
-        help="Maximum Unicorn emu_start count inside one frontend worker slice. Lower values improve yield points.",
-    )
     ap.add_argument(
         "--frame-push-min-interval",
         type=float,
         default=0.04,
-        help="Minimum seconds between framebuffer-dirty WebSocket frame pushes.",
+        help="Minimum seconds between QEMU frame-chardev WebSocket frame pushes.",
     )
     ap.add_argument(
         "--frame-info-min-interval",
@@ -635,61 +630,14 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="Minimum seconds between full framebuffer-stat rescans for status JSON.",
     )
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200", help="Frontend cold-boot path. c200 matches the passing menu regression.")
-    ap.add_argument("--state-in", type=Path, help="Load an emulator checkpoint when the frontend resets.")
-    ap.add_argument(
-        "--mem-write-hex",
-        action="append",
-        default=[],
-        help="Diagnostic: write bytes before running, as va:hexbytes. Intended for system-level scheduled-call probes.",
-    )
-    ap.add_argument(
-        "--scheduled-call",
-        action="append",
-        type=parse_frontend_scheduled_call,
-        default=[],
-        help="Diagnostic: call firmware function at idle, addr[:a0[:a1[:a2[:a3]]]][@idle_hit].",
-    )
+    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot", help="QEMU cold-boot path.")
     ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
-    ap.add_argument(
-        "--readonly-nand-page-range",
-        type=parse_page_range,
-        action="append",
-        default=[],
-        help="Diagnostic: skip NAND program commits for a half-open page range start:end.",
-    )
-    ap.add_argument(
-        "--nand-loop-accelerator",
-        dest="nand_loop_accelerator",
-        action="store_true",
-        default=True,
-        help="Enable the verified C200 NAND data-port loop accelerator. Enabled by default for frontend cold boot.",
-    )
-    ap.add_argument(
-        "--no-nand-loop-accelerator",
-        dest="nand_loop_accelerator",
-        action="store_false",
-        help="Disable the C200 NAND data-port loop accelerator for diagnostics.",
-    )
-    ap.add_argument(
-        "--resource-cache16-accelerator",
-        dest="resource_cache16_accelerator",
-        action="store_true",
-        default=True,
-        help="Enable the C200 16-bit resource-cache loop accelerator. Enabled by default for the verified cold-menu path.",
-    )
-    ap.add_argument(
-        "--no-resource-cache16-accelerator",
-        dest="resource_cache16_accelerator",
-        action="store_false",
-        help="Disable the C200 16-bit resource-cache loop accelerator for diagnostics.",
-    )
     ap.add_argument(
         "--auto-calibration",
         dest="auto_calibration",
         action="store_true",
         default=False,
-        help="Inject modeled controller-level touches for cold-boot calibration and the time dialog.",
+        help="Feed cold-boot calibration touches through the QEMU input chardev.",
     )
     ap.add_argument(
         "--no-auto-calibration",
@@ -697,43 +645,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="Disable automatic cold-boot touchscreen calibration input.",
     )
-    ap.add_argument("--slow-global-code-hook", action="store_true", help="Diagnostic: hook every executed instruction instead of selected fast-hook PCs.")
-    ap.add_argument("--trace-pc", action="append", type=lambda value: int(value, 0), default=[], help="Diagnostic: selected PC to count/trace. Can be repeated.")
-    ap.add_argument("--trace-pc-detail", action="store_true", default=False, help="Record recent register snapshots for --trace-pc hits.")
-    ap.add_argument("--no-cp0-status-accelerator", action="store_true", help="Diagnostic: disable CP0 status helper fast hooks.")
-    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", help="Diagnostic: disable the glyph-mask loop accelerator.")
-    ap.add_argument("--block-image", action="store_true", help="Enable the legacy temporary logical block-device hook.")
-    ap.add_argument("--scheduler-tick-clamp", action="store_true", help="Enable the old diagnostic scheduler tick clamp.")
-    ap.add_argument(
-        "--completed-step-timer",
-        action="store_true",
-        help=(
-            "Drive modeled TCU/periodic IRQ time from completed Unicorn steps "
-            "instead of hook observations. Keep this off for cold-boot diagnostics."
-        ),
-    )
-    ap.add_argument(
-        "--completed-step-timer-after-auto-boot",
-        action="store_true",
-        default=False,
-        help=(
-            "Switch to completed-step timer after automatic calibration/time-dialog "
-            "input reaches the main menu. Off by default because menu/app event "
-            "timing is still calibrated against the hook-observed source."
-        ),
-    )
-    ap.add_argument(
-        "--no-completed-step-timer-after-auto-boot",
-        dest="completed_step_timer_after_auto_boot",
-        action="store_false",
-        help="Keep hook-observed timer source even after automatic cold boot finishes.",
-    )
     ap.add_argument("--orientation", choices=["raw", "rot180", "cw90", "ccw90", "hflip", "vflip"], default="rot180")
     ap.add_argument("--profile-out", type=Path, help="Write a cProfile report when the frontend exits normally.")
-    ap.add_argument("--worker-profile-out", type=Path, help="Write a cProfile report for the emulation worker thread.")
-    ap.add_argument("--hot-path-stats", action="store_true", help="Diagnostic: collect per-call counters in hot emulator fast paths.")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--backend", choices=["qemu"], default="qemu", help=argparse.SUPPRESS)
+    ap.add_argument("--qemu", default=DEFAULT_QEMU_EXECUTABLE, help="QEMU executable.")
+    ap.add_argument("--qemu-machine", default=DEFAULT_QEMU_MACHINE, help="QEMU machine.")
+    ap.add_argument("--qemu-cpu", default="24Kf", help="QEMU CPU model.")
+    ap.add_argument("--qemu-accel", default="tcg,thread=multi,tb-size=256", help="QEMU accelerator options.")
+    ap.add_argument("--qemu-gdb", default="none", help="QEMU GDB stub target; use 'auto' to allocate a local port.")
+    ap.add_argument("--qemu-timeout", type=float, default=5.0, help="Default bounded-run timeout used by QEMU probes.")
+    ap.add_argument("--qemu-machine-option", action="append", default=[], help="Append one bbk9588 -M option. Can be repeated.")
+    ap.add_argument("--qemu-extra-arg", action="append", default=[], help="Append one raw QEMU argument. Can be repeated.")
+    ap.add_argument("--qemu-firmware-patch", action="append", default=None, help="QEMU-only firmware patch name, or 'none'.")
     args = ap.parse_args(argv)
+    args.backend = "qemu"
 
     state = FrontendState(args)
     Handler.state = state
@@ -751,6 +677,10 @@ def main(argv: list[str] | None = None) -> int:
         if profiler is not None:
             profiler.disable()
     finally:
+        try:
+            state.stop()
+        except Exception:
+            pass
         httpd.server_close()
         if profiler is not None and args.profile_out is not None:
             args.profile_out.parent.mkdir(parents=True, exist_ok=True)

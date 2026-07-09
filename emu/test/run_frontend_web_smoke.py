@@ -65,6 +65,29 @@ def http_bytes(host: str, port: int, path: str) -> tuple[int, bytes]:
     return res.status, data
 
 
+def qemu_display_queue_drained(status: dict[str, object]) -> bool:
+    queue = status.get("display_event_queue")
+    if not isinstance(queue, dict):
+        return False
+    if not queue.get("mapped"):
+        return False
+    try:
+        return int(str(queue.get("read_index", -1)), 0) == int(str(queue.get("write_index", -2)), 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def wait_qemu_display_queue_drained(host: str, port: int, timeout: float) -> dict[str, object]:
+    deadline = time.time() + max(0.0, timeout)
+    last: dict[str, object] = {}
+    while time.time() < deadline:
+        last = http_json(host, port, "GET", "/api/status?detail=full")
+        if qemu_display_queue_drained(last):
+            return last
+        time.sleep(0.1)
+    return last
+
+
 def ws_frame_payload_to_png(payload: bytes, orientation: str) -> tuple[bytes, str]:
     if payload.startswith(WS_RAW_FRAME_MAGIC) and len(payload) >= WS_RAW_FRAME_HEADER_SIZE:
         seq = int.from_bytes(payload[8:12], "little")
@@ -323,8 +346,8 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         args.host,
         "--port",
         str(port),
-        "--worker-slice-seconds",
-        str(args.worker_slice_seconds),
+        "--boot-mode",
+        str(getattr(args, "boot_mode", "uboot")),
         "--frame-push-min-interval",
         str(args.frame_push_min_interval),
         "--quiet",
@@ -332,55 +355,29 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
     nand_image = getattr(args, "nand_image", None)
     if nand_image is not None:
         cmd += ["--nand-image", str(nand_image)]
-    if bool(getattr(args, "completed_step_timer", False)):
-        cmd.append("--completed-step-timer")
-    if bool(getattr(args, "completed_step_timer_after_auto_boot", False)):
-        cmd.append("--completed-step-timer-after-auto-boot")
-    if bool(getattr(args, "scheduler_tick_clamp", False)):
-        cmd.append("--scheduler-tick-clamp")
-    if bool(getattr(args, "no_cp0_status_accelerator", False)):
-        cmd.append("--no-cp0-status-accelerator")
-    if bool(getattr(args, "no_glyph_mask_accelerator", False)):
-        cmd.append("--no-glyph-mask-accelerator")
-    for pc in getattr(args, "trace_pc", []) or []:
-        cmd += ["--trace-pc", f"0x{int(pc) & 0xFFFFFFFF:x}"]
-    if bool(getattr(args, "trace_pc_detail", False)):
-        cmd.append("--trace-pc-detail")
-    state_in = getattr(args, "state_in", None)
-    if state_in is not None:
-        cmd += ["--state-in", str(state_in)]
-    for spec in getattr(args, "mem_write_hex", []) or []:
-        cmd += ["--mem-write-hex", str(spec)]
-    for call in getattr(args, "scheduled_call", []) or []:
-        if hasattr(call, "va"):
-            call_va = int(call.va)
-            call_args = tuple(call.args)
-            idle_hit = int(call.idle_hit)
-        else:
-            call_va, call_args, idle_hit = call
-            call_va = int(call_va)
-            call_args = tuple(call_args)
-            idle_hit = int(idle_hit)
-        arg_count = len(call_args)
-        while arg_count > 0 and int(call_args[arg_count - 1]) == 0:
-            arg_count -= 1
-        args_text = ":".join(f"0x{value & 0xFFFFFFFF:x}" for value in call_args[:arg_count])
-        call_text = f"0x{call_va:x}"
-        if args_text:
-            call_text += f":{args_text}"
-        call_text += f"@{idle_hit}"
-        cmd += ["--scheduled-call", call_text]
     profile_out = getattr(args, "frontend_profile_out", None)
     if profile_out is not None:
         cmd += ["--profile-out", str(profile_out)]
-    worker_profile_out = getattr(args, "worker_profile_out", None)
-    if worker_profile_out is not None:
-        cmd += ["--worker-profile-out", str(worker_profile_out)]
-    if bool(getattr(args, "hot_path_stats", False)):
-        cmd.append("--hot-path-stats")
-    run_internal_chunk_steps = getattr(args, "run_internal_chunk_steps", None)
-    if run_internal_chunk_steps is not None:
-        cmd += ["--run-internal-chunk-steps", str(run_internal_chunk_steps)]
+    cmd += ["--backend", "qemu"]
+    for option_name, cli_name in (
+        ("qemu", "--qemu"),
+        ("qemu_machine", "--qemu-machine"),
+        ("qemu_cpu", "--qemu-cpu"),
+        ("qemu_accel", "--qemu-accel"),
+        ("qemu_gdb", "--qemu-gdb"),
+        ("qemu_timeout", "--qemu-timeout"),
+    ):
+        value = getattr(args, option_name, None)
+        if value is not None:
+            cmd += [cli_name, str(value)]
+    firmware_patches = getattr(args, "qemu_firmware_patch", None)
+    if firmware_patches is not None:
+        for value in firmware_patches:
+            cmd += ["--qemu-firmware-patch", str(value)]
+    for value in getattr(args, "qemu_machine_option", []) or []:
+        cmd += ["--qemu-machine-option", str(value)]
+    for value in getattr(args, "qemu_extra_arg", []) or []:
+        cmd += ["--qemu-extra-arg", str(value)]
     return subprocess.Popen(
         cmd,
         cwd=ROOT,
@@ -425,7 +422,6 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
             "steps_per_second": job.get("steps_per_second"),
             "requested_steps_per_second": job.get("requested_steps_per_second"),
         },
-        "accelerators": status.get("accelerators"),
         "perf": status.get("perf"),
         "memcpy_bulk_callers": status.get("memcpy_bulk_callers"),
         "store_delay_branch_counts": status.get("store_delay_branch_counts"),
@@ -563,6 +559,76 @@ def key_press(
     ws.wait_for_queue_drained("pending_keys", 5, poll_status=poll_status)
 
 
+def _write_summary(
+    ns: argparse.Namespace,
+    port: int,
+    start: float,
+    menu_elapsed_seconds: float | None,
+    failures: list[str],
+    screenshots: dict[str, dict[str, object]],
+    interactions: list[dict[str, object]],
+    logs: dict[str, object],
+    ws: WebSocketClient | None,
+) -> int:
+    elapsed = time.time() - start
+    summary = {
+        "ok": not failures,
+        "host": ns.host,
+        "port": port,
+        "used_existing": ns.use_existing,
+        "elapsed_seconds": round(elapsed, 3),
+        "menu_elapsed_seconds": None if menu_elapsed_seconds is None else round(menu_elapsed_seconds, 3),
+        "failures": failures,
+        "screenshots": screenshots,
+        "last_frame_wire_kind": None if ws is None else ws.last_frame_wire_kind,
+        "interactions": interactions,
+        "log_count": logs.get("count"),
+        "recent_logs": logs.get("events", []),
+    }
+    json_path = ns.out_dir / f"{ns.prefix}_summary.json"
+    json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    report_path = ns.out_dir / f"{ns.prefix}_report.md"
+    lines = [
+        "# Frontend Web Smoke Report",
+        "",
+        f"- Result: {'PASS' if summary['ok'] else 'FAIL'}",
+        f"- URL: http://{ns.host}:{port}/",
+        f"- Elapsed seconds: {summary['elapsed_seconds']}",
+        f"- Menu elapsed seconds: {summary['menu_elapsed_seconds']}",
+        f"- Frames received over WS: {ws.frames if ws is not None else 0}",
+        f"- Last WS frame wire kind: {None if ws is None else ws.last_frame_wire_kind}",
+        f"- Failures: {len(failures)}",
+        "",
+        "## Interactions",
+    ]
+    for item in interactions:
+        extras: list[str] = []
+        if "elapsed_seconds" in item:
+            extras.append(f"elapsed={item['elapsed_seconds']}s")
+        if "frame_advanced" in item:
+            extras.append(f"frame_advanced={item['frame_advanced']}")
+        if "frame_seq" in item:
+            extras.append(f"frame_seq={item['frame_seq']}")
+        prefix = "" if not extras else f" ({', '.join(extras)})"
+        lines.append(f"- {item['step']}{prefix}: `{json.dumps(item.get('status', {}), ensure_ascii=False)}`")
+    if failures:
+        lines += ["", "## Failures"]
+        lines += [f"- {failure}" for failure in failures]
+    lines += [
+        "",
+        "## Notes",
+        "- This smoke drives the frontend through HTTP and WebSocket, not direct Python state calls.",
+        "- Touches use rendered display coordinates and rely on the frontend orientation mapping.",
+        "- Category coverage is raw-frame-sequence based; screenshots are converted only when recorded.",
+        "",
+    ]
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    print(json.dumps({"ok": summary["ok"], "summary": str(json_path), "report": str(report_path), "failures": failures}, ensure_ascii=False))
+    return 0 if summary["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run a user-like web frontend smoke test over HTTP and WebSocket.")
     ap.add_argument("--host", default="127.0.0.1")
@@ -571,14 +637,38 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="hwemu_frontend_web_smoke")
+    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot")
     ap.add_argument("--boot-timeout", type=int, default=480)
     ap.add_argument("--chunk-steps", type=int, default=250000)
-    ap.add_argument("--worker-slice-seconds", type=float, default=0.25)
     ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
-    ap.add_argument("--completed-step-timer", action="store_true", default=False)
-    ap.add_argument("--completed-step-timer-after-auto-boot", action="store_true", default=False)
-    ap.add_argument("--no-cp0-status-accelerator", action="store_true", default=False)
-    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", default=False)
+    ap.add_argument("--backend", choices=["qemu"], default="qemu")
+    ap.add_argument("--qemu", default=None)
+    ap.add_argument("--qemu-machine", dest="qemu_machine", default=None)
+    ap.add_argument("--qemu-cpu", dest="qemu_cpu", default=None)
+    ap.add_argument("--qemu-accel", dest="qemu_accel", default=None)
+    ap.add_argument("--qemu-gdb", dest="qemu_gdb", default=None)
+    ap.add_argument("--qemu-timeout", dest="qemu_timeout", type=float, default=None)
+    ap.add_argument("--qemu-firmware-patch", action="append", default=None)
+    ap.add_argument("--qemu-machine-option", action="append", default=[])
+    ap.add_argument("--qemu-extra-arg", action="append", default=[])
+    ap.add_argument(
+        "--qemu-frontend-auto-calibration",
+        action="store_true",
+        default=True,
+        help="For QEMU backend diagnostics, use the Python frontend auto-calibration helper through the QEMU input chardev. Enabled by default.",
+    )
+    ap.add_argument(
+        "--qemu-no-frontend-auto-calibration",
+        dest="qemu_frontend_auto_calibration",
+        action="store_false",
+        help="Disable frontend input calibration, for explicit C-machine touch-autocal diagnostics.",
+    )
+    ap.add_argument(
+        "--qemu-run-storage-service",
+        action="store_true",
+        default=False,
+        help="For QEMU backend diagnostics, explicitly run the legacy Python/GDB storage service during the smoke.",
+    )
     ap.add_argument(
         "--interaction-frame-timeout",
         type=float,
@@ -618,6 +708,196 @@ def main(argv: list[str] | None = None) -> int:
                 "status": summarize_status(reset_reply or ws.last_status),
             }
         )
+
+        if ns.backend == "qemu":
+            if ns.qemu_frontend_auto_calibration:
+                auto_reply = http_json(ns.host, port, "POST", "/api/command", {"op": "auto-calibration", "enabled": True})
+                interactions.append(
+                    {
+                        "step": "qemu-enable-auto-calibration",
+                        "status": summarize_status(auto_reply or ws.last_status),
+                    }
+                )
+            else:
+                interactions.append(
+                    {
+                        "step": "qemu-use-machine-autocal-diagnostic",
+                        "status": summarize_status(ws.last_status),
+                    }
+                )
+            active_status = None
+            deadline = time.time() + ns.boot_timeout
+            while time.time() < deadline:
+                candidate = http_json(ns.host, port, "GET", "/api/status?detail=full")
+                gui = candidate.get("guest_gui_state") if isinstance(candidate.get("guest_gui_state"), dict) else {}
+                stage_ready = (
+                    not ns.qemu_frontend_auto_calibration
+                    or candidate.get("auto_calibration_stage") == 12
+                )
+                if stage_ready and gui.get("active_object_ready"):
+                    active_status = candidate
+                    break
+                time.sleep(0.25)
+            interactions.append(
+                {
+                    "step": "qemu-wait-active-object",
+                    "status": summarize_status(active_status or candidate if "candidate" in locals() else {}),
+                }
+            )
+            if active_status is None:
+                failures.append("qemu frontend input calibration did not reach an active GUI object")
+            qemu_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+            qemu_info = qemu_status.get("qemu") if isinstance(qemu_status.get("qemu"), dict) else {}
+            register_sample = qemu_info.get("register_sample") if isinstance(qemu_info, dict) else None
+            interactions.append(
+                {
+                    "step": "qemu-status",
+                    "status": summarize_status(qemu_status),
+                    "qemu": qemu_info,
+                }
+            )
+            if qemu_status.get("backend") != "qemu":
+                failures.append("frontend did not report qemu backend")
+            if not qemu_status.get("running"):
+                failures.append("qemu backend was not running after reset")
+            if not isinstance(register_sample, dict) or not register_sample.get("pc"):
+                failures.append("qemu backend did not provide a register sample")
+            status_code, png = http_bytes(ns.host, port, "/screen.png")
+            if status_code != 200 or not png.startswith(b"\x89PNG\r\n\x1a\n"):
+                failures.append("qemu backend /screen.png did not return a PNG")
+                qemu_screen_digest = None
+            else:
+                qemu_screen_digest = hashlib.sha256(png).hexdigest()
+                out_path = ns.out_dir / f"{ns.prefix}_qemu_screen.png"
+                out_path.write_bytes(png)
+                screenshots["qemu_screen"] = {"path": str(out_path), "sha256": qemu_screen_digest}
+            screen_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+            interactions.append(
+                {
+                    "step": "qemu-screen",
+                    "status": summarize_status(screen_status),
+                    "framebuffer": screen_status.get("framebuffer"),
+                    "qemu": screen_status.get("qemu"),
+                    "qemu_storage_bootstrap_log": screen_status.get("qemu_storage_bootstrap_log"),
+                }
+            )
+            key_status = http_json(ns.host, port, "POST", "/api/command", {"op": "key", "code": 7, "down": True})
+            interactions.append(
+                {
+                    "step": "qemu-key-bridge",
+                    "status": summarize_status(key_status),
+                    "qemu_input_result": key_status.get("qemu_input_result"),
+                }
+            )
+            if not key_status.get("input_accepted"):
+                failures.append(f"qemu key bridge did not accept input: {key_status.get('qemu_input_result') or key_status.get('warning')}")
+            touch_status = http_json(ns.host, port, "POST", "/api/command", {"op": "touch", "x": 150, "y": 220, "down": True})
+            touch_drain_status = wait_qemu_display_queue_drained(ns.host, port, 3.0)
+            touch_up_status = http_json(ns.host, port, "POST", "/api/command", {"op": "touch", "x": 150, "y": 220, "down": False})
+            touch_up_drain_status = wait_qemu_display_queue_drained(ns.host, port, 3.0)
+            storage_service_replies = []
+            if ns.qemu_run_storage_service:
+                for _ in range(3):
+                    storage_reply = http_json(
+                        ns.host,
+                        port,
+                        "POST",
+                        "/api/command",
+                        {"op": "qemu-storage-service", "timeout": 1.0, "max_hits": 256},
+                    )
+                    storage_service_replies.append(
+                        {
+                            "status": summarize_status(storage_reply),
+                            "result": storage_reply.get("qemu_storage_service_result"),
+                        }
+                    )
+                    result = storage_reply.get("qemu_storage_service_result")
+                    if not isinstance(result, dict) or int(result.get("handled_count") or 0) == 0:
+                        break
+            time.sleep(0.3)
+            post_touch_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+            post_touch_framebuffer = (
+                post_touch_status.get("framebuffer")
+                if isinstance(post_touch_status.get("framebuffer"), dict)
+                else {}
+            )
+            interactions.append(
+                {
+                    "step": "qemu-touch-bridge",
+                    "status": summarize_status(touch_status),
+                    "qemu_input_result": touch_status.get("qemu_input_result"),
+                    "touch_drain_status": summarize_status(touch_drain_status),
+                    "touch_drain_display_event_queue": touch_drain_status.get("display_event_queue"),
+                    "touch_up_status": summarize_status(touch_up_status),
+                    "touch_up_qemu_input_result": touch_up_status.get("qemu_input_result"),
+                    "touch_up_drain_status": summarize_status(touch_up_drain_status),
+                    "touch_up_drain_display_event_queue": touch_up_drain_status.get("display_event_queue"),
+                    "post_touch_status": summarize_status(post_touch_status),
+                    "post_touch_guest_gui_state": post_touch_status.get("guest_gui_state"),
+                    "post_touch_display_event_queue": post_touch_status.get("display_event_queue"),
+                    "storage_service_replies": storage_service_replies,
+                }
+            )
+            if not looks_like_menu_family(post_touch_status):
+                failures.append(
+                    "qemu main menu resources did not render completely: "
+                    f"stage={post_touch_status.get('auto_calibration_stage')} "
+                    f"nonzero={post_touch_framebuffer.get('nonzero_pixels')} "
+                    f"unique={post_touch_framebuffer.get('unique_pixel_values')}"
+                )
+            if not touch_status.get("input_accepted"):
+                failures.append(f"qemu touch bridge did not accept input: {touch_status.get('qemu_input_result') or touch_status.get('warning')}")
+            else:
+                qemu_c_touch_consumed = False
+                touch_result = touch_status.get("qemu_input_result") if isinstance(touch_status.get("qemu_input_result"), dict) else {}
+                touch_up_result = touch_up_status.get("qemu_input_result") if isinstance(touch_up_status.get("qemu_input_result"), dict) else {}
+                if touch_result.get("source") == "qemu-c-machine-chardev":
+                    if not qemu_display_queue_drained(touch_drain_status):
+                        failures.append(f"qemu touch event was not naturally consumed by firmware GUI ring: {touch_drain_status.get('display_event_queue')}")
+                    if not qemu_display_queue_drained(touch_up_drain_status):
+                        failures.append(f"qemu touch release was not naturally consumed by firmware GUI ring: {touch_up_drain_status.get('display_event_queue')}")
+                    qemu_c_touch_consumed = (
+                        qemu_display_queue_drained(touch_drain_status)
+                        and qemu_display_queue_drained(touch_up_drain_status)
+                    )
+                else:
+                    qemu_c_touch_consumed = False
+                    if not isinstance(touch_result.get("gui_handler"), dict):
+                        failures.append("qemu touch bridge did not report GUI handler status")
+                    else:
+                        gui_handler = touch_result.get("gui_handler")
+                        assert isinstance(gui_handler, dict)
+                        call = gui_handler.get("call") if isinstance(gui_handler.get("call"), dict) else {}
+                        if not gui_handler.get("called") or not call.get("returned"):
+                            failures.append(f"qemu touch bridge did not return from GUI handler: {gui_handler}")
+                    gui_ring_pump = touch_result.get("gui_ring_pump")
+                    if not isinstance(gui_ring_pump, dict) or not gui_ring_pump.get("pumped") or not gui_ring_pump.get("called"):
+                        failures.append(f"qemu touch bridge did not pump GUI ring: {gui_ring_pump}")
+                    modal_close = touch_up_result.get("gui_modal_close_settle") if isinstance(touch_up_result, dict) else None
+                    if not isinstance(modal_close, dict) or not modal_close.get("attempted") or not modal_close.get("closed"):
+                        failures.append(f"qemu touch release did not settle modal close: {modal_close}")
+                    event_poller = touch_up_result.get("gui_event_poller") if isinstance(touch_up_result, dict) else None
+                    if not isinstance(event_poller, dict) or not event_poller.get("drained"):
+                        failures.append(f"qemu touch release did not drain GUI event flags: {event_poller}")
+                    repaint_settle = touch_up_result.get("gui_repaint_settle") if isinstance(touch_up_result, dict) else None
+                    if not isinstance(repaint_settle, dict) or not repaint_settle.get("settled"):
+                        failures.append(f"qemu touch release did not settle GUI repaint loop: {repaint_settle}")
+            status_code, after_png = http_bytes(ns.host, port, "/screen.png")
+            if status_code == 200 and after_png.startswith(b"\x89PNG\r\n\x1a\n") and qemu_screen_digest:
+                after_digest = hashlib.sha256(after_png).hexdigest()
+                screenshots["qemu_screen_after_touch"] = {
+                    "path": str(ns.out_dir / f"{ns.prefix}_qemu_screen_after_touch.png"),
+                    "sha256": after_digest,
+                }
+                (ns.out_dir / f"{ns.prefix}_qemu_screen_after_touch.png").write_bytes(after_png)
+                if after_digest == qemu_screen_digest and not qemu_c_touch_consumed:
+                    failures.append("qemu touch input was accepted but framebuffer did not change")
+            stopped = http_json(ns.host, port, "POST", "/api/command", {"op": "stop"})
+            interactions.append({"step": "qemu-stop", "status": summarize_status(stopped)})
+            if stopped.get("running"):
+                failures.append("qemu backend stop left process running")
+            logs = http_json(ns.host, port, "GET", "/api/logs?limit=80")
+            return _write_summary(ns, port, start, menu_elapsed_seconds, failures, screenshots, interactions, logs, ws)
 
         auto_started = time.time()
         auto_reply = ws.send_command({"op": "auto-calibration", "enabled": True}, timeout=3)

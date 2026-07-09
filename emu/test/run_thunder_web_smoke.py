@@ -424,22 +424,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="thunder_web_smoke")
+    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot")
     ap.add_argument("--boot-timeout", type=int, default=240)
     ap.add_argument("--runtime-timeout", type=int, default=45)
     ap.add_argument("--chunk-steps", type=int, default=250000)
-    ap.add_argument("--worker-slice-seconds", type=float, default=0.02)
     ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
     ap.add_argument("--fps-probe-seconds", type=float, default=0.0)
-    ap.add_argument("--completed-step-timer", action="store_true", default=False)
-    ap.add_argument("--completed-step-timer-after-auto-boot", action="store_true", default=False)
-    ap.add_argument("--completed-step-timer-at-thunder-menu", action="store_true", default=False)
-    ap.add_argument("--no-cp0-status-accelerator", action="store_true", default=False)
-    ap.add_argument("--no-glyph-mask-accelerator", action="store_true", default=False)
     ap.add_argument("--frontend-profile-out", type=Path)
-    ap.add_argument("--worker-profile-out", type=Path)
-    ap.add_argument("--hot-path-stats", action="store_true", default=False)
     ap.add_argument("--event-probe", action="store_true", default=False)
     ap.add_argument("--battle-state-out", type=Path, help="Save a frontend checkpoint after Thunder reaches battle.")
+    ap.add_argument("--backend", choices=["qemu"], default="qemu")
+    ap.add_argument("--qemu", default=None)
+    ap.add_argument("--qemu-machine", dest="qemu_machine", default=None)
+    ap.add_argument("--qemu-cpu", dest="qemu_cpu", default=None)
+    ap.add_argument("--qemu-accel", dest="qemu_accel", default=None)
+    ap.add_argument("--qemu-gdb", dest="qemu_gdb", default=None)
+    ap.add_argument("--qemu-timeout", dest="qemu_timeout", type=float, default=None)
+    ap.add_argument("--qemu-firmware-patch", action="append", default=None)
+    ap.add_argument("--qemu-extra-arg", action="append", default=[])
     ns = ap.parse_args(argv)
 
     ns.out_dir.mkdir(parents=True, exist_ok=True)
@@ -463,6 +465,63 @@ def main(argv: list[str] | None = None) -> int:
         ws.send_json({"op": "reset"})
         pump_for(ws, 1.0)
         ws.send_json({"op": "auto-calibration", "enabled": True})
+        if ns.backend == "qemu":
+            resource_trace_status = ws.send_command(
+                {"op": "qemu-resource-trace", "timeout": min(20.0, ns.boot_timeout), "max_hits": 2048},
+                timeout=min(25.0, ns.boot_timeout + 5.0),
+            ) or {}
+            interactions.append(
+                {
+                    "step": "qemu-resource-trace-after-autocalibration",
+                    "result": resource_trace_status.get("qemu_resource_trace_result"),
+                    "qemu": resource_trace_status.get("qemu"),
+                }
+            )
+            deadline = time.time() + ns.boot_timeout
+            active_status: dict[str, object] | None = None
+            last_status: dict[str, object] = {}
+            while time.time() < deadline:
+                last_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+                gui = last_status.get("guest_gui_state") if isinstance(last_status.get("guest_gui_state"), dict) else {}
+                if last_status.get("auto_calibration_stage") == 12 and gui.get("active_object_ready"):
+                    active_status = last_status
+                    break
+                pump_for(ws, 0.2)
+            interactions.append(
+                {
+                    "step": "qemu-wait-active-object",
+                    "status": summarize_status(active_status or last_status),
+                    "guest_display_surface": (active_status or last_status).get("guest_display_surface"),
+                    "guest_gui_state": (active_status or last_status).get("guest_gui_state"),
+                    "qemu_auto_calibration_log": (active_status or last_status).get("qemu_auto_calibration_log"),
+                    "qemu_storage_bootstrap_log": (active_status or last_status).get("qemu_storage_bootstrap_log"),
+                }
+            )
+            if active_status is None:
+                failures.append("qemu auto-calibration did not reach an active GUI object")
+            else:
+                modal_capture = capture_after(
+                    ws,
+                    ns.host,
+                    port,
+                    ns.out_dir,
+                    ns.prefix,
+                    "00_qemu_initial_screen",
+                    0.5,
+                )
+                captures.append(modal_capture)
+                modal_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+                gui = modal_status.get("guest_gui_state") if isinstance(modal_status.get("guest_gui_state"), dict) else {}
+                if gui.get("modal_804a65c0"):
+                    failures.append("qemu initial system modal is visible; system files were not read correctly")
+                interactions.append(
+                    {
+                        "step": "qemu-initial-screen",
+                        "capture": modal_capture,
+                        "status": modal_capture.get("status"),
+                        "guest_gui_state": gui,
+                    }
+                )
         pump_for(ws, 0.5)
         ws.send_json({"op": "run-start", "name": "thunder-web-smoke", "steps": 0, "chunk": ns.chunk_steps})
         menu_status = ws.wait_for(
@@ -472,6 +531,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         interactions.append({"step": "wait-menu", "status": summarize_status(menu_status)})
         if not looks_like_menu(menu_status):
+            if ns.backend == "qemu":
+                screen_status_code, screen_png, screen_digest = fetch_screen_digest(ns.host, port)
+                if screen_status_code == 200:
+                    screen_path = ns.out_dir / f"{ns.prefix}_qemu_wait_menu.png"
+                    screen_path.write_bytes(screen_png)
+                qemu_menu_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
+                interactions.append(
+                    {
+                        "step": "qemu-wait-menu-detail",
+                        "status": summarize_status(qemu_menu_status),
+                        "screen_status_code": screen_status_code,
+                        "screen_sha256": screen_digest,
+                        "screen_path": str(screen_path) if screen_status_code == 200 else None,
+                        "screen_image_stats": png_rgb_stats(screen_png) if screen_status_code == 200 else {},
+                        "framebuffer": qemu_menu_status.get("framebuffer"),
+                        "guest_display_surface": qemu_menu_status.get("guest_display_surface"),
+                        "guest_gui_state": qemu_menu_status.get("guest_gui_state"),
+                    }
+                )
             failures.append("cold boot did not reach the main menu")
         else:
             menu_capture = capture_after(ws, ns.host, port, ns.out_dir, ns.prefix, "00_menu", 0.5)
@@ -613,14 +691,6 @@ def main(argv: list[str] | None = None) -> int:
                 thunder_menu_ready = thunder_fullscreen_like(menu_status) and thunder_menu_capture_like(menu_capture)
 
                 if thunder_menu_ready:
-                    if ns.completed_step_timer_at_thunder_menu and ws is not None:
-                        timer_reply = ws.send_command({"op": "completed-step-timer", "enabled": True}, timeout=3.0)
-                        interactions.append(
-                            {
-                                "step": "enable-completed-step-timer-at-thunder-menu",
-                                "status": summarize_status(timer_reply or ws.last_status),
-                            }
-                        )
                     key_press(ws, KEY_OK, poll_status=lambda: http_json(ns.host, port, "GET", "/api/status"))
                     start_capture = capture_when(
                         ws,
