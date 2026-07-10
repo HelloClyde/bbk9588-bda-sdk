@@ -145,10 +145,18 @@ let pointerActive = false;
 let activePointerId = null;
 let touchDownAt = 0;
 let pendingTouchReleaseTimer = null;
+let pendingTouchMove = null;
+let pendingTouchMoveFrame = null;
+let pendingTouchMoveTimer = null;
+let lastTouchMoveSentAt = 0;
+let touchMoveAwaitingFrame = false;
 let currentOrientation = 'rot180';
 let rgb565Lut = null;
 let rawImageData = null;
 const minTouchHoldMs = 180;
+const minTouchMoveIntervalMs = 1000 / 30;
+const touchMoveBackpressureMs = 100;
+const minKeyHoldMs = 100;
 const wsIdleReconnectMs = 5000;
 
 async function api(path, opts = {}) {
@@ -248,14 +256,76 @@ function cancelPendingTouchRelease() {
     pendingTouchReleaseTimer = null;
   }
 }
+function clearPendingTouchMove() {
+  pendingTouchMove = null;
+  if (pendingTouchMoveFrame !== null) {
+    cancelAnimationFrame(pendingTouchMoveFrame);
+    pendingTouchMoveFrame = null;
+  }
+  if (pendingTouchMoveTimer !== null) {
+    clearTimeout(pendingTouchMoveTimer);
+    pendingTouchMoveTimer = null;
+  }
+}
+function flushPendingTouchMove() {
+  if (!pendingTouchMove) {
+    clearPendingTouchMove();
+    return false;
+  }
+  const move = pendingTouchMove;
+  clearPendingTouchMove();
+  const sent = sendTouchAt(move.clientX, move.clientY, true, 'move', move.source, true);
+  if (sent) {
+    lastTouchMoveSentAt = performance.now();
+    touchMoveAwaitingFrame = true;
+  }
+  return sent;
+}
+function schedulePendingTouchMove() {
+  if (pendingTouchMoveFrame !== null || pendingTouchMoveTimer !== null) return;
+  const elapsed = performance.now() - lastTouchMoveSentAt;
+  const rateDelay = minTouchMoveIntervalMs - elapsed;
+  const frameDelay = touchMoveAwaitingFrame ? touchMoveBackpressureMs - elapsed : 0;
+  const delay = Math.max(0, rateDelay, frameDelay);
+  if (delay > 0) {
+    pendingTouchMoveTimer = setTimeout(() => {
+      pendingTouchMoveTimer = null;
+      schedulePendingTouchMove();
+    }, delay);
+    return;
+  }
+  pendingTouchMoveFrame = requestAnimationFrame(() => {
+    pendingTouchMoveFrame = null;
+    const move = pendingTouchMove;
+    pendingTouchMove = null;
+    if (move && pointerActive) {
+      if (sendTouchAt(move.clientX, move.clientY, true, 'move', move.source, true)) {
+        lastTouchMoveSentAt = performance.now();
+        touchMoveAwaitingFrame = true;
+      }
+    }
+    if (pendingTouchMove) schedulePendingTouchMove();
+  });
+}
+function queueTouchMove(clientX, clientY, source = 'pointer') {
+  pendingTouchMove = {clientX, clientY, source};
+  schedulePendingTouchMove();
+}
 function sendTouchReleaseAt(clientX, clientY, phase, source = 'pointer', clamp = true) {
+  flushPendingTouchMove();
   const elapsed = performance.now() - touchDownAt;
   const delay = Math.max(0, minTouchHoldMs - elapsed);
   cancelPendingTouchRelease();
   pendingTouchReleaseTimer = setTimeout(() => {
     pendingTouchReleaseTimer = null;
     sendTouchAt(clientX, clientY, false, phase, source, clamp);
+    touchMoveAwaitingFrame = false;
   }, delay);
+}
+function noteScreenFrame() {
+  if (!touchMoveAwaitingFrame) return;
+  touchMoveAwaitingFrame = false;
+  if (pendingTouchMove && pointerActive) schedulePendingTouchMove();
 }
 function formatElapsed(seconds) {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '';
@@ -394,6 +464,8 @@ function renderStatus(s) {
     ['run elapsed', formatElapsed(s.run_elapsed_seconds)],
     ['qemu fps', formatRate(firstNumber(qemuPerf.frame_chardev_fps, qemuPerf.frame_chardev_average_fps), 'fps')],
     ['web fps', formatRate(frontendPerf.websocket_fps, 'fps')],
+    ['web tx', formatRate(frontendPerf.websocket_transport_fps, 'fps')],
+    ['ws clients', s.frame_push?.ws_connections ?? 0],
     ['png fps', formatRate(frontendPerf.screen_png_fps, 'fps')],
     ['qemu cpu', formatPercent(firstNumber(qemuPerf.qemu_cpu_one_core_percent, qemuPerf.qemu_cpu_host_percent))],
     ['guest ips', formatGuestIps(qemuPerf)],
@@ -407,6 +479,8 @@ function renderStatus(s) {
     ['last input', formatLastInput(s)],
     ['frame queued', `${s.frame_push?.queued_count ?? 0}/${s.queued_frames ?? 0}`],
     ['frame sent', s.frame_push?.ws_sent_count ?? 0],
+    ['push lag', `${s.frame_push?.source_lag_ms ?? ''} ms`],
+    ['frame skipped', s.frame_push?.replace_count ?? 0],
     ['job', s.job?.name || ''],
     ['job mode', s.job?.mode || ''],
     ['job status', s.job?.status || ''],
@@ -539,6 +613,7 @@ function drawRawRgb565Frame(buffer) {
     }
   }
   screenCtx.putImageData(image, 0, 0);
+  noteScreenFrame();
   return true;
 }
 async function drawPngFrame(data) {
@@ -547,6 +622,7 @@ async function drawPngFrame(data) {
   ensureScreenSize(bitmap.width, bitmap.height);
   screenCtx.drawImage(bitmap, 0, 0);
   bitmap.close?.();
+  noteScreenFrame();
 }
 function stopWsWatchdog() {
   if (wsWatchdog) {
@@ -673,6 +749,7 @@ document.getElementById('reloadImages').onclick = () => refreshImages().catch(er
 });
 document.getElementById('applyNandImage').onclick = applyNandImage;
 const activeButtonPointers = new Map();
+const buttonKeyStates = new Map();
 const activeKeyboardKeys = new Set();
 function sendKeyButton(btn, down, phase = '') {
   btn.classList.toggle('active', down);
@@ -686,13 +763,36 @@ function sendKeyButton(btn, down, phase = '') {
     run:true,
   });
 }
+function beginKeyButton(btn) {
+  const code = Number(btn.dataset.key);
+  const pending = buttonKeyStates.get(code);
+  if (pending?.releaseTimer) {
+    clearTimeout(pending.releaseTimer);
+    pending.releaseTimer = null;
+    btn.classList.add('active');
+    return;
+  }
+  if (pending) return;
+  sendKeyButton(btn, true, 'down');
+  buttonKeyStates.set(code, {btn, downAt:performance.now(), releaseTimer:null});
+}
+function endKeyButton(btn, phase) {
+  const code = Number(btn.dataset.key);
+  const state = buttonKeyStates.get(code);
+  if (!state || state.releaseTimer) return;
+  const delay = Math.max(0, minKeyHoldMs - (performance.now() - state.downAt));
+  state.releaseTimer = setTimeout(() => {
+    sendKeyButton(state.btn, false, phase);
+    buttonKeyStates.delete(code);
+  }, delay);
+}
 document.querySelectorAll('[data-key]').forEach(btn => {
   btn.addEventListener('pointerdown', ev => {
     ev.preventDefault();
     if (activeButtonPointers.has(ev.pointerId)) return;
     activeButtonPointers.set(ev.pointerId, btn);
     btn.setPointerCapture?.(ev.pointerId);
-    sendKeyButton(btn, true, 'down');
+    beginKeyButton(btn);
   });
   btn.addEventListener('pointerup', ev => {
     ev.preventDefault();
@@ -700,14 +800,13 @@ document.querySelectorAll('[data-key]').forEach(btn => {
     if (!active) return;
     activeButtonPointers.delete(ev.pointerId);
     active.releasePointerCapture?.(ev.pointerId);
-    sendKeyButton(active, false, 'up');
+    endKeyButton(active, 'up');
   });
   btn.addEventListener('pointercancel', ev => {
     const active = activeButtonPointers.get(ev.pointerId);
     if (!active) return;
     activeButtonPointers.delete(ev.pointerId);
-    active.classList.remove('active');
-    sendKeyButton(active, false, 'cancel');
+    endKeyButton(active, 'cancel');
   });
 });
 function keyCodeFromKeyboard(ev) {
@@ -737,6 +836,8 @@ screen.addEventListener('pointerdown', ev => {
   ev.preventDefault();
   ev.stopPropagation();
   cancelPendingTouchRelease();
+  clearPendingTouchMove();
+  touchMoveAwaitingFrame = false;
   if (sendTouchAt(ev.clientX, ev.clientY, true, 'down', ev.pointerType || 'pointer')) {
     pointerActive = true;
     activePointerId = ev.pointerId;
@@ -749,7 +850,7 @@ screen.addEventListener('pointermove', ev => {
   ev.preventDefault();
   ev.stopPropagation();
   cancelPendingTouchRelease();
-  sendTouchAt(ev.clientX, ev.clientY, true, 'move', ev.pointerType || 'pointer', true);
+  queueTouchMove(ev.clientX, ev.clientY, ev.pointerType || 'pointer');
 });
 screen.addEventListener('pointerup', ev => {
   if (!pointerActive || ev.pointerId !== activePointerId) return;
@@ -773,10 +874,19 @@ screen.addEventListener('mousedown', ev => {
   ev.preventDefault();
   ev.stopPropagation();
   cancelPendingTouchRelease();
+  clearPendingTouchMove();
+  touchMoveAwaitingFrame = false;
   if (sendTouchAt(ev.clientX, ev.clientY, true, 'down', 'mouse')) {
     pointerActive = true;
     touchDownAt = performance.now();
   }
+});
+screen.addEventListener('mousemove', ev => {
+  if (window.PointerEvent || !pointerActive) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  cancelPendingTouchRelease();
+  queueTouchMove(ev.clientX, ev.clientY, 'mouse');
 });
 window.addEventListener('mouseup', ev => {
   if (window.PointerEvent || !pointerActive) return;
@@ -788,9 +898,20 @@ screen.addEventListener('touchstart', ev => {
   ev.preventDefault();
   const t = ev.changedTouches[0];
   cancelPendingTouchRelease();
+  clearPendingTouchMove();
+  touchMoveAwaitingFrame = false;
   if (t && sendTouchAt(t.clientX, t.clientY, true, 'down', 'touch')) {
     pointerActive = true;
     touchDownAt = performance.now();
+  }
+}, {passive:false});
+screen.addEventListener('touchmove', ev => {
+  if (window.PointerEvent || !pointerActive) return;
+  ev.preventDefault();
+  const t = ev.changedTouches[0];
+  if (t) {
+    cancelPendingTouchRelease();
+    queueTouchMove(t.clientX, t.clientY, 'touch');
   }
 }, {passive:false});
 screen.addEventListener('touchend', ev => {

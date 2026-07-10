@@ -244,6 +244,8 @@ class FrontendState:
         self.frame_push_replace_count = 0
         self.frame_push_drop_count = 0
         self.frame_push_error_count = 0
+        self.frame_push_last_source_lag_ms: float | None = None
+        self.frame_push_max_source_lag_ms = 0.0
         self.frame_info_last_time = 0.0
         self.frame_info_update_count = 0
 
@@ -254,6 +256,7 @@ class FrontendState:
         self.cached_ws_frame_bytes: bytes | None = None
         self.cached_ws_frame_time = 0.0
         self.qemu_last_ws_frame_seq: int | None = None
+        self.qemu_legacy_ws_pop_seq: int | None = None
 
         self.ws_frame_sent_count = 0
         self.ws_frame_sent_bytes = 0
@@ -266,6 +269,7 @@ class FrontendState:
         self.frontend_performance_metrics: dict[str, object] = {}
         self._perf_last_time: float | None = None
         self._perf_last_ws_frame_sent_count = 0
+        self._perf_last_frame_push_queued_count = 0
         self._perf_last_screen_png_count = 0
         self.ws_command_count = 0
         self.ws_last_command_op = ""
@@ -273,6 +277,8 @@ class FrontendState:
         self.ws_last_command_at = 0.0
         self.ws_reader_alive = False
         self.ws_reader_heartbeat = 0.0
+        self.ws_connection_count = 0
+        self.ws_connection_peak = 0
         self.frontend_activity_seq = 0
 
         self.reset()
@@ -377,6 +383,7 @@ class FrontendState:
         self.cached_ws_frame_bytes = None
         self.cached_ws_frame_time = 0.0
         self.qemu_last_ws_frame_seq = None
+        self.qemu_legacy_ws_pop_seq = None
         self.frame_push_last_time = 0.0
         self.frame_push_hook_count = 0
         self.frame_push_queued_count = 0
@@ -385,6 +392,8 @@ class FrontendState:
         self.frame_push_replace_count = 0
         self.frame_push_drop_count = 0
         self.frame_push_error_count = 0
+        self.frame_push_last_source_lag_ms = None
+        self.frame_push_max_source_lag_ms = 0.0
         self.frame_info_last_time = 0.0
         self.frame_info_update_count = 0
         self.ws_frame_sent_count = 0
@@ -398,6 +407,7 @@ class FrontendState:
         self.frontend_performance_metrics = {}
         self._perf_last_time = None
         self._perf_last_ws_frame_sent_count = 0
+        self._perf_last_frame_push_queued_count = 0
         self._perf_last_screen_png_count = 0
         with self.input_lock:
             self.pending_touches.clear()
@@ -406,6 +416,9 @@ class FrontendState:
     def reset(self) -> dict[str, object]:
         old_backend = self.qemu_backend
         if old_backend is not None:
+            callback_setter = getattr(old_backend, "set_frame_ready_callback", None)
+            if callback_setter is not None:
+                callback_setter(None)
             old_backend.stop()
         self.cancel_run.set()
         if self.qemu_worker is not None and self.qemu_worker.is_alive() and self.qemu_worker is not threading.current_thread():
@@ -435,6 +448,7 @@ class FrontendState:
                 firmware_patches=getattr(self.args, "qemu_firmware_patch", None),
             )
             self.qemu_backend = QemuProcessBackend(config)
+            self.qemu_backend.set_frame_ready_callback(self._on_qemu_frame_ready)
             try:
                 self.qemu_backend.start()
                 self.running = bool(self._backend_snapshot(self.qemu_backend, refresh=False).get("running"))
@@ -509,20 +523,26 @@ class FrontendState:
             return latest
         return None
 
+    def _on_qemu_frame_ready(self) -> None:
+        self.frame_push_hook_count += 1
+        self._notify_frontend_activity()
+
     def pop_queued_frame(self) -> bytes | None:
         return None
 
     def pop_latest_queued_frame(self) -> bytes | None:
         return self.pop_queued_frame()
 
-    def pop_queued_ws_frame(self) -> bytes | None:
+    def latest_ws_frame_after(self, last_seq: int | None) -> tuple[int, bytes] | None:
         with self.lock:
             latest = self._latest_qemu_raw_frame_locked()
             if latest is None:
                 return None
             seq, captured_at, raw = latest
-            if self.qemu_last_ws_frame_seq == seq:
+            if last_seq == seq:
                 return None
+            if self.qemu_last_ws_frame_seq == seq and self.cached_ws_frame_bytes is not None:
+                return seq, self.cached_ws_frame_bytes
             now = time.time()
             if self.qemu_last_ws_frame_seq is not None and now - self.frame_push_last_time < self.frame_push_min_interval:
                 self.frame_push_throttle_count += 1
@@ -533,13 +553,29 @@ class FrontendState:
                 self.frame_push_error_count += 1
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 return None
+            previous_seq = self.qemu_last_ws_frame_seq
             self.qemu_last_ws_frame_seq = seq
             self.cached_ws_frame_bytes = payload
             self.cached_ws_frame_time = captured_at
+            if previous_seq is not None:
+                source_gap = (int(seq) - int(previous_seq)) & 0xFFFFFFFF
+                if 1 < source_gap < 0x80000000:
+                    self.frame_push_replace_count += source_gap - 1
+            source_lag_ms = max(0.0, (now - captured_at) * 1000.0)
+            self.frame_push_last_source_lag_ms = source_lag_ms
+            self.frame_push_max_source_lag_ms = max(self.frame_push_max_source_lag_ms, source_lag_ms)
             self.frame_push_queued_count += 1
             self.frame_push_last_time = now
             self._notify_frontend_activity()
-            return payload
+            return seq, payload
+
+    def pop_queued_ws_frame(self) -> bytes | None:
+        latest = self.latest_ws_frame_after(self.qemu_legacy_ws_pop_seq)
+        if latest is None:
+            return None
+        seq, payload = latest
+        self.qemu_legacy_ws_pop_seq = seq
+        return payload
 
     def pop_latest_queued_ws_frame(self) -> bytes | None:
         return self.pop_queued_ws_frame()
@@ -678,9 +714,14 @@ class FrontendState:
             else None
         )
         websocket_fps: float | None = None
+        websocket_transport_fps: float | None = None
         screen_png_fps: float | None = None
         if interval is not None and interval > 0:
             websocket_fps = max(
+                0,
+                self.frame_push_queued_count - self._perf_last_frame_push_queued_count,
+            ) / interval
+            websocket_transport_fps = max(
                 0,
                 self.ws_frame_sent_count - self._perf_last_ws_frame_sent_count,
             ) / interval
@@ -688,7 +729,8 @@ class FrontendState:
                 0,
                 self.screen_png_count - self._perf_last_screen_png_count,
             ) / interval
-        websocket_average_fps = self.ws_frame_sent_count / elapsed if elapsed > 0 else None
+        websocket_average_fps = self.frame_push_queued_count / elapsed if elapsed > 0 else None
+        websocket_transport_average_fps = self.ws_frame_sent_count / elapsed if elapsed > 0 else None
         screen_png_average_fps = self.screen_png_count / elapsed if elapsed > 0 else None
         metrics: dict[str, object] = {
             "sampled_at": now,
@@ -696,6 +738,14 @@ class FrontendState:
             "websocket_fps": None if websocket_fps is None else round(websocket_fps, 2),
             "websocket_average_fps": (
                 None if websocket_average_fps is None else round(websocket_average_fps, 2)
+            ),
+            "websocket_transport_fps": (
+                None if websocket_transport_fps is None else round(websocket_transport_fps, 2)
+            ),
+            "websocket_transport_average_fps": (
+                None
+                if websocket_transport_average_fps is None
+                else round(websocket_transport_average_fps, 2)
             ),
             "screen_png_fps": None if screen_png_fps is None else round(screen_png_fps, 2),
             "screen_png_average_fps": (
@@ -707,6 +757,7 @@ class FrontendState:
         self.frontend_performance_metrics = metrics
         self._perf_last_time = now
         self._perf_last_ws_frame_sent_count = self.ws_frame_sent_count
+        self._perf_last_frame_push_queued_count = self.frame_push_queued_count
         self._perf_last_screen_png_count = self.screen_png_count
         return metrics
 
@@ -749,6 +800,23 @@ class FrontendState:
         self.ws_reader_alive = bool(alive)
         self.ws_reader_heartbeat = time.time()
         self._notify_frontend_activity()
+
+    def register_ws_connection(self) -> None:
+        with self.frontend_activity_condition:
+            self.ws_connection_count += 1
+            self.ws_connection_peak = max(self.ws_connection_peak, self.ws_connection_count)
+            self.ws_reader_alive = True
+            self.ws_reader_heartbeat = time.time()
+            self.frontend_activity_seq += 1
+            self.frontend_activity_condition.notify_all()
+
+    def unregister_ws_connection(self) -> None:
+        with self.frontend_activity_condition:
+            self.ws_connection_count = max(0, self.ws_connection_count - 1)
+            self.ws_reader_alive = self.ws_connection_count > 0
+            self.ws_reader_heartbeat = time.time()
+            self.frontend_activity_seq += 1
+            self.frontend_activity_condition.notify_all()
 
     def worker_active(self) -> bool:
         backend = self.qemu_backend
@@ -1255,6 +1323,12 @@ class FrontendState:
                 "deferred_due_at": None,
                 "drop_count": self.frame_push_drop_count,
                 "error_count": self.frame_push_error_count,
+                "source_lag_ms": (
+                    None
+                    if self.frame_push_last_source_lag_ms is None
+                    else round(self.frame_push_last_source_lag_ms, 2)
+                ),
+                "max_source_lag_ms": round(self.frame_push_max_source_lag_ms, 2),
                 "info_min_interval": self.frame_info_min_interval,
                 "info_update_count": self.frame_info_update_count,
                 "last_push_at": self.frame_push_last_time,
@@ -1266,6 +1340,9 @@ class FrontendState:
                 "ws_last_sent_at": self.ws_frame_last_sent_at,
                 "ws_fps": frontend_performance.get("websocket_fps"),
                 "ws_average_fps": frontend_performance.get("websocket_average_fps"),
+                "ws_transport_fps": frontend_performance.get("websocket_transport_fps"),
+                "ws_connections": self.ws_connection_count,
+                "ws_connection_peak": self.ws_connection_peak,
                 "screen_png_count": self.screen_png_count,
                 "screen_png_fps": frontend_performance.get("screen_png_fps"),
             },

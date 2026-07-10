@@ -69,6 +69,20 @@ class FrontendHandler(BaseHTTPRequestHandler):
             recorder(frame)
         return True
 
+    def _ws_send_latest_frame_payload(self, last_seq: int | None) -> tuple[bool, int | None]:
+        getter = getattr(self.state, "latest_ws_frame_after", None)
+        if getter is None:
+            return self._ws_send_queued_frame_payload(), last_seq
+        latest = getter(last_seq)
+        if latest is None:
+            return False, last_seq
+        seq, frame = latest
+        self._ws_send_frame(0x2, frame)
+        recorder = getattr(self.state, "record_ws_frame_sent", None)
+        if recorder is not None:
+            recorder(frame)
+        return True, int(seq)
+
     def _ws_response_for_text(self, text: str) -> dict[str, object] | None:
         if text is None:
             return None
@@ -111,6 +125,10 @@ class FrontendHandler(BaseHTTPRequestHandler):
         self.connection.settimeout(2.0)
         alive = threading.Event()
         alive.set()
+        connection_registrar = getattr(self.state, "register_ws_connection", None)
+        connection_unregistrar = getattr(self.state, "unregister_ws_connection", None)
+        if connection_registrar is not None:
+            connection_registrar()
         reader_alive_setter = getattr(self.state, "set_ws_reader_alive", None)
         if reader_alive_setter is not None:
             reader_alive_setter(True)
@@ -160,10 +178,13 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 return pending_responses.popleft() if pending_responses else None
 
         last_status_push = 0.0
+        last_frame_seq: int | None = None
         try:
             self._ws_send_json(self.state.snapshot())
             last_status_push = time.time()
-            self._ws_send_frame_payload(allow_cached=True, allow_dump=not self.state.worker_active())
+            frame_sent, last_frame_seq = self._ws_send_latest_frame_payload(last_frame_seq)
+            if not frame_sent:
+                self._ws_send_frame_payload(allow_cached=True, allow_dump=not self.state.worker_active())
             while alive.is_set() or pending_responses:
                 now = time.time()
                 response_sent = False
@@ -176,7 +197,8 @@ class FrontendHandler(BaseHTTPRequestHandler):
                     response_sent = True
                 if response_sent:
                     continue
-                if self._ws_send_queued_frame_payload():
+                frame_sent, last_frame_seq = self._ws_send_latest_frame_payload(last_frame_seq)
+                if frame_sent:
                     if now - last_status_push >= 0.5:
                         self._ws_send_json(self.state.snapshot())
                         last_status_push = now
@@ -209,6 +231,8 @@ class FrontendHandler(BaseHTTPRequestHandler):
             reader_thread.join(timeout=0.5)
             if reader_alive_setter is not None:
                 reader_alive_setter(False)
+            if connection_unregistrar is not None:
+                connection_unregistrar()
 
     def do_GET(self) -> None:
         try:

@@ -17,6 +17,7 @@ import struct
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -541,6 +542,7 @@ class QemuProcessBackend:
         self.frame_chardev_count = 0
         self.last_frame_chardev_error: str | None = None
         self.latest_frame_chardev: tuple[int, float, bytes] | None = None
+        self.frame_ready_callback: Callable[[], None] | None = None
         self.performance_metrics: dict[str, object] = {}
         self.guest_insn_count: int | None = None
         self.guest_insn_count_at: float = 0.0
@@ -870,6 +872,10 @@ class QemuProcessBackend:
         self.guest_insn_packet_count += 1
         self.last_guest_insn_error = None
 
+    def set_frame_ready_callback(self, callback: Callable[[], None] | None) -> None:
+        with self._lock:
+            self.frame_ready_callback = callback
+
     def _frame_reader(self) -> None:
         sock = self.bbk_frame_sock
         if sock is None:
@@ -908,10 +914,18 @@ class QemuProcessBackend:
                         f"fmt=0x{fmt:08x} len={payload_len}"
                     )
                 payload = self._recv_exact(sock, payload_len)
+                captured_at = time.time()
                 with self._lock:
-                    self.latest_frame_chardev = (seq, time.time(), payload)
+                    self.latest_frame_chardev = (seq, captured_at, payload)
                     self.frame_chardev_count += 1
                     self.last_frame_chardev_error = None
+                    frame_ready_callback = self.frame_ready_callback
+                if frame_ready_callback is not None:
+                    try:
+                        frame_ready_callback()
+                    except Exception:
+                        # A frontend notification must never stop frame ingestion.
+                        pass
         except Exception as exc:
             with self._lock:
                 self.last_frame_chardev_error = f"{type(exc).__name__}: {exc}"

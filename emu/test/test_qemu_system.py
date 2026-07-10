@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import http.client
@@ -21,6 +22,9 @@ from emu.qemu.system import (
     DEFAULT_QEMU_FIRMWARE_PATCHES,
     KNOWN_STALL_REGIONS,
     DEFAULT_QEMU_MACHINE,
+    QEMU_BBK_FRAME_FORMAT_RGB565,
+    QEMU_BBK_FRAME_HEADER,
+    QEMU_BBK_FRAME_MAGIC,
     QemuPayload,
     QemuProcessBackend,
     QemuSystemConfig,
@@ -1304,10 +1308,16 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("static uint32_t bbk9588_sadc_touch_fifo_pop", source)
         self.assertIn("if (board->sadc_touch_fifo_count == 0) {\n        return 0;", source)
         self.assertIn("static void bbk9588_sadc_complete_cpu_samples", source)
-        self.assertIn("static uint32_t bbk9588_sadc_conversion_delay_ms", source)
+        self.assertIn("static uint32_t bbk9588_sadc_touch_delay_ms", source)
         self.assertIn("static void bbk9588_sadc_schedule_conversion", source)
         self.assertIn("static void bbk9588_sadc_timer_cb", source)
         self.assertIn("board->sadc_pending_enable |= requested;", source)
+        self.assertIn("uint8_t previous_pending = board->sadc_pending_enable;", source)
+        self.assertIn("uint8_t new_cpu_channels = requested & cpu_channels & ~previous_pending;", source)
+        self.assertIn("if (previous_pending && !new_cpu_channels) {", source)
+        self.assertIn("delay_ms = new_cpu_channels ? 1u :", source)
+        self.assertIn("uint64_t scaled = (uint64_t)ticks * 128u;", source)
+        self.assertIn("(scaled + 11999u) / 12000u", source)
         self.assertIn("timer_mod(board->sadc_timer,\n              qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + delay_ms);", source)
         self.assertIn("board->sadc_pending_enable = 0;", source)
         self.assertIn("timer_new_ms(QEMU_CLOCK_REALTIME,\n                                     bbk9588_sadc_timer_cb, board)", source)
@@ -1324,7 +1334,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("case BBK9588_SADC_ADTCH_OFF: /* ADTCH */", source)
         self.assertIn("case BBK9588_SADC_ADBDAT_OFF: /* ADBDAT */", source)
         self.assertIn("case BBK9588_SADC_ADSDAT_OFF: /* ADSDAT */", source)
-        self.assertIn("if (board->sadc_status_event & BBK9588_SADC_STATE_DTCH) {\n            value = bbk9588_sadc_touch_fifo_pop(board);", source)
+        self.assertIn("if (board->sadc_touch_fifo_count > 0) {\n            value = bbk9588_sadc_touch_fifo_pop(board);", source)
         self.assertIn("bbk9588_sadc_schedule_conversion(board, requested);", source)
         self.assertIn("timer_del(board->sadc_timer);", source)
         self.assertIn("board->sadc_enable &= ~BBK9588_SADC_ADENA_PBATEN;", source)
@@ -2948,6 +2958,109 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(row.get("guest_ips_source"), "bbk9588-frame-chardev")
         self.assertEqual(row.get("guest_insn_count"), 3500)
         self.assertEqual(row.get("guest_insn_packet_count"), 2)
+
+    def test_qemu_frame_reader_notifies_frontend_immediately(self) -> None:
+        payload = b"\x00\x00" * (240 * 320)
+        packet = QEMU_BBK_FRAME_HEADER.pack(
+            QEMU_BBK_FRAME_MAGIC,
+            17,
+            240,
+            320,
+            480,
+            QEMU_BBK_FRAME_FORMAT_RGB565,
+            len(payload),
+        ) + payload
+
+        class FrameSocket:
+            def recv(self, size: int) -> bytes:
+                nonlocal packet
+                chunk, packet = packet[:size], packet[size:]
+                return chunk
+
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        backend.bbk_frame_sock = FrameSocket()  # type: ignore[assignment]
+        notifications: list[float] = []
+        backend.set_frame_ready_callback(lambda: notifications.append(time.time()))
+
+        backend._frame_reader()
+
+        self.assertEqual(backend.frame_chardev_count, 1)
+        self.assertEqual(backend.latest_frame_chardev[0] if backend.latest_frame_chardev else None, 17)
+        self.assertEqual(len(notifications), 1)
+
+    def test_bbk9588_pen_up_preserves_unread_touch_sample(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "emu/qemu/source-overlay/hw/mips/bbk9588.c").read_text(encoding="utf-8")
+        touch_set_state = source.split("static void bbk9588_touch_set_state(", 2)[2].split(
+            "static uint32_t bbk9588_gpio_idle_level", 1
+        )[0]
+
+        self.assertNotIn("bbk9588_sadc_touch_fifo_clear(board);", touch_set_state)
+        self.assertIn("board->sadc_status_event & ~BBK9588_SADC_STATE_PEND", touch_set_state)
+        self.assertNotIn(
+            "BBK9588_SADC_STATE_PEND | BBK9588_SADC_STATE_DTCH",
+            touch_set_state,
+        )
+        self.assertIn("board->sadc_conversion_events_remaining = 5;", touch_set_state)
+        self.assertIn("bool touch_move_pending;", source)
+        self.assertIn("bool was_down = board->touch_down;", touch_set_state)
+        self.assertIn("} else if (position_changed) {", touch_set_state)
+        self.assertIn("board->touch_move_pending = true;", touch_set_state)
+        self.assertIn("bool irq_needs_sync = was_down != down;", touch_set_state)
+        self.assertNotIn("irq_needs_sync = true;", touch_set_state)
+        initial_down = touch_set_state.split("if (!was_down) {", 1)[1].split(
+            "} else if (position_changed) {", 1
+        )[0]
+        move = touch_set_state.split("} else if (position_changed) {", 1)[1].split(
+            "    } else if (was_down) {", 1
+        )[0]
+        self.assertIn("board->sadc_conversion_events_remaining = 5;", initial_down)
+        self.assertIn("BBK9588_SADC_STATE_PEND", initial_down)
+        self.assertNotIn("board->sadc_conversion_events_remaining = 5;", move)
+        self.assertNotIn("BBK9588_SADC_STATE_PEND", move)
+        self.assertIn("bbk9588_sadc_queue_next_touch_sample(board);", move)
+
+        queue_next = source.split(
+            "static bool bbk9588_sadc_queue_next_touch_sample(", 1
+        )[1].split("static void bbk9588_sadc_sync_irq", 1)[0]
+        self.assertIn("board->sadc_status_event & BBK9588_SADC_STATE_DTCH", queue_next)
+        self.assertIn("board->sadc_touch_fifo_count != 0", queue_next)
+        self.assertIn("board->sadc_pending_enable & BBK9588_SADC_ADENA_TCHEN", queue_next)
+        self.assertIn("bbk9588_sadc_touch_delay_ms(board, true)", queue_next)
+        self.assertIn("bbk9588_sadc_touch_delay_ms(board, false)", queue_next)
+
+        adtch_read = source.split(
+            "case BBK9588_SADC_ADTCH_OFF: /* ADTCH */", 1
+        )[1].split("case BBK9588_SADC_ADBDAT_OFF", 1)[0]
+        self.assertIn("board->sadc_touch_fifo_count > 0", adtch_read)
+        self.assertNotIn("sadc_status_event & BBK9588_SADC_STATE_DTCH", adtch_read)
+
+        adtch_write = source.split(
+            "} else if (offset == BBK9588_SADC_ADTCH_OFF) { /* ADTCH */", 1
+        )[1].split("} else if (offset == BBK9588_SADC_ADBDAT_OFF)", 1)[0]
+        self.assertIn("bbk9588_sadc_touch_fifo_clear(board);", adtch_write)
+        self.assertNotIn("sadc_status_event", adtch_write)
+
+    def test_frontend_coalesces_touch_moves_to_animation_frames(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        frontend = (root / "emu/web/frontend.py").read_text(encoding="utf-8")
+
+        self.assertIn("function queueTouchMove(clientX, clientY, source = 'pointer')", frontend)
+        self.assertIn("const minTouchMoveIntervalMs = 1000 / 30;", frontend)
+        self.assertIn("const touchMoveBackpressureMs = 100;", frontend)
+        self.assertIn("let touchMoveAwaitingFrame = false;", frontend)
+        self.assertIn("function schedulePendingTouchMove()", frontend)
+        self.assertIn("const rateDelay = minTouchMoveIntervalMs - elapsed;", frontend)
+        self.assertIn("const frameDelay = touchMoveAwaitingFrame ? touchMoveBackpressureMs - elapsed : 0;", frontend)
+        self.assertIn("pendingTouchMoveTimer = setTimeout(() => {", frontend)
+        self.assertIn("pendingTouchMoveFrame = requestAnimationFrame(() => {", frontend)
+        self.assertIn("function flushPendingTouchMove()", frontend)
+        self.assertIn("function noteScreenFrame()", frontend)
+        self.assertIn(
+            "queueTouchMove(ev.clientX, ev.clientY, ev.pointerType || 'pointer');",
+            frontend,
+        )
+        self.assertIn("flushPendingTouchMove();\n  const elapsed", frontend)
 
     def test_qemu_legacy_python_resource_hook_rounds_still_run_for_malta(self) -> None:
         backend = QemuProcessBackend(QemuSystemConfig(machine="malta"))
@@ -4824,6 +4937,45 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(encode_png.call_count, 1)
         self.assertEqual(state.cached_frame_seq, 42)
 
+    def test_frontend_ws_frame_cursor_is_per_connection(self) -> None:
+        class FrameBackend:
+            latest_frame_chardev = (17, time.time(), b"\x00\x00" * (240 * 320))
+
+        state = FrontendState.__new__(FrontendState)
+        state.lock = threading.RLock()
+        state.frontend_activity_condition = threading.Condition()
+        state.frontend_activity_seq = 0
+        state.qemu_backend = FrameBackend()
+        state.qemu_last_ws_frame_seq = None
+        state.cached_ws_frame_bytes = None
+        state.cached_ws_frame_time = 0.0
+        state.frame_push_min_interval = 0.0
+        state.frame_push_last_time = 0.0
+        state.frame_push_throttle_count = 0
+        state.frame_push_error_count = 0
+        state.frame_push_replace_count = 0
+        state.frame_push_last_source_lag_ms = None
+        state.frame_push_max_source_lag_ms = 0.0
+        state.frame_push_queued_count = 0
+        state.last_error = None
+
+        client_a = state.latest_ws_frame_after(None)
+        client_b = state.latest_ws_frame_after(None)
+
+        self.assertIsNotNone(client_a)
+        self.assertIsNotNone(client_b)
+        self.assertEqual(client_a, client_b)
+        self.assertEqual(state.frame_push_queued_count, 1)
+
+        state.qemu_backend.latest_frame_chardev = (19, time.time(), b"\x01\x00" * (240 * 320))
+        next_a = state.latest_ws_frame_after(17)
+        next_b = state.latest_ws_frame_after(17)
+
+        self.assertEqual(next_a, next_b)
+        self.assertEqual(next_a[0] if next_a else None, 19)
+        self.assertEqual(state.frame_push_queued_count, 2)
+        self.assertEqual(state.frame_push_replace_count, 1)
+
     def test_frontend_performance_metrics_compute_web_and_png_rates(self) -> None:
         state = FrontendState(
             argparse.Namespace(
@@ -4836,9 +4988,11 @@ class QemuSystemCommandTests(unittest.TestCase):
             )
         )
         state.ws_frame_sent_count = 5
+        state.frame_push_queued_count = 5
         state.screen_png_count = 2
         state._frontend_performance_snapshot_locked(100.0, 10.0)
         state.ws_frame_sent_count = 8
+        state.frame_push_queued_count = 8
         state.screen_png_count = 4
 
         row = state._frontend_performance_snapshot_locked(101.0, 11.0)
@@ -4846,6 +5000,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(row.get("websocket_fps"), 3.0)
         self.assertEqual(row.get("screen_png_fps"), 2.0)
         self.assertEqual(row.get("websocket_average_fps"), 0.73)
+        self.assertEqual(row.get("websocket_transport_fps"), 3.0)
         self.assertEqual(row.get("screen_png_count"), 4)
 
     def test_frontend_status_displays_performance_metrics(self) -> None:
@@ -4855,11 +5010,16 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("function firstNumber(...values)", frontend)
         self.assertIn("function formatRate(value, unit, fallback = 'n/a')", frontend)
         self.assertIn("function formatPercent(value, fallback = 'n/a')", frontend)
+        self.assertIn("const minKeyHoldMs = 100;", frontend)
+        self.assertIn("function beginKeyButton(btn)", frontend)
+        self.assertIn("function endKeyButton(btn, phase)", frontend)
         self.assertIn(
             "['qemu fps', formatRate(firstNumber(qemuPerf.frame_chardev_fps, qemuPerf.frame_chardev_average_fps), 'fps')]",
             frontend,
         )
         self.assertIn("['web fps', formatRate(frontendPerf.websocket_fps, 'fps')]", frontend)
+        self.assertIn("['web tx', formatRate(frontendPerf.websocket_transport_fps, 'fps')]", frontend)
+        self.assertIn("['ws clients', s.frame_push?.ws_connections ?? 0]", frontend)
         self.assertIn("['png fps', formatRate(frontendPerf.screen_png_fps, 'fps')]", frontend)
         self.assertIn(
             "['qemu cpu', formatPercent(firstNumber(qemuPerf.qemu_cpu_one_core_percent, qemuPerf.qemu_cpu_host_percent))]",

@@ -748,6 +748,7 @@ struct Bbk9588MachineState {
     uint32_t progress_trace_period_ms;
     uint32_t lcd_refresh_period_ms;
     bool touch_down;
+    bool touch_move_pending;
     uint16_t touch_raw_x;
     uint16_t touch_raw_y;
     uint8_t sadc_enable;
@@ -757,6 +758,7 @@ struct Bbk9588MachineState {
     uint8_t sadc_pending_enable;
     uint16_t sadc_same_time;
     uint16_t sadc_wait_time;
+    bool sadc_touch_sample_is_move;
     uint16_t sadc_battery_data;
     uint16_t sadc_sadcin_data;
     uint32_t sadc_battery_raw;
@@ -942,6 +944,8 @@ static const Bbk9588MmioWindow bbk9588_mmio_windows[] = {
 static void bbk9588_touch_set_state(Bbk9588MachineState *board,
                                     uint16_t raw_x, uint16_t raw_y,
                                     bool down);
+static uint32_t bbk9588_sadc_touch_delay_ms(Bbk9588MachineState *board,
+                                            bool same_point);
 static void bbk9588_queue_input_event(Bbk9588MachineState *board,
                                       uint32_t kind, uint32_t arg0,
                                       uint32_t arg1, uint32_t arg2);
@@ -4912,6 +4916,41 @@ static void bbk9588_sadc_queue_touch_sample(Bbk9588MachineState *board)
     board->sadc_status_event |= BBK9588_SADC_STATE_DTCH;
 }
 
+static bool bbk9588_sadc_queue_next_touch_sample(Bbk9588MachineState *board)
+{
+    bool conversion_pending;
+
+    if (!board->touch_down ||
+        !(board->sadc_enable & BBK9588_SADC_ADENA_TCHEN) ||
+        (board->sadc_status_event & BBK9588_SADC_STATE_DTCH) ||
+        board->sadc_touch_fifo_count != 0 ||
+        (board->sadc_pending_enable & BBK9588_SADC_ADENA_TCHEN)) {
+        return false;
+    }
+    conversion_pending = board->sadc_pending_enable != 0;
+    if (board->sadc_conversion_events_remaining > 0) {
+        board->sadc_touch_sample_is_move = false;
+        board->sadc_pending_enable |= BBK9588_SADC_ADENA_TCHEN;
+        if (!conversion_pending) {
+            timer_mod(board->sadc_timer,
+                      qemu_clock_get_ms(QEMU_CLOCK_REALTIME) +
+                      bbk9588_sadc_touch_delay_ms(board, true));
+        }
+        return true;
+    }
+    if (board->touch_move_pending) {
+        board->sadc_touch_sample_is_move = true;
+        board->sadc_pending_enable |= BBK9588_SADC_ADENA_TCHEN;
+        if (!conversion_pending) {
+            timer_mod(board->sadc_timer,
+                      qemu_clock_get_ms(QEMU_CLOCK_REALTIME) +
+                      bbk9588_sadc_touch_delay_ms(board, false));
+        }
+        return true;
+    }
+    return false;
+}
+
 static void bbk9588_sadc_sync_irq(Bbk9588MachineState *board)
 {
     if (bbk9588_sadc_irq_pending(board)) {
@@ -4941,33 +4980,41 @@ static void bbk9588_sadc_complete_cpu_samples(Bbk9588MachineState *board,
     }
 }
 
-static uint32_t bbk9588_sadc_conversion_delay_ms(Bbk9588MachineState *board)
+static uint32_t bbk9588_sadc_touch_delay_ms(Bbk9588MachineState *board,
+                                            bool same_point)
 {
-    uint32_t ticks = (uint32_t)board->sadc_same_time +
-                     (uint32_t)board->sadc_wait_time;
+    uint32_t ticks = same_point ? board->sadc_same_time :
+                                 board->sadc_wait_time;
+    uint64_t scaled = (uint64_t)ticks * 128u;
 
-    if (ticks == 0) {
-        return 1;
-    }
-    return MAX(1u, MIN((ticks + 999u) / 1000u, 20u));
+    /* ADSAME/ADWAIT use the manual's 12 MHz / 128 counter clock. */
+    return MAX(1u, (uint32_t)((scaled + 11999u) / 12000u));
 }
 
 static void bbk9588_sadc_schedule_conversion(Bbk9588MachineState *board,
                                              uint8_t requested)
 {
+    const uint8_t cpu_channels = BBK9588_SADC_ADENA_SADCINEN |
+                                 BBK9588_SADC_ADENA_PBATEN;
+    uint8_t previous_pending = board->sadc_pending_enable;
+    uint8_t new_cpu_channels = requested & cpu_channels & ~previous_pending;
     uint32_t delay_ms;
 
     board->sadc_pending_enable |= requested;
     if (!board->sadc_timer) {
         bbk9588_sadc_complete_cpu_samples(board, requested);
         if ((requested & BBK9588_SADC_ADENA_TCHEN) && board->touch_down) {
-            board->sadc_status_event |= BBK9588_SADC_STATE_PEND;
             bbk9588_sadc_queue_touch_sample(board);
+            board->touch_move_pending = false;
         }
         return;
     }
 
-    delay_ms = bbk9588_sadc_conversion_delay_ms(board);
+    if (previous_pending && !new_cpu_channels) {
+        return;
+    }
+    delay_ms = new_cpu_channels ? 1u :
+               bbk9588_sadc_touch_delay_ms(board, false);
     timer_mod(board->sadc_timer,
               qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + delay_ms);
 }
@@ -4980,9 +5027,12 @@ static void bbk9588_sadc_timer_cb(void *opaque)
     board->sadc_pending_enable = 0;
     bbk9588_sadc_complete_cpu_samples(board, requested);
     if ((requested & BBK9588_SADC_ADENA_TCHEN) && board->touch_down) {
-        board->sadc_status_event |= BBK9588_SADC_STATE_PEND;
         bbk9588_sadc_queue_touch_sample(board);
+        if (board->sadc_touch_sample_is_move) {
+            board->touch_move_pending = false;
+        }
     }
+    board->sadc_touch_sample_is_move = false;
     bbk9588_sadc_sync_irq(board);
     bbk9588_touch_trace_update(board, 13u);
 }
@@ -4991,29 +5041,36 @@ static void bbk9588_touch_set_state(Bbk9588MachineState *board,
                                     uint16_t raw_x, uint16_t raw_y,
                                     bool down)
 {
-    bool changed = board->touch_down != down ||
-                   board->touch_raw_x != raw_x ||
-                   board->touch_raw_y != raw_y;
+    bool was_down = board->touch_down;
+    bool position_changed = board->touch_raw_x != raw_x ||
+                            board->touch_raw_y != raw_y;
+    bool irq_needs_sync = was_down != down;
 
     board->touch_raw_x = raw_x;
     board->touch_raw_y = raw_y;
     board->touch_down = down;
     if (down) {
-        board->sadc_conversion_events_remaining = 5;
-        board->sadc_status_event =
-            (board->sadc_status_event & ~BBK9588_SADC_STATE_PENU) |
-            BBK9588_SADC_STATE_PEND;
-        bbk9588_sadc_queue_touch_sample(board);
-    } else {
+        if (!was_down) {
+            board->sadc_status_event =
+                (board->sadc_status_event & ~BBK9588_SADC_STATE_PENU) |
+                BBK9588_SADC_STATE_PEND;
+            board->touch_move_pending = false;
+            board->sadc_conversion_events_remaining = 5;
+            bbk9588_sadc_queue_next_touch_sample(board);
+        } else if (position_changed) {
+            board->touch_move_pending = true;
+            bbk9588_sadc_queue_next_touch_sample(board);
+        }
+    } else if (was_down) {
+        board->touch_move_pending = false;
+        board->sadc_pending_enable &= ~BBK9588_SADC_ADENA_TCHEN;
+        board->sadc_touch_sample_is_move = false;
         board->sadc_conversion_events_remaining = 0;
-        bbk9588_sadc_touch_fifo_clear(board);
         board->sadc_status_event =
-            (board->sadc_status_event &
-             ~(BBK9588_SADC_STATE_PEND | BBK9588_SADC_STATE_DTCH)) |
+            (board->sadc_status_event & ~BBK9588_SADC_STATE_PEND) |
             BBK9588_SADC_STATE_PENU;
     }
-    board->sadc_next_axis = 0;
-    if (changed) {
+    if (irq_needs_sync) {
         bbk9588_sadc_sync_irq(board);
     }
     bbk9588_touch_sync_latch(board);
@@ -5262,8 +5319,12 @@ static uint32_t bbk9588_sadc_read(Bbk9588MachineState *board, hwaddr offset)
         value = board->sadc_wait_time;
         break;
     case BBK9588_SADC_ADTCH_OFF: /* ADTCH */
-        if (board->sadc_status_event & BBK9588_SADC_STATE_DTCH) {
+        if (board->sadc_touch_fifo_count > 0) {
             value = bbk9588_sadc_touch_fifo_pop(board);
+            if (board->sadc_touch_fifo_count == 0 &&
+                bbk9588_sadc_queue_next_touch_sample(board)) {
+                bbk9588_sadc_sync_irq(board);
+            }
         } else {
             value = 0;
         }
@@ -5323,10 +5384,8 @@ static void bbk9588_sadc_write(Bbk9588MachineState *board, hwaddr offset,
             board->sadc_conversion_events_remaining > 0) {
             board->sadc_conversion_events_remaining--;
         }
-        if (board->touch_down &&
-            cleared_conversion &&
-            board->sadc_conversion_events_remaining > 0) {
-            bbk9588_sadc_queue_touch_sample(board);
+        if (cleared_conversion) {
+            bbk9588_sadc_queue_next_touch_sample(board);
         }
         bbk9588_sadc_sync_irq(board);
         bbk9588_touch_trace_update(board, 7u);
@@ -5338,7 +5397,6 @@ static void bbk9588_sadc_write(Bbk9588MachineState *board, hwaddr offset,
         bbk9588_touch_trace_update(board, 8u);
     } else if (offset == BBK9588_SADC_ADTCH_OFF) { /* ADTCH */
         bbk9588_sadc_touch_fifo_clear(board);
-        board->sadc_status_event &= ~BBK9588_SADC_STATE_DTCH;
         bbk9588_sadc_sync_irq(board);
         bbk9588_touch_trace_update(board, 7u);
     } else if (offset == BBK9588_SADC_ADBDAT_OFF) { /* ADBDAT */
@@ -7366,6 +7424,7 @@ static void bbk9588_init(MachineState *machine)
         qemu_chr_fe_init(&board->frame_chr, frame_chr, &error_abort);
     }
     board->touch_down = false;
+    board->touch_move_pending = false;
     board->touch_raw_x = 0x0e74;
     board->touch_raw_y = 0x0dde;
     board->sadc_enable = 0;
@@ -7375,6 +7434,7 @@ static void bbk9588_init(MachineState *machine)
     board->sadc_pending_enable = 0;
     board->sadc_same_time = 0;
     board->sadc_wait_time = 0;
+    board->sadc_touch_sample_is_move = false;
     board->sadc_battery_raw = BBK9588_SADC_DEFAULT_BATTERY_RAW;
     board->sadc_sadcin_raw = BBK9588_SADC_DEFAULT_SADCIN_RAW;
     board->sadc_battery_data = 0;
