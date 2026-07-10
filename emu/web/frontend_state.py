@@ -73,6 +73,7 @@ WS_RAW_FRAME_HEADER = struct.Struct("<8sIHHHH")
 WS_RAW_FRAME_HEADER_SIZE = WS_RAW_FRAME_HEADER.size
 
 KNOWN_FRONTEND_KEY_CODES = {4, 5, 6, 7, 9, 10}
+FRONTEND_ORIENTATIONS = frozenset({"raw", "rot180", "cw90", "ccw90", "hflip", "vflip"})
 
 
 def deque_tail(items, limit: int) -> list[object]:
@@ -166,13 +167,21 @@ def display_to_touch_point(
 ) -> tuple[int, int]:
     """Map visible canvas coordinates to C200's touchscreen coordinate space."""
 
-    return display_to_panel_point(
+    raw_x, raw_y = display_to_raw_point(
         display_x,
         display_y,
         display_width,
         display_height,
-        touch_width,
-        touch_height,
+        orientation,
+        raw_width=touch_width,
+        raw_height=touch_height,
+    )
+    return raw_to_display_point(
+        raw_x,
+        raw_y,
+        "rot180",
+        raw_width=touch_width,
+        raw_height=touch_height,
     )
 
 
@@ -955,6 +964,26 @@ class FrontendState:
             self._publish_snapshot_locked()
             return self.snapshot()
 
+    def set_orientation(self, orientation: object) -> dict[str, object]:
+        value = str(orientation or "").strip().lower()
+        if value not in FRONTEND_ORIENTATIONS:
+            return {"error": f"unsupported orientation {value!r}", "known": sorted(FRONTEND_ORIENTATIONS)}
+        with self.lock:
+            changed = getattr(self.args, "orientation", "rot180") != value
+            self.args.orientation = value
+            if changed:
+                self.cached_frame_bytes = None
+                self.cached_frame_seq = None
+                self.cached_frame_time = 0.0
+                latest = self._latest_qemu_raw_frame_locked()
+                if latest is not None:
+                    _seq, _captured_at, raw = latest
+                    self.last_frame = self._frame_info_from_raw(raw, "qemu-frame-chardev")
+            self._publish_snapshot_locked()
+            snapshot = self.snapshot()
+            snapshot["orientation_changed"] = changed
+            return snapshot
+
     def _frontend_input_calibration_enabled(self) -> bool:
         return bool(getattr(self.args, "frontend_input_calibration", False))
 
@@ -979,6 +1008,8 @@ class FrontendState:
             return self.stop()
         if op == "step":
             return self.step(int(msg.get("steps", 250000)))
+        if op in {"set-orientation", "set_orientation", "orientation"}:
+            return self.set_orientation(msg.get("orientation"))
         if op in {
             "frontend-input-calibration",
             "frontend_input_calibration",

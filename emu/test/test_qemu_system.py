@@ -38,7 +38,11 @@ from emu.qemu.system import (
     qemu_subprocess_env,
 )
 from emu.qemu.check_source_tree import inspect_qemu_source
-from emu.web.frontend_state import FRONTEND_INPUT_CALIBRATION_TARGETS, FrontendState
+from emu.web.frontend_state import (
+    FRONTEND_INPUT_CALIBRATION_TARGETS,
+    FrontendState,
+    display_to_touch_point,
+)
 
 
 def _find_free_port() -> int:
@@ -5026,6 +5030,62 @@ class QemuSystemCommandTests(unittest.TestCase):
             frontend,
         )
         self.assertIn("['guest ips', formatGuestIps(qemuPerf)]", frontend)
+
+    def test_frontend_layout_rotation_and_custom_keymap_controls(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        frontend = (root / "emu/web/frontend.py").read_text(encoding="utf-8")
+
+        self.assertIn('class="workspace"', frontend)
+        self.assertIn('class="control-sidebar"', frontend)
+        self.assertIn('class="emulator-stage"', frontend)
+        self.assertIn('class="status-sidebar"', frontend)
+        self.assertIn(".kv-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", frontend)
+        self.assertIn("statusEl.replaceChildren(...statusNodes);", frontend)
+        self.assertNotIn("最近事件", frontend)
+        self.assertNotIn("const eventsEl", frontend)
+        self.assertIn('id="rotateLeft"', frontend)
+        self.assertIn('id="rotateRight"', frontend)
+        self.assertIn("wsSend({op:'set-orientation', orientation:next})", frontend)
+        self.assertIn("const keyBindingStorageKey = 'bbk9588.keyBindings.v1';", frontend)
+        self.assertIn("4:'KeyW'", frontend)
+        self.assertIn("5:'KeyS'", frontend)
+        self.assertIn("6:'KeyA'", frontend)
+        self.assertIn("7:'KeyD'", frontend)
+        self.assertIn("9:'Escape'", frontend)
+        self.assertIn("10:'Space'", frontend)
+        self.assertIn(".key-cancel { grid-column: 1; grid-row: 1 / 3; }", frontend)
+        self.assertIn(".key-up { grid-column: 3; grid-row: 1; }", frontend)
+        self.assertIn(".key-ok { grid-column: 5; grid-row: 1 / 3; }", frontend)
+        self.assertEqual(frontend.count('class="device-key '), 6)
+        self.assertEqual(frontend.count('data-binding-code="'), 6)
+
+    def test_frontend_orientation_command_invalidates_png_cache(self) -> None:
+        state = FrontendState.__new__(FrontendState)
+        state.args = argparse.Namespace(orientation="rot180")
+        state.lock = threading.RLock()
+        state.qemu_backend = None
+        state.cached_frame_bytes = b"png"
+        state.cached_frame_seq = 7
+        state.cached_frame_time = 1.0
+        state.last_frame = None
+        state._publish_snapshot_locked = lambda: None  # type: ignore[method-assign]
+        state.snapshot = lambda: {"orientation": state.args.orientation}  # type: ignore[method-assign]
+
+        row = state.command({"op": "set-orientation", "orientation": "cw90"})
+
+        self.assertEqual(row.get("orientation"), "cw90")
+        self.assertTrue(row.get("orientation_changed"), row)
+        self.assertIsNone(state.cached_frame_bytes)
+        self.assertIsNone(state.cached_frame_seq)
+        self.assertEqual(state.cached_frame_time, 0.0)
+        invalid = state.command({"op": "set-orientation", "orientation": "diagonal"})
+        self.assertIn("unsupported orientation", str(invalid.get("error")))
+
+    def test_rotated_frontend_touch_coordinates_follow_visible_screen(self) -> None:
+        self.assertEqual(display_to_touch_point(0, 0, 240, 320, "rot180"), (0, 0))
+        self.assertEqual(display_to_touch_point(0, 0, 240, 320, "raw"), (239, 319))
+        self.assertEqual(display_to_touch_point(0, 0, 320, 240, "cw90"), (239, 0))
+        self.assertEqual(display_to_touch_point(0, 0, 320, 240, "ccw90"), (0, 319))
 
     def test_frontend_qemu_storage_service_error_uses_legacy_hook_terms(self) -> None:
         state = FrontendState(

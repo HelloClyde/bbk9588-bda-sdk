@@ -31,26 +31,54 @@ HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BBK 9588 HWEMU</title>
   <style>
-    :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; background: #15171a; color: #e8eaed; }
-    body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(300px, 420px) 1fr; }
-    main { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-    aside { padding: 18px; background: #202327; border-left: 1px solid #343941; overflow: auto; }
-    h1 { font-size: 18px; margin: 0 0 8px; font-weight: 650; }
-    h2 { font-size: 13px; margin: 0 0 8px; color: #b8c0cc; font-weight: 600; }
+    :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; background: #15171a; color: #e8eaed; letter-spacing: 0; }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body { margin: 0; min-height: 100vh; background: #15171a; }
+    .app-header { height: 56px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid #343941; background: #191b1f; }
+    .workspace { min-height: calc(100vh - 56px); display: grid; grid-template-columns: minmax(280px, 340px) minmax(390px, 1fr) minmax(280px, 340px); grid-template-areas: "controls stage status"; }
+    .control-sidebar { grid-area: controls; padding: 16px; border-right: 1px solid #343941; background: #1b1e22; overflow: auto; }
+    .emulator-stage { grid-area: stage; min-width: 0; padding: 16px 20px 22px; display: flex; flex-direction: column; align-items: center; gap: 12px; overflow: auto; }
+    .status-sidebar { grid-area: status; padding: 16px; border-left: 1px solid #343941; background: #202327; overflow: auto; }
+    h1 { font-size: 18px; margin: 0; font-weight: 650; }
+    h2 { font-size: 13px; margin: 0 0 10px; color: #b8c0cc; font-weight: 600; }
     button, input, select { font: inherit; }
     button { background: #2f6fed; color: white; border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
     button.secondary { background: #343941; }
     button.warn { background: #9b3b3b; }
     button:disabled { opacity: .55; cursor: default; }
-    .screen-wrap { display: grid; place-items: center; background: #0b0c0e; border: 1px solid #343941; border-radius: 8px; padding: 12px; }
-    #screen { display: block; width: min(72vh, 100%); max-width: 360px; aspect-ratio: 3 / 4; image-rendering: pixelated; background: #000; cursor: crosshair; touch-action: none; user-select: none; }
+    .icon-button { width: 40px; height: 36px; display: inline-grid; place-items: center; padding: 0; font-size: 22px; line-height: 1; }
+    .screen-toolbar { width: min(560px, 100%); display: flex; justify-content: center; align-items: center; gap: 8px; }
+    .orientation-label { min-width: 54px; text-align: center; color: #c9d1d9; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .screen-wrap { width: 100%; min-height: 0; display: flex; justify-content: center; align-items: center; background: #08090b; border: 1px solid #343941; border-radius: 8px; padding: 12px; }
+    #screen { display: block; width: min(360px, 100%); height: auto; max-height: 62vh; image-rendering: pixelated; background: #000; cursor: crosshair; touch-action: none; user-select: none; }
+    #screen.landscape { width: min(560px, 100%); }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .panel { border: 1px solid #343941; border-radius: 8px; padding: 12px; background: #1b1e22; }
-    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 5px 10px; font-size: 12px; }
-    .keypad button { min-height: 42px; }
-    .keypad button.blank { visibility: hidden; pointer-events: none; }
-    .keypad button.active { background: #5794ff; }
+    .panel { border: 1px solid #343941; border-radius: 8px; padding: 12px; background: #1b1e22; margin-bottom: 14px; }
+    .kv { display: grid; grid-template-columns: minmax(100px, 120px) minmax(0, 1fr); gap: 5px 10px; font-size: 12px; }
+    .kv > div { min-width: 0; }
+    .kv-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device-controls { width: min(560px, 100%); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .device-keypad { display: grid; grid-template-columns: repeat(5, 54px); grid-template-rows: repeat(2, 48px); gap: 8px; justify-content: center; }
+    .device-key { min-width: 0; min-height: 0; padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: #343941; }
+    .device-key.active { background: #5794ff; }
+    .device-key .key-symbol { font-size: 19px; line-height: 1; }
+    .device-key kbd { min-width: 24px; color: #adb7c5; font-size: 10px; font-family: inherit; font-weight: 500; }
+    .device-key.active kbd { color: white; }
+    .key-up { grid-column: 3; grid-row: 1; }
+    .key-left { grid-column: 2; grid-row: 2; }
+    .key-down { grid-column: 3; grid-row: 2; }
+    .key-right { grid-column: 4; grid-row: 2; }
+    .key-cancel { grid-column: 1; grid-row: 1 / 3; }
+    .key-ok { grid-column: 5; grid-row: 1 / 3; }
+    .keymap-panel { width: 100%; border-top: 1px solid #343941; padding-top: 12px; }
+    .keymap-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .keymap-header h2 { margin: 0; }
+    .keymap-header .icon-button { width: 32px; height: 30px; font-size: 18px; }
+    .binding-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .binding-control { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 6px; color: #b8c0cc; font-size: 12px; }
+    .binding-control button { min-width: 0; height: 32px; padding: 4px 6px; background: #2a2e34; border: 1px solid #414751; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .binding-control button.capturing { border-color: #5794ff; background: #253c62; }
     input, select { color: #e8eaed; background: #111317; border: 1px solid #3b414b; border-radius: 6px; padding: 7px; }
     input { width: 90px; }
     input[type="checkbox"] { width: auto; accent-color: #5794ff; }
@@ -60,78 +88,112 @@ HTML = r"""<!doctype html>
     .check { display: inline-flex; gap: 6px; align-items: center; color: #c9d1d9; font-size: 12px; }
     pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.45; color: #c9d1d9; }
     .muted { color: #9aa4b2; font-size: 12px; }
-    @media (max-width: 760px) { body { grid-template-columns: 1fr; } aside { border-left: 0; border-top: 1px solid #343941; } }
+    @media (max-width: 1120px) {
+      .workspace { grid-template-columns: minmax(250px, 300px) minmax(390px, 1fr); grid-template-areas: "controls stage" "status status"; }
+      .status-sidebar { border-left: 0; border-top: 1px solid #343941; }
+    }
+    @media (max-width: 760px) {
+      .app-header { height: 50px; }
+      .workspace { min-height: calc(100vh - 50px); grid-template-columns: minmax(0, 1fr); grid-template-areas: "stage" "controls" "status"; }
+      .emulator-stage { padding: 12px; }
+      .control-sidebar, .status-sidebar { border: 0; border-top: 1px solid #343941; }
+      #screen { max-height: none; }
+      .binding-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 380px) {
+      .device-keypad { grid-template-columns: repeat(5, 48px); gap: 6px; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <div>
-      <h1>BBK 9588 硬件仿真器</h1>
-      <div class="muted">真实 NAND 硬件级冷启动；画面来自模拟 framebuffer，触摸和按键通过前端事件队列送入。</div>
-    </div>
-    <div class="screen-wrap">
-      <canvas id="screen" width="240" height="320"></canvas>
-    </div>
-    <div class="panel">
-      <h2>NAND 镜像</h2>
-      <div class="row">
-        <select id="nandImageSelect" class="grow"></select>
-        <button id="reloadImages" class="secondary">刷新</button>
+  <header class="app-header">
+    <h1>BBK 9588 硬件仿真器</h1>
+  </header>
+  <div class="workspace">
+    <aside class="control-sidebar" aria-label="镜像与运行控制">
+      <section class="panel">
+        <h2>NAND 镜像</h2>
+        <div class="row">
+          <select id="nandImageSelect" class="grow"></select>
+          <button id="reloadImages" class="secondary">刷新</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input id="nandImagePath" class="path-input" placeholder="NAND 镜像路径">
+          <button id="applyNandImage">切换并重启</button>
+        </div>
+        <div id="imageStatus" class="muted image-status" style="margin-top:8px"></div>
+      </section>
+      <section class="panel">
+        <h2>运行</h2>
+        <div class="row">
+          <button id="boot">后台启动</button>
+          <button id="step" class="secondary">运行一片</button>
+          <button id="auto" class="secondary">连续运行</button>
+          <button id="stop" class="secondary">停止</button>
+          <button id="reset" class="warn">重置</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="muted">每片指令</label>
+          <input id="steps" type="number" min="1000" max="2000000" step="10000" value="250000">
+          <label class="check"><input id="frontendInputCalibration" type="checkbox">前端输入校准</label>
+        </div>
+      </section>
+    </aside>
+    <main class="emulator-stage">
+      <div class="screen-toolbar" role="toolbar" aria-label="屏幕方向">
+        <button id="rotateLeft" class="secondary icon-button" title="向左旋转 90°" aria-label="向左旋转 90°">↶</button>
+        <span id="orientationLabel" class="orientation-label">180°</span>
+        <button id="rotateRight" class="secondary icon-button" title="向右旋转 90°" aria-label="向右旋转 90°">↷</button>
       </div>
-      <div class="row" style="margin-top:10px">
-        <input id="nandImagePath" class="path-input" placeholder="NAND 镜像路径">
-        <button id="applyNandImage">切换并重启</button>
+      <div class="screen-wrap">
+        <canvas id="screen" width="240" height="320"></canvas>
       </div>
-      <div id="imageStatus" class="muted image-status" style="margin-top:8px"></div>
-    </div>
-    <div class="panel">
-      <h2>运行</h2>
-      <div class="row">
-        <button id="boot">后台启动</button>
-        <button id="step" class="secondary">运行一片</button>
-        <button id="auto" class="secondary">连续运行</button>
-        <button id="stop" class="secondary">停止</button>
-        <button id="reset" class="warn">重置</button>
+      <div class="device-controls">
+        <div class="device-keypad" aria-label="设备按键">
+          <button class="device-key key-up" data-key="4" data-name="up" aria-label="上"><span class="key-symbol">↑</span><kbd data-key-hint="4">W</kbd></button>
+          <button class="device-key key-left" data-key="6" data-name="left" aria-label="左"><span class="key-symbol">←</span><kbd data-key-hint="6">A</kbd></button>
+          <button class="device-key key-down" data-key="5" data-name="down" aria-label="下"><span class="key-symbol">↓</span><kbd data-key-hint="5">S</kbd></button>
+          <button class="device-key key-right" data-key="7" data-name="right" aria-label="右"><span class="key-symbol">→</span><kbd data-key-hint="7">D</kbd></button>
+          <button class="device-key key-cancel" data-key="9" data-name="cancel" aria-label="退出"><span class="key-symbol">退出</span><kbd data-key-hint="9">Esc</kbd></button>
+          <button class="device-key key-ok" data-key="10" data-name="ok" aria-label="确定"><span class="key-symbol">确定</span><kbd data-key-hint="10">Space</kbd></button>
+        </div>
+        <section class="keymap-panel">
+          <div class="keymap-header">
+            <h2>键盘映射</h2>
+            <button id="resetKeyBindings" class="secondary icon-button" title="恢复默认映射" aria-label="恢复默认映射">↺</button>
+          </div>
+          <div class="binding-grid">
+            <div class="binding-control"><span>上</span><button data-binding-code="4">W</button></div>
+            <div class="binding-control"><span>下</span><button data-binding-code="5">S</button></div>
+            <div class="binding-control"><span>左</span><button data-binding-code="6">A</button></div>
+            <div class="binding-control"><span>右</span><button data-binding-code="7">D</button></div>
+            <div class="binding-control"><span>确定</span><button data-binding-code="10">Space</button></div>
+            <div class="binding-control"><span>退出</span><button data-binding-code="9">Esc</button></div>
+          </div>
+        </section>
       </div>
-      <div class="row" style="margin-top:10px">
-        <label class="muted">每片指令</label>
-        <input id="steps" type="number" min="1000" max="2000000" step="10000" value="250000">
-        <label class="check"><input id="frontendInputCalibration" type="checkbox">前端输入校准</label>
-      </div>
-    </div>
-    <div class="panel keypad">
-      <h2>按键</h2>
-      <div class="grid">
-        <button data-key="9" data-name="cancel" aria-label="取消">取消</button>
-        <button data-key="4" data-name="up" aria-label="上">上</button>
-        <button data-key="10" data-name="ok" aria-label="确认">确认</button>
-        <button data-key="6" data-name="left" aria-label="左">左</button>
-        <button data-key="5" data-name="down" aria-label="下">下</button>
-        <button data-key="7" data-name="right" aria-label="右">右</button>
-      </div>
-    </div>
-  </main>
-  <aside>
-    <div class="panel">
-      <h2>状态</h2>
-      <div id="status" class="kv"></div>
-    </div>
-    <div class="panel" style="margin-top:14px">
-      <h2>最近事件</h2>
-      <pre id="events"></pre>
-    </div>
-  </aside>
+    </main>
+    <aside class="status-sidebar" aria-label="模拟器状态">
+      <section class="panel">
+        <h2>状态</h2>
+        <div id="status" class="kv"></div>
+      </section>
+    </aside>
+  </div>
 <script>
 const screen = document.getElementById('screen');
 const screenCtx = screen.getContext('2d', { alpha: false });
 screenCtx.imageSmoothingEnabled = false;
 const statusEl = document.getElementById('status');
-const eventsEl = document.getElementById('events');
 const stepsEl = document.getElementById('steps');
 const frontendInputCalibrationEl = document.getElementById('frontendInputCalibration');
 const nandImageSelect = document.getElementById('nandImageSelect');
 const nandImagePath = document.getElementById('nandImagePath');
 const imageStatusEl = document.getElementById('imageStatus');
+const rotateLeftEl = document.getElementById('rotateLeft');
+const rotateRightEl = document.getElementById('rotateRight');
+const orientationLabelEl = document.getElementById('orientationLabel');
+const resetKeyBindingsEl = document.getElementById('resetKeyBindings');
 let timer = null;
 let poller = null;
 let framePoller = null;
@@ -151,13 +213,28 @@ let pendingTouchMoveTimer = null;
 let lastTouchMoveSentAt = 0;
 let touchMoveAwaitingFrame = false;
 let currentOrientation = 'rot180';
+let pendingOrientation = null;
+let lastRawFrameBuffer = null;
 let rgb565Lut = null;
 let rawImageData = null;
+let bindingCaptureCode = null;
 const minTouchHoldMs = 180;
 const minTouchMoveIntervalMs = 1000 / 30;
 const touchMoveBackpressureMs = 100;
 const minKeyHoldMs = 100;
 const wsIdleReconnectMs = 5000;
+const keyBindingStorageKey = 'bbk9588.keyBindings.v1';
+const defaultKeyBindings = Object.freeze({
+  4:'KeyW',
+  5:'KeyS',
+  6:'KeyA',
+  7:'KeyD',
+  9:'Escape',
+  10:'Space',
+});
+const rotationOrientations = ['raw', 'cw90', 'rot180', 'ccw90'];
+const orientationLabels = {raw:'0°', cw90:'90°', rot180:'180°', ccw90:'270°', hflip:'水平', vflip:'垂直'};
+let keyBindings = loadKeyBindings();
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -453,8 +530,46 @@ function formatLastInput(s) {
   }
   return JSON.stringify(ev);
 }
+function updateOrientationControls() {
+  orientationLabelEl.textContent = orientationLabels[currentOrientation] || currentOrientation;
+  const disabled = pendingOrientation !== null;
+  rotateLeftEl.disabled = disabled;
+  rotateRightEl.disabled = disabled;
+}
+function applyFrontendOrientation(orientation) {
+  if (!orientation || !(orientation in orientationLabels)) return;
+  const changed = currentOrientation !== orientation;
+  currentOrientation = orientation;
+  if (pendingOrientation === orientation) pendingOrientation = null;
+  updateOrientationControls();
+  if (changed && lastRawFrameBuffer) {
+    requestAnimationFrame(() => drawRawRgb565Frame(lastRawFrameBuffer));
+  }
+}
+function requestRotation(delta) {
+  if (pendingOrientation !== null) return;
+  let index = rotationOrientations.indexOf(currentOrientation);
+  if (index < 0) index = rotationOrientations.indexOf('rot180');
+  const next = rotationOrientations[(index + delta + rotationOrientations.length) % rotationOrientations.length];
+  pendingOrientation = next;
+  updateOrientationControls();
+  wsSend({op:'set-orientation', orientation:next}).catch(err => {
+    console.error(err);
+    pendingOrientation = null;
+    updateOrientationControls();
+  });
+  setTimeout(() => {
+    if (pendingOrientation !== next) return;
+    refresh().catch(console.error).finally(() => {
+      if (pendingOrientation === next) {
+        pendingOrientation = null;
+        updateOrientationControls();
+      }
+    });
+  }, 1200);
+}
 function renderStatus(s) {
-  currentOrientation = s.orientation || currentOrientation;
+  applyFrontendOrientation(s.orientation || currentOrientation);
   frontendInputCalibrationEl.checked = Boolean(s.frontend_input_calibration);
   const qemuPerf = s.qemu?.performance || {};
   const frontendPerf = s.frontend_performance || {};
@@ -498,8 +613,18 @@ function renderStatus(s) {
     ['pixels', s.framebuffer?.nonzero_pixels ?? ''],
     ['bbox', JSON.stringify(s.framebuffer?.nonzero_bbox ?? null)]
   ];
-  statusEl.innerHTML = rows.map(([k,v]) => `<div>${k}</div><div>${v}</div>`).join('');
-  eventsEl.textContent = JSON.stringify((s.events || []).slice(-12), null, 2);
+  const statusNodes = [];
+  for (const [key, value] of rows) {
+    const labelEl = document.createElement('div');
+    const valueEl = document.createElement('div');
+    const valueText = String(value);
+    labelEl.textContent = key;
+    valueEl.className = 'kv-value';
+    valueEl.textContent = valueText;
+    valueEl.title = valueText;
+    statusNodes.push(labelEl, valueEl);
+  }
+  statusEl.replaceChildren(...statusNodes);
 }
 async function refresh() { renderStatus(await api('/api/status')); }
 async function refreshFrameFallback() {
@@ -514,6 +639,7 @@ async function refreshFrameFallback() {
   }
 }
 function ensureScreenSize(width, height) {
+  screen.classList.toggle('landscape', width > height);
   if (screen.width !== width || screen.height !== height) {
     screen.width = width;
     screen.height = height;
@@ -557,6 +683,7 @@ function drawRawRgb565Frame(buffer) {
   const stride = view.getUint16(16, true);
   const format = view.getUint16(18, true);
   if (format !== 1 || width <= 0 || height <= 0 || stride < width) return false;
+  lastRawFrameBuffer = buffer;
   const raw = new Uint8Array(buffer, 20);
   if (raw.length < stride * height * 2) return false;
   const [outW, outH] = outputSizeForRaw(width, height, currentOrientation);
@@ -748,9 +875,80 @@ document.getElementById('reloadImages').onclick = () => refreshImages().catch(er
   imageStatusEl.textContent = String(err.message || err);
 });
 document.getElementById('applyNandImage').onclick = applyNandImage;
+rotateLeftEl.onclick = () => requestRotation(-1);
+rotateRightEl.onclick = () => requestRotation(1);
+
+function loadKeyBindings() {
+  const bindings = {...defaultKeyBindings};
+  try {
+    const saved = JSON.parse(localStorage.getItem(keyBindingStorageKey) || '{}');
+    for (const code of Object.keys(bindings)) {
+      if (typeof saved[code] === 'string' && saved[code]) bindings[code] = saved[code];
+    }
+    if (new Set(Object.values(bindings)).size !== Object.keys(bindings).length) {
+      return {...defaultKeyBindings};
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  return bindings;
+}
+function saveKeyBindings() {
+  try { localStorage.setItem(keyBindingStorageKey, JSON.stringify(keyBindings)); } catch (err) { console.error(err); }
+}
+function keyboardCodeLabel(code) {
+  if (code === 'Space') return 'Space';
+  if (code === 'Escape') return 'Esc';
+  if (code === 'Enter') return 'Enter';
+  if (code === 'Backspace') return 'Backspace';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return `Num ${code.slice(6)}`;
+  if (code.startsWith('Arrow')) return code.slice(5);
+  return code;
+}
+function updateKeyBindingUi() {
+  document.querySelectorAll('[data-key-hint]').forEach(el => {
+    el.textContent = keyboardCodeLabel(keyBindings[String(el.dataset.keyHint)] || '');
+  });
+  document.querySelectorAll('[data-binding-code]').forEach(btn => {
+    const code = String(btn.dataset.bindingCode);
+    const capturing = bindingCaptureCode === code;
+    btn.classList.toggle('capturing', capturing);
+    btn.textContent = capturing ? '…' : keyboardCodeLabel(keyBindings[code] || '');
+  });
+}
+function beginBindingCapture(code) {
+  bindingCaptureCode = String(code);
+  updateKeyBindingUi();
+}
+function assignCapturedBinding(physicalCode) {
+  const targetCode = bindingCaptureCode;
+  if (targetCode === null) return;
+  const previous = keyBindings[targetCode];
+  const duplicate = Object.keys(keyBindings).find(code => code !== targetCode && keyBindings[code] === physicalCode);
+  if (duplicate) keyBindings[duplicate] = previous;
+  keyBindings[targetCode] = physicalCode;
+  bindingCaptureCode = null;
+  saveKeyBindings();
+  updateKeyBindingUi();
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+document.querySelectorAll('[data-binding-code]').forEach(btn => {
+  btn.addEventListener('click', ev => {
+    ev.preventDefault();
+    beginBindingCapture(btn.dataset.bindingCode);
+  });
+});
+resetKeyBindingsEl.onclick = () => {
+  keyBindings = {...defaultKeyBindings};
+  bindingCaptureCode = null;
+  saveKeyBindings();
+  updateKeyBindingUi();
+};
 const activeButtonPointers = new Map();
 const buttonKeyStates = new Map();
-const activeKeyboardKeys = new Set();
+const activeKeyboardKeys = new Map();
 function sendKeyButton(btn, down, phase = '') {
   btn.classList.toggle('active', down);
   wsSend({
@@ -810,27 +1008,41 @@ document.querySelectorAll('[data-key]').forEach(btn => {
   });
 });
 function keyCodeFromKeyboard(ev) {
-  if (ev.key === 'ArrowUp') return 4;
-  if (ev.key === 'ArrowDown') return 5;
-  if (ev.key === 'ArrowLeft') return 6;
-  if (ev.key === 'ArrowRight') return 7;
-  if (ev.key === 'Enter') return 10;
-  if (ev.key === 'Escape' || ev.key === 'Backspace') return 9;
+  for (const [guestCode, physicalCode] of Object.entries(keyBindings)) {
+    if (physicalCode === ev.code) return Number(guestCode);
+  }
   return null;
 }
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName);
+}
 window.addEventListener('keydown', ev => {
+  if (bindingCaptureCode !== null) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    assignCapturedBinding(ev.code);
+    return;
+  }
+  if (isEditableTarget(ev.target)) return;
   const code = keyCodeFromKeyboard(ev);
-  if (code === null || activeKeyboardKeys.has(code)) return;
+  if (code === null || activeKeyboardKeys.has(ev.code)) return;
   ev.preventDefault();
-  activeKeyboardKeys.add(code);
+  activeKeyboardKeys.set(ev.code, code);
   wsSend({op:'key', code, down:true, source:'keyboard', advance:false, run:true});
 });
 window.addEventListener('keyup', ev => {
-  const code = keyCodeFromKeyboard(ev);
-  if (code === null || !activeKeyboardKeys.has(code)) return;
+  const code = activeKeyboardKeys.get(ev.code);
+  if (code === undefined) return;
   ev.preventDefault();
-  activeKeyboardKeys.delete(code);
+  activeKeyboardKeys.delete(ev.code);
   wsSend({op:'key', code, down:false, source:'keyboard', advance:false, run:true});
+});
+window.addEventListener('blur', () => {
+  for (const code of activeKeyboardKeys.values()) {
+    wsSend({op:'key', code, down:false, source:'keyboard-blur', advance:false, run:true});
+  }
+  activeKeyboardKeys.clear();
 });
 screen.addEventListener('pointerdown', ev => {
   ev.preventDefault();
@@ -921,6 +1133,8 @@ screen.addEventListener('touchend', ev => {
   if (t) sendTouchReleaseAt(t.clientX, t.clientY, 'up', 'touch', true);
   pointerActive = false;
 }, {passive:false});
+updateOrientationControls();
+updateKeyBindingUi();
 connectWs();
 refresh().catch(console.error);
 refreshImages().catch(console.error);
