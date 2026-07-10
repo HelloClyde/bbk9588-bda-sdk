@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a QEMU source checkout for the bundled BBK9588 patch."""
+"""Validate a QEMU source checkout for the bundled BBK9588 overlay."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ REQUIRED_QEMU_SOURCE_PATHS = (
     "target/mips",
 )
 
-PATCHED_QEMU_SOURCE_PATHS = (
+OVERLAY_QEMU_SOURCE_PATHS = (
     "hw/mips/bbk9588.c",
     "hw/mips/Kconfig",
     "hw/mips/meson.build",
@@ -28,15 +28,14 @@ PATCHED_QEMU_SOURCE_PATHS = (
 def inspect_qemu_source(root: Path) -> dict[str, object]:
     root = root.resolve()
     missing = [rel for rel in REQUIRED_QEMU_SOURCE_PATHS if not (root / rel).exists()]
-    patched_missing = [rel for rel in PATCHED_QEMU_SOURCE_PATHS if not (root / rel).exists()]
+    overlay_missing = [rel for rel in OVERLAY_QEMU_SOURCE_PATHS if not (root / rel).exists()]
     return {
         "root": str(root),
         "exists": root.exists(),
         "is_qemu_source": root.exists() and not missing,
         "missing_required_paths": missing,
-        "bbk9588_patch_looks_applied": root.exists() and not patched_missing,
-        "missing_patched_paths": patched_missing,
-        "patch_file": "emu/qemu/patches/qemu-v11.0.0-bbk9588.patch",
+        "bbk9588_overlay_looks_installed": root.exists() and not overlay_missing,
+        "missing_overlay_paths": overlay_missing,
         "warning": None
         if root.name.lower() != "qemu"
         else "A directory named qemu may be a binary install. Verify it has configure, meson.build, and hw/mips before editing.",

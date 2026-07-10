@@ -23,18 +23,28 @@ from pathlib import Path
 
 DEFAULT_QEMU_EXECUTABLE = "qemu-system-mipsel"
 DEFAULT_QEMU_MACHINE = "bbk9588"
-DEFAULT_BBK9588_COMPAT_MACHINE_OPTIONS: tuple[str, ...] = (
-    "tcu-period-ms=1",
+DEFAULT_BBK9588_COMPAT_MACHINE_OPTIONS: tuple[str, ...] = ()
+REMOVED_BBK9588_MACHINE_OPTIONS: tuple[str, ...] = (
+    "semaphore-fastpath",
+    "cache-scan-fastpath",
+    "resource-release-fastpath",
 )
 DEFAULT_QEMU_BBK_INPUT_CHR_ID = "bbk9588-input"
 DEFAULT_QEMU_BBK_FRAME_CHR_ID = "bbk9588-frame"
 QEMU_BBK_FRAME_MAGIC = 0x464B4242
+QEMU_BBK_PERF_MAGIC = 0x504B4242
 QEMU_BBK_FRAME_FORMAT_RGB565 = 0x00005635
+QEMU_BBK_PERF_FORMAT_GUEST_INSNS = 0x00004950
 QEMU_BBK_FRAME_HEADER = struct.Struct("<IIIIIII")
+QEMU_BBK_PERF_PAYLOAD = struct.Struct("<QQ")
 DEFAULT_C200_BASE = 0x80004000
 DEFAULT_UBOOT_BASE = 0x80900000
 DEFAULT_C200_PHYS = DEFAULT_C200_BASE & 0x1FFFFFFF
 DEFAULT_UBOOT_PHYS = DEFAULT_UBOOT_BASE & 0x1FFFFFFF
+DEFAULT_BOOTROM_LOAD_PHYS = 0x00000000
+DEFAULT_BOOTROM_ENTRY = 0x80000004
+DEFAULT_BOOTROM_NAND_PAGE = 0
+DEFAULT_BOOTROM_LOAD_BYTES = 0x2000
 DEFAULT_QEMU_DIAG_BASE = 0x89F00000
 DEFAULT_QEMU_GUI_EVENT_SCRATCH = DEFAULT_QEMU_DIAG_BASE + 0x0000
 DEFAULT_QEMU_TOUCH_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0100
@@ -42,8 +52,15 @@ QEMU_TOUCH_TRACE_MAGIC = 0x54434B42
 DEFAULT_QEMU_SURFACE_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0500
 QEMU_SURFACE_TRACE_MAGIC = 0x53555246
 DEFAULT_QEMU_NAND_IMAGE_CANDIDATES = (
-    Path("build") / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin",
-    Path("build") / "bbk9588_nand_c200_fat_page1c40.bin",
+    Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin",
+    Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40_root256_ftloob.bin",
+    Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40.bin",
+    Path("build") / "bbk9588_nand_fat_page1c40_root512_ftloob.bin",
+    Path("build") / "bbk9588_nand_fat_page1c40_root256_ftloob.bin",
+    Path("build") / "bbk9588_nand_fat_page1c40.bin",
+    Path("build") / "bbk9588_nand_uboot40_fat_page1c40_root512_ftloob.bin",
+    Path("build") / "bbk9588_nand_uboot40_fat_page1c40_root256_ftloob.bin",
+    Path("build") / "bbk9588_nand_uboot40_fat_page1c40.bin",
 )
 TOUCH_CALIBRATION_REFERENCE_POINTS = (
     (10, 10, 0x0E74, 0x0DDE),
@@ -65,24 +82,8 @@ DEFAULT_QEMU_FIRMWARE_PATCHES = (
     "c200-no-event-poll-empty",
     "c200-event-loop-empty-safe",
 )
-BBK9588_C_DEVICE_FIRMWARE_PATCHES = (
-    "c200-lcd-ready",
-    "c200-intc-no-pending",
-    "c200-cp0-irq-enable-noop",
-    "c200-cp0-status-restore-noop",
-    "c200-graphics-done",
-    "c200-touch-controller-ready",
-    "c200-touch-gpio-latch",
-    "c200-uart-ready",
-    "c200-wait-noop",
-    "c200-busy-delay-noop",
-    "c200-no-event-poll-empty",
-    "c200-event-loop-empty-safe",
-)
-DEFAULT_BBK9588_FIRMWARE_PATCHES = tuple(
-    name for name in DEFAULT_QEMU_FIRMWARE_PATCHES
-    if name not in BBK9588_C_DEVICE_FIRMWARE_PATCHES
-)
+BBK9588_C_DEVICE_FIRMWARE_PATCHES = DEFAULT_QEMU_FIRMWARE_PATCHES
+DEFAULT_BBK9588_FIRMWARE_PATCHES: tuple[str, ...] = ()
 
 
 KNOWN_FIRMWARE_PATCHES: dict[str, tuple[tuple[int, bytes], ...]] = {
@@ -177,8 +178,8 @@ KNOWN_FIRMWARE_PATCHES: dict[str, tuple[tuple[int, bytes], ...]] = {
     # The event loop at 0x8012ccf4 can return the no-event sentinel in v0.
     # Stock firmware then unconditionally reads *(v0 + 4), which faults under
     # QEMU when the queue is empty.  Treat the empty case as event code 0 so
-    # the main loop keeps running while the storage/resource fastpaths serve
-    # file reads through GDB.
+    # legacy Malta compatibility runs can keep progressing.  The bbk9588
+    # default hardware path does not use this firmware patch.
     "c200-event-loop-empty-safe": (
         (0x8012CCFC, bytes.fromhex("21280000")),  # addu a1,zero,zero
     ),
@@ -190,13 +191,13 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x80012310,
         0x80012344,
         "lcd-status-ready-wait",
-        "C200 is polling LCD status register 0xb004300c bit 0x80; the bbk9588 C LCD/MMIO stub now supplies this ready bit.",
+        "C200 is polling LCD status register 0xb004300c bit 0x80; the bbk9588 LCD status model sets this from controller/frame activity without a machine ready override.",
     ),
     (
         0x800052B0,
         0x80005318,
         "tcu-init-path",
-        "C200 is touching TCU registers around 0xb0002000/2004/2008/200c; the bbk9588 C TCU stub tracks these timer registers.",
+        "C200 is touching TCU registers around 0xb0002000/2004/2008/200c; the bbk9588 TCU model tracks timer registers and IRQ state.",
     ),
     (
         0x8000531C,
@@ -238,7 +239,7 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x8000BA84,
         0x8000BB94,
         "c200-semaphore-wait",
-        "C200 is executing its type-3 semaphore wait path. If count is zero, this enters scheduler/task blocking; replacing semaphore-fastpath requires modeling that scheduler state.",
+        "C200 is executing its type-3 semaphore wait path. If count is zero, this enters scheduler/task blocking; correct progress depends on the modeled scheduler, timer, and IRQ state.",
     ),
     (
         0x8000BB98,
@@ -280,7 +281,7 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x8001004C,
         0x80010068,
         "lcd-graphics-done-wait",
-        "C200 is polling graphics/LCD status register 0xb0021004 bit 0x800; the bbk9588 C graphics stub supplies this ready bit.",
+        "C200 is polling graphics/LCD status register 0xb0021004 bit 0x800; the bbk9588 graphics model now raises this from command completion without a machine ready override.",
     ),
     (
         0x80017B98,
@@ -304,7 +305,7 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x800DC588,
         0x800DC660,
         "gui-event-poller",
-        "C200 is polling the display/event ring at 0x80825840; the current QEMU C event-loop bridge can pop this ring when firmware reaches this PC.",
+        "C200 is polling the display/event ring at 0x80825840; bbk9588 now exposes input through modeled SADC/GPIO/INTC and only mirrors host input events for diagnostics.",
     ),
     (
         0x8012BB90,
@@ -316,7 +317,7 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x8012CCFC,
         0x8012CD04,
         "event-loop-empty-return",
-        "C200 reached the event-loop empty return site; the temporary QEMU C event-loop bridge consumes pending board input events here.",
+        "C200 reached the event-loop empty return site; Python/GDB event synthesis is a legacy diagnostic path and is not part of the default bbk9588 hardware model.",
     ),
     (
         0x80059F68,
@@ -334,13 +335,13 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x80005C80,
         0x80005D90,
         "uart-status-wait",
-        "C200 is polling BBK UART status register 0xb0030014 for TX/RX readiness; the bbk9588 C UART stub supplies TX-ready bits.",
+        "C200 is polling BBK UART status register 0xb0030014 for TX/RX readiness; the bbk9588 UART model exposes 16550/JZ4740 line-status bits.",
     ),
     (
         0x8000E42C,
         0x8000E84C,
         "usb-udc-service",
-        "C200 is servicing the BBK USB device controller window at 0xb3040000; the bbk9588 C UDC stub currently exposes the idle/no-host state.",
+        "C200 is servicing the BBK USB device controller window at 0xb3040000; the bbk9588 UDC model currently exposes the idle/no-host state.",
     ),
     (
         0x8005BBC0,
@@ -376,7 +377,7 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
         0x801838FC,
         0x80183A60,
         "nand-scan-ready-marker-loop",
-        "C200 is scanning NAND pages through the QEMU C CS0 data/cmd/addr windows; image-backed page reads are active, but higher-level FTL/resource acceleration is not migrated yet.",
+        "C200 is scanning NAND pages through the QEMU C CS0 data/cmd/addr windows; image-backed page reads are active and higher-level FTL/resource interpretation remains firmware-owned.",
     ),
     (
         0x801842F0,
@@ -393,8 +394,8 @@ KNOWN_STALL_REGIONS: tuple[tuple[int, int, str, str], ...] = (
     (
         0x8017CA10,
         0x8017CA80,
-        "fat16-resource-cache-lookup",
-        "C200 is looking up a 16-bit FAT entry through the firmware resource cache table; the bbk9588 C machine currently provides a temporary QEMU C cache miss-load bridge backed by NAND.",
+        "firmware-fat16-resource-cache-lookup",
+        "C200 is looking up a 16-bit FAT entry through its firmware resource cache table; this is a diagnostic PC classification, not a QEMU storage/resource service.",
     ),
     (
         0x8017A928,
@@ -475,6 +476,7 @@ class QemuSystemConfig:
     bbk_frame: str = "none"
     bbk_machine_options: tuple[str, ...] = ()
     boot_payload: QemuPayload | None = None
+    boot_load_addr: int = DEFAULT_C200_PHYS
     boot_pc: int = DEFAULT_C200_BASE
     nand_image: Path | None = None
     extra_payloads: tuple[QemuPayload, ...] = ()
@@ -539,6 +541,16 @@ class QemuProcessBackend:
         self.frame_chardev_count = 0
         self.last_frame_chardev_error: str | None = None
         self.latest_frame_chardev: tuple[int, float, bytes] | None = None
+        self.performance_metrics: dict[str, object] = {}
+        self.guest_insn_count: int | None = None
+        self.guest_insn_count_at: float = 0.0
+        self.guest_insn_count_qemu_ms: int | None = None
+        self.guest_insn_ips: float | None = None
+        self.guest_insn_packet_count = 0
+        self.last_guest_insn_error: str | None = None
+        self._perf_last_time: float | None = None
+        self._perf_last_frame_chardev_count = 0
+        self._perf_last_process_cpu_seconds: float | None = None
         self.gdb_read_count = 0
         self.gdb_write_count = 0
         self.gdb_register_read_count = 0
@@ -550,8 +562,8 @@ class QemuProcessBackend:
         self.last_gdb_error: str | None = None
         self.guest_input_events: list[dict[str, object]] = []
         self.touch_capture_active: int | None = None
-        self.storage_fastpath_events: list[dict[str, object]] = []
-        self.storage_fastpath_count = 0
+        self.legacy_python_storage_hook_events: list[dict[str, object]] = []
+        self.legacy_python_storage_hook_count = 0
         self.event_loop_empty_fix_count = 0
         self.event_loop_synth_event_count = 0
         self.task_context_events: list[dict[str, object]] = []
@@ -565,16 +577,91 @@ class QemuProcessBackend:
         self.event_loop_trace_count = 0
         self.resource_trace_events: list[dict[str, object]] = []
         self.resource_trace_count = 0
-        self.fat16_layout_cache: dict[str, int] | None = None
-        self.fat16_long_name_alias_cache: dict[bytes, list[bytes]] | None = None
-        self.nand_fat_sector0_cache: int | None = None
-        self.backing_sector_cache: dict[int, bytes] = {}
+        # Diagnostic-only backing image caches; not part of the bbk9588 hardware path.
+        self.diagnostic_fat16_layout_cache: dict[str, int] | None = None
+        self.diagnostic_fat16_long_name_alias_cache: dict[bytes, list[bytes]] | None = None
+        self.diagnostic_nand_fat_sector0_cache: int | None = None
+        self.diagnostic_backing_sector_cache: dict[int, bytes] = {}
         self.qemu_heap_next = 0x80960000
         self._lock = threading.RLock()
+        self._last_snapshot: dict[str, object] = {}
         self._reader_threads: list[threading.Thread] = []
         self._frame_reader_thread: threading.Thread | None = None
         self._runtime_nand_image: Path | None = None
         self._runtime_nand_source: Path | None = None
+
+    def _bbk_machine_bool_option_enabled(self, name: str) -> bool:
+        needle = name.lower()
+        for option in self.config.bbk_machine_options:
+            key, sep, value = str(option).partition("=")
+            if key.lower() != needle:
+                continue
+            if not sep:
+                return True
+            return value.strip().lower() in {"1", "on", "true", "yes"}
+        return False
+
+    def _update_performance_metrics_locked(
+        self,
+        now: float,
+        elapsed: float | None,
+    ) -> dict[str, object]:
+        proc = self.proc
+        running = proc is not None and proc.poll() is None
+        cpu_seconds = _process_cpu_time_seconds(proc.pid) if running and proc is not None else None
+        host_cpus = os.cpu_count() or 1
+        frame_count = int(self.frame_chardev_count)
+        interval = (
+            max(0.0, now - self._perf_last_time)
+            if self._perf_last_time is not None
+            else None
+        )
+        frame_fps: float | None = None
+        cpu_one_core_percent: float | None = None
+        cpu_host_percent: float | None = None
+        if interval is not None and interval > 0:
+            frame_delta = max(0, frame_count - self._perf_last_frame_chardev_count)
+            frame_fps = frame_delta / interval
+            if cpu_seconds is not None and self._perf_last_process_cpu_seconds is not None:
+                cpu_delta = max(0.0, cpu_seconds - self._perf_last_process_cpu_seconds)
+                cpu_one_core_percent = (cpu_delta / interval) * 100.0
+                cpu_host_percent = cpu_one_core_percent / host_cpus
+
+        average_fps = (
+            frame_count / elapsed
+            if isinstance(elapsed, (int, float)) and elapsed > 0
+            else None
+        )
+        metrics: dict[str, object] = {
+            "sampled_at": now,
+            "sample_interval_seconds": None if interval is None else round(interval, 3),
+            "frame_chardev_fps": None if frame_fps is None else round(frame_fps, 2),
+            "frame_chardev_average_fps": None if average_fps is None else round(average_fps, 2),
+            "qemu_cpu_time_seconds": None if cpu_seconds is None else round(cpu_seconds, 3),
+            "qemu_cpu_one_core_percent": (
+                None if cpu_one_core_percent is None else round(cpu_one_core_percent, 1)
+            ),
+            "qemu_cpu_host_percent": None if cpu_host_percent is None else round(cpu_host_percent, 1),
+            "host_logical_cpus": host_cpus,
+            "guest_ips": None if self.guest_insn_ips is None else round(self.guest_insn_ips, 1),
+            "guest_ips_available": self.guest_insn_ips is not None and (
+                self.guest_insn_count_at <= 0.0 or now - self.guest_insn_count_at <= 3.0
+            ),
+            "guest_ips_source": (
+                "bbk9588-frame-chardev"
+                if self.guest_insn_count is not None
+                else "waiting for bbk9588 frame-chardev performance packet"
+            ),
+            "guest_insn_count": self.guest_insn_count,
+            "guest_insn_count_at": self.guest_insn_count_at or None,
+            "guest_insn_count_qemu_ms": self.guest_insn_count_qemu_ms,
+            "guest_insn_packet_count": self.guest_insn_packet_count,
+        }
+        self.performance_metrics = metrics
+        self._perf_last_time = now
+        self._perf_last_frame_chardev_count = frame_count
+        self._perf_last_process_cpu_seconds = cpu_seconds
+        return metrics
 
     def start(self) -> None:
         with self._lock:
@@ -638,6 +725,16 @@ class QemuProcessBackend:
             self.frame_chardev_count = 0
             self.last_frame_chardev_error = None
             self.latest_frame_chardev = None
+            self.performance_metrics = {}
+            self.guest_insn_count = None
+            self.guest_insn_count_at = 0.0
+            self.guest_insn_count_qemu_ms = None
+            self.guest_insn_ips = None
+            self.guest_insn_packet_count = 0
+            self.last_guest_insn_error = None
+            self._perf_last_time = None
+            self._perf_last_frame_chardev_count = 0
+            self._perf_last_process_cpu_seconds = None
             self.gdb_read_count = 0
             self.gdb_write_count = 0
             self.gdb_register_read_count = 0
@@ -648,8 +745,8 @@ class QemuProcessBackend:
             self.last_bbk_input_error = None
             self.last_gdb_error = None
             self.guest_input_events = []
-            self.storage_fastpath_events = []
-            self.storage_fastpath_count = 0
+            self.legacy_python_storage_hook_events = []
+            self.legacy_python_storage_hook_count = 0
             self.event_loop_empty_fix_count = 0
             self.event_loop_synth_event_count = 0
             self.task_context_events = []
@@ -663,10 +760,10 @@ class QemuProcessBackend:
             self.event_loop_trace_count = 0
             self.resource_trace_events = []
             self.resource_trace_count = 0
-            self.fat16_layout_cache = None
-            self.fat16_long_name_alias_cache = None
-            self.nand_fat_sector0_cache = None
-            self.backing_sector_cache = {}
+            self.diagnostic_fat16_layout_cache = None
+            self.diagnostic_fat16_long_name_alias_cache = None
+            self.diagnostic_nand_fat_sector0_cache = None
+            self.diagnostic_backing_sector_cache = {}
             self.qemu_heap_next = 0x80960000
             self.finished_at = None
             self.started_at = time.time()
@@ -678,6 +775,7 @@ class QemuProcessBackend:
                 encoding="utf-8",
                 errors="replace",
                 env=qemu_subprocess_env(self.command[0]),
+                creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
             )
             self._reader_threads = [
                 threading.Thread(target=self._reader, args=("stdout", self.proc.stdout), daemon=True),
@@ -694,6 +792,13 @@ class QemuProcessBackend:
             if self.gdb_port is not None:
                 try:
                     self.gdb_sock = _connect_gdb(self.gdb_port, timeout=1.5)
+                    try:
+                        _gdb_read_packet(self.gdb_sock, timeout=0.5)
+                        _gdb_continue(self.gdb_sock)
+                    except socket.timeout:
+                        pass
+                    except Exception as exc:
+                        self.last_gdb_error = f"initial resume {type(exc).__name__}: {exc}"
                 except Exception as exc:
                     self.gdb_sock = None
                     self.last_gdb_error = f"{type(exc).__name__}: {exc}"
@@ -748,6 +853,23 @@ class QemuProcessBackend:
             remaining -= len(chunk)
         return b"".join(chunks)
 
+    def _record_guest_insn_count_locked(
+        self,
+        guest_count: int,
+        qemu_ms: int,
+        now: float,
+    ) -> None:
+        previous_count = self.guest_insn_count
+        previous_at = self.guest_insn_count_at
+        if previous_count is not None and previous_at > 0.0 and now > previous_at:
+            delta = max(0, int(guest_count) - int(previous_count))
+            self.guest_insn_ips = delta / (now - previous_at)
+        self.guest_insn_count = int(guest_count)
+        self.guest_insn_count_at = now
+        self.guest_insn_count_qemu_ms = int(qemu_ms)
+        self.guest_insn_packet_count += 1
+        self.last_guest_insn_error = None
+
     def _frame_reader(self) -> None:
         sock = self.bbk_frame_sock
         if sock is None:
@@ -756,6 +878,22 @@ class QemuProcessBackend:
             while True:
                 header = self._recv_exact(sock, QEMU_BBK_FRAME_HEADER.size)
                 magic, seq, width, height, stride, fmt, payload_len = QEMU_BBK_FRAME_HEADER.unpack(header)
+                if magic == QEMU_BBK_PERF_MAGIC:
+                    if (
+                        width != 1
+                        or fmt != QEMU_BBK_PERF_FORMAT_GUEST_INSNS
+                        or payload_len != QEMU_BBK_PERF_PAYLOAD.size
+                    ):
+                        raise ValueError(
+                            "invalid perf chardev header "
+                            f"seq={seq} version={width} fmt=0x{fmt:08x} "
+                            f"len={payload_len}"
+                        )
+                    payload = self._recv_exact(sock, payload_len)
+                    guest_count, qemu_ms = QEMU_BBK_PERF_PAYLOAD.unpack(payload)
+                    with self._lock:
+                        self._record_guest_insn_count_locked(guest_count, qemu_ms, time.time())
+                    continue
                 if (
                     magic != QEMU_BBK_FRAME_MAGIC
                     or width != 240
@@ -777,6 +915,8 @@ class QemuProcessBackend:
         except Exception as exc:
             with self._lock:
                 self.last_frame_chardev_error = f"{type(exc).__name__}: {exc}"
+                if "perf" in str(exc).lower():
+                    self.last_guest_insn_error = self.last_frame_chardev_error
 
     def stop(self, timeout: float = 2.0) -> None:
         with self._lock:
@@ -1400,6 +1540,8 @@ class QemuProcessBackend:
 
     def _fat16_image_path(self) -> Path | None:
         candidates = [
+            *DEFAULT_QEMU_NAND_IMAGE_CANDIDATES,
+            Path("build") / "bbk9588_nand_c200_fat_page1c40_root512_ftloob.bin",
             Path("build") / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin",
             Path("build") / "bbk9588_nand_c200_fat_page1c40.bin",
             Path("build") / "bbk9588_fs_fat16.img",
@@ -1410,8 +1552,8 @@ class QemuProcessBackend:
         return None
 
     def _nand_fat_sector0_index(self, image: Path) -> int | None:
-        if self.nand_fat_sector0_cache is not None:
-            return self.nand_fat_sector0_cache
+        if self.diagnostic_nand_fat_sector0_cache is not None:
+            return self.diagnostic_nand_fat_sector0_cache
         stride = 2048 + 64
         sectors_per_page = 4
         try:
@@ -1434,7 +1576,7 @@ class QemuProcessBackend:
                         absolute_sector = page * sectors_per_page + sector_in_page
                         sector0 = absolute_sector - hidden
                         if sector0 >= 0:
-                            self.nand_fat_sector0_cache = sector0
+                            self.diagnostic_nand_fat_sector0_cache = sector0
                             return sector0
         except OSError:
             return None
@@ -1443,7 +1585,7 @@ class QemuProcessBackend:
     def _read_backing_sector(self, sector: int) -> bytes | None:
         if sector < 0:
             return None
-        cached = self.backing_sector_cache.get(sector)
+        cached = self.diagnostic_backing_sector_cache.get(sector)
         if cached is not None:
             return cached
         image = self._fat16_image_path()
@@ -1469,9 +1611,9 @@ class QemuProcessBackend:
             return None
         if len(data) != 512:
             return None
-        if len(self.backing_sector_cache) > 2048:
-            self.backing_sector_cache.clear()
-        self.backing_sector_cache[sector] = data
+        if len(self.diagnostic_backing_sector_cache) > 2048:
+            self.diagnostic_backing_sector_cache.clear()
+        self.diagnostic_backing_sector_cache[sector] = data
         return data
 
     def _backing_sector_capacity(self) -> int | None:
@@ -1493,8 +1635,8 @@ class QemuProcessBackend:
         return total - sector0
 
     def _fat16_layout_from_backing(self) -> dict[str, int] | None:
-        if self.fat16_layout_cache is not None:
-            return self.fat16_layout_cache
+        if self.diagnostic_fat16_layout_cache is not None:
+            return self.diagnostic_fat16_layout_cache
         candidates = [0x20, 0]
         candidates.extend(lba for lba in range(1, 0x100) if lba not in candidates)
         for volume_lba in candidates:
@@ -1518,7 +1660,7 @@ class QemuProcessBackend:
             first_data_lba = root_lba + root_dir_sectors
             if first_data_lba >= total_sectors + volume_lba:
                 continue
-            self.fat16_layout_cache = {
+            self.diagnostic_fat16_layout_cache = {
                 "volume_lba": volume_lba,
                 "bytes_per_sector": bytes_per_sector,
                 "sectors_per_cluster": sectors_per_cluster,
@@ -1528,7 +1670,7 @@ class QemuProcessBackend:
                 "first_data_lba": first_data_lba,
                 "total_sectors": total_sectors,
             }
-            return self.fat16_layout_cache
+            return self.diagnostic_fat16_layout_cache
         return None
 
     @staticmethod
@@ -1585,7 +1727,7 @@ class QemuProcessBackend:
         return raw.decode("utf-16le", errors="replace")
 
     def _fat16_long_name_aliases_by_raw(self) -> dict[bytes, list[bytes]]:
-        cached = self.fat16_long_name_alias_cache
+        cached = self.diagnostic_fat16_long_name_alias_cache
         if cached is not None:
             return cached
         aliases: dict[bytes, list[bytes]] = {}
@@ -1635,7 +1777,7 @@ class QemuProcessBackend:
         root_data = self._root_directory_data_from_backing()
         if root_data is not None:
             scan_dir(root_data, 0)
-        self.fat16_long_name_alias_cache = aliases
+        self.diagnostic_fat16_long_name_alias_cache = aliases
         return aliases
 
     @staticmethod
@@ -1963,22 +2105,23 @@ class QemuProcessBackend:
                 out.append(found)
         return out
 
-    def _seed_storage_fastpath_globals_paused_locked(self) -> dict[str, object]:
+    def _seed_legacy_python_storage_hook_globals_paused_locked(self) -> dict[str, object]:
         return {
-            "event": "qemu-storage-fastpath-seed",
+            "event": "qemu-legacy-python-storage-hook-seed",
             "seeded": False,
             "disabled": True,
-            "reason": "Python/GDB storage fastpaths were removed from the hardware-model path",
+            "reason": "Legacy Python/GDB storage hooks were removed from the hardware-model path",
         }
 
-    def _handle_storage_fastpath_break_paused_locked(self, pc: int) -> dict[str, object]:
+    def _handle_legacy_python_storage_hook_break_paused_locked(self, pc: int) -> dict[str, object]:
         return {
             "pc": f"0x{pc & 0xFFFFFFFF:08x}",
             "handled": False,
             "disabled": True,
-            "reason": "Python/GDB storage fastpaths were removed from the hardware-model path",
+            "reason": "Legacy Python/GDB storage hooks were removed from the hardware-model path",
         }
-    def _storage_fastpath_pcs_for_machine(self) -> tuple[int, ...]:
+
+    def _legacy_python_storage_hook_pcs_for_machine(self) -> tuple[int, ...]:
         pcs = (
             0x8017CA10,
             0x8017B4E0,
@@ -2040,14 +2183,15 @@ class QemuProcessBackend:
             return ()
         return (0x8000818C,)
 
-    def _service_storage_fastpaths_paused_locked(self, *, timeout: float = 0.8, max_hits: int = 64) -> dict[str, object]:
+    def _service_legacy_python_storage_hooks_paused_locked(self, *, timeout: float = 0.8, max_hits: int = 64) -> dict[str, object]:
         return {
-            "event": "qemu-storage-fastpath-service",
+            "event": "qemu-legacy-python-storage-hook-service",
             "disabled": True,
-            "reason": "Python/GDB storage fastpaths were removed from the hardware-model path",
+            "reason": "Legacy Python/GDB storage hooks were removed from the hardware-model path",
             "handled_count": 0,
             "events": [],
         }
+
     @staticmethod
     def _resource_trace_pcs() -> tuple[int, ...]:
         return (
@@ -2189,40 +2333,68 @@ class QemuProcessBackend:
             }
         )
 
-    def service_storage_fastpaths(self, *, timeout: float = 0.8, max_hits: int = 64) -> dict[str, object]:
+    def _bbk9588_python_guest_service_disabled(self, event: str) -> dict[str, object]:
         return {
-            "event": "qemu-storage-fastpath-service",
+            "event": event,
             "disabled": True,
-            "reason": "Python/GDB storage fastpaths were removed from the hardware-model path",
+            "skipped": True,
+            "source": "qemu-c-machine",
+            "reason": "bbk9588-c-machine-default-path",
+            "handled": False,
+        }
+
+    def service_legacy_python_storage_hooks(self, *, timeout: float = 0.8, max_hits: int = 64) -> dict[str, object]:
+        return {
+            "event": "qemu-legacy-python-storage-hook-service",
+            "disabled": True,
+            "reason": "Legacy Python/GDB storage hooks were removed from the hardware-model path",
             "handled_count": 0,
             "events": [],
         }
-    def _service_resource_pump_paused_locked(
+
+    def _service_legacy_python_resource_hook_paused_locked(
         self,
         *,
         timeout: float = 1.0,
         max_hits: int = 256,
         entry: int = 0x80179618,
         args: tuple[int, int, int, int] = (),
-        event: str = "qemu-resource-pump-service",
+        event: str = "qemu-legacy-python-resource-hook-service",
     ) -> dict[str, object]:
         return {
             "event": event,
             "entry": f"0x{entry & 0xFFFFFFFF:08x}",
             "disabled": True,
-            "reason": "Python/GDB resource pump services were removed from the hardware-model path",
+            "reason": "Legacy Python/GDB resource hook services were removed from the hardware-model path",
             "handled_count": 0,
             "events": [],
         }
 
-    def _service_resource_pump_rounds_paused_locked(
+    def _service_legacy_python_resource_hook_rounds_paused_locked(
         self, *, rounds: int = 3, timeout_per_round: float = 1.0, max_hits_per_round: int = 256
     ) -> dict[str, object]:
         out: dict[str, object] = {
-            "event": "qemu-resource-pump-rounds-service",
+            "event": "qemu-legacy-python-resource-hook-rounds-service",
             "rounds": [],
         }
         c_ready = self._qemu_c_resource_refresh_ready_paused_locked()
+        if self.config.machine.lower() == "bbk9588":
+            reason = "qemu-c-resource-refresh-ready" if c_ready.get("ready") else "bbk9588-c-machine-default-path"
+            out.update(
+                {
+                    "skipped": True,
+                    "disabled": True,
+                    "reason": reason,
+                    "source": "qemu-c-machine",
+                    "resource_refresh": c_ready,
+                    "handled_count": 0,
+                }
+            )
+            try:
+                out["final_pc"] = self._format_u32(self._read_pc_paused_locked())
+            except Exception:
+                out["final_pc"] = None
+            return out
         if c_ready.get("ready"):
             out.update(
                 {
@@ -2237,7 +2409,7 @@ class QemuProcessBackend:
             return out
         for index in range(max(0, int(rounds))):
             prime = self._prime_resource_refresh_paused_locked()
-            row = self._service_resource_pump_paused_locked(timeout=timeout_per_round, max_hits=max_hits_per_round)
+            row = self._service_legacy_python_resource_hook_paused_locked(timeout=timeout_per_round, max_hits=max_hits_per_round)
             row["round"] = index
             if prime:
                 row["prime"] = prime
@@ -2298,13 +2470,16 @@ class QemuProcessBackend:
             "pattern_hex": pattern_bytes.hex(),
             "result": f"0x{result:08x}",
         }
+        if self.config.machine.lower() == "bbk9588":
+            row.update(self._bbk9588_python_guest_service_disabled(event))
+            return row
         if not (self._is_guest_ram_va(obj, 0x100) and self._is_guest_ram_va(result, 0x40)):
             row["error"] = "probe buffers are outside guest RAM"
             return row
         self._write_virtual_memory_paused_locked(obj, bytes(0x100))
         self._write_virtual_memory_paused_locked(result, bytes(0x40))
         self._write_virtual_memory_paused_locked(pattern, pattern_bytes)
-        call = self._service_resource_pump_paused_locked(
+        call = self._service_legacy_python_resource_hook_paused_locked(
             timeout=timeout,
             max_hits=max_hits,
             entry=0x80173504,
@@ -2432,6 +2607,8 @@ class QemuProcessBackend:
         path_va: int = 0x80953A00,
         path: bytes | str | None = None,
     ) -> dict[str, object]:
+        if self.config.machine.lower() == "bbk9588":
+            return self._bbk9588_python_guest_service_disabled(event)
         file_path = self._find_path_from_backing(path) if path is not None else self._first_file_path_from_backing()
         if file_path is None:
             return {
@@ -2483,7 +2660,7 @@ class QemuProcessBackend:
         path_va = int(row.pop("path_va"))
         entry = 0x801717F4 if high_level else 0x801714EC
         row["entry"] = f"0x{entry:08x}"
-        call = self._service_resource_pump_paused_locked(
+        call = self._service_legacy_python_resource_hook_paused_locked(
             timeout=timeout,
             max_hits=max_hits,
             entry=entry,
@@ -2547,7 +2724,7 @@ class QemuProcessBackend:
             return row
         path_va = int(row.pop("path_va"))
         row["entry"] = "0x801714ec"
-        call = self._service_resource_pump_paused_locked(
+        call = self._service_legacy_python_resource_hook_paused_locked(
             timeout=timeout,
             max_hits=max_hits,
             entry=0x801714EC,
@@ -2575,7 +2752,7 @@ class QemuProcessBackend:
             return row
         path_va = int(row.pop("path_va"))
         row["entry"] = "0x801717f4"
-        call = self._service_resource_pump_paused_locked(
+        call = self._service_legacy_python_resource_hook_paused_locked(
             timeout=timeout,
             max_hits=max_hits,
             entry=0x801717F4,
@@ -2594,6 +2771,8 @@ class QemuProcessBackend:
         return row
 
     def _prime_resource_refresh_paused_locked(self) -> dict[str, object] | None:
+        if self.config.machine.lower() == "bbk9588":
+            return None
         flags = self._read_u32_paused_locked(0x804BF440) or 0
         refresh = self._read_u8_paused_locked(0x804BF444) or 0
         fat_total = self._read_u32_paused_locked(0x80474240) or 0
@@ -2692,6 +2871,9 @@ class QemuProcessBackend:
             "task_id": int(task_id),
             "handled": False,
         }
+        if self.config.machine.lower() == "bbk9588":
+            row.update(self._bbk9588_python_guest_service_disabled("qemu-scheduled-fs-scan-task-service"))
+            return row
         context = self._scheduled_task_context_paused_locked(task_id)
         row["context"] = context
         scheduler = self._scheduler_dispatch_snapshot_paused_locked()
@@ -2835,6 +3017,10 @@ class QemuProcessBackend:
             "breakpoints": ["0x800a7b40", "0x800a7c18"],
             "events": [],
         }
+        if self.config.machine.lower() == "bbk9588":
+            out.update(self._bbk9588_python_guest_service_disabled("qemu-task-context-trace-service"))
+            out["handled_count"] = 0
+            return out
         if self.gdb_sock is None:
             out["error"] = "QEMU GDB stub is not connected"
             return out
@@ -2951,6 +3137,10 @@ class QemuProcessBackend:
             "breakpoints": [f"0x{pc:08x}" for pc in pcs],
             "events": [],
         }
+        if self.config.machine.lower() == "bbk9588":
+            out.update(self._bbk9588_python_guest_service_disabled("qemu-fs-trace-service"))
+            out["handled_count"] = 0
+            return out
         if self.gdb_sock is None:
             out["error"] = "QEMU GDB stub is not connected"
             return out
@@ -3076,6 +3266,10 @@ class QemuProcessBackend:
             "breakpoints": [f"0x{pc:08x}" for pc in pcs],
             "events": [],
         }
+        if self.config.machine.lower() == "bbk9588":
+            out.update(self._bbk9588_python_guest_service_disabled("qemu-event-loop-trace-service"))
+            out["handled_count"] = 0
+            return out
         if self.gdb_sock is None:
             out["error"] = "QEMU GDB stub is not connected"
             return out
@@ -3864,11 +4058,21 @@ class QemuProcessBackend:
     def guest_touch_device_snapshot(self) -> dict[str, object]:
         """Read the bbk9588 C touch/SADC diagnostic mirror."""
 
+        if (
+            self.config.machine.lower() == "bbk9588"
+            and not self._bbk_machine_bool_option_enabled("touch-trace")
+        ):
+            return {
+                "available": False,
+                "disabled": True,
+                "reason": "touch-trace machine option is disabled",
+            }
+
         labels = (
             "magic",
-            "touch_autocal_enabled",
-            "touch_autocal_stage",
-            "touch_autocal_polls",
+            "reserved_04",
+            "reserved_08",
+            "reserved_0c",
             "touch_down",
             "touch_raw_x",
             "touch_raw_y",
@@ -3914,7 +4118,7 @@ class QemuProcessBackend:
             "tcu_last_write_offset",
             "tcu_last_write_value",
             "tcu_irq_raise_count",
-            "irq24_raise_count",
+            "reserved_c4",
             "msc_read_pending",
             "msc_write_pending",
             "msc_data_ready",
@@ -3962,10 +4166,10 @@ class QemuProcessBackend:
                     label: f"0x{value:08x}" for label, value in zip(labels, words)
                 }
                 out["available"] = words[0] == QEMU_TOUCH_TRACE_MAGIC
-                out["touch_autocal_enabled_bool"] = bool(words[1])
+                out["reserved_04_int"] = int(words[1])
+                out["reserved_08_int"] = int(words[2])
+                out["reserved_0c_int"] = int(words[3])
                 out["touch_down_bool"] = bool(words[4])
-                out["touch_autocal_stage_int"] = int(words[2])
-                out["touch_autocal_polls_int"] = int(words[3])
                 out["touch_raw_x_int"] = int(words[5])
                 out["touch_raw_y_int"] = int(words[6])
                 out["sadc_conversion_events_remaining_int"] = int(words[12])
@@ -3988,7 +4192,7 @@ class QemuProcessBackend:
                 out["intc_ack_count_int"] = int(words[42])
                 out["intc_ack_tcu_count_int"] = int(words[43])
                 out["tcu_irq_raise_count_int"] = int(words[48])
-                out["irq24_raise_count_int"] = int(words[49])
+                out["reserved_c4_int"] = int(words[49])
                 out["tcu_irq_mask_int"] = int(words[77])
                 out["tcu_compare4_int"] = int(words[78])
                 out["tcu_period4_ms_int"] = int(words[79])
@@ -4515,7 +4719,7 @@ class QemuProcessBackend:
     def guest_fs_probe_trace_snapshot(self) -> dict[str, object]:
         """Read the bbk9588 read-only filesystem/object diagnostic ring."""
 
-        trace_va = 0x807FC000
+        trace_va = DEFAULT_QEMU_DIAG_BASE + 0x20000
         magic = 0x46534B42
         slots = 96
         header_words = 4
@@ -5820,13 +6024,13 @@ class QemuProcessBackend:
             "event": "qemu-settle-initial-gui",
             "disabled": True,
             "reason": "Python/GDB settle services were removed from the hardware-model path",
-            "storage_fastpath_service": {
-                "event": "qemu-storage-fastpath-service",
+            "legacy_python_storage_hook": {
+                "event": "qemu-legacy-python-storage-hook",
                 "disabled": True,
                 "handled_count": 0,
             },
-            "resource_pump_service": {
-                "event": "qemu-resource-pump-service",
+            "legacy_python_resource_hook": {
+                "event": "qemu-legacy-python-resource-hook",
                 "disabled": True,
                 "handled_count": 0,
             },
@@ -5866,6 +6070,26 @@ class QemuProcessBackend:
                 self.guest_input_events.append(row)
                 del self.guest_input_events[:-32]
                 return row
+            if self.config.machine.lower() == "bbk9588":
+                row.update(
+                    {
+                        "source": "qemu-c-machine-chardev",
+                        "bbk_input_connected": False,
+                        "bbk_input_write_count": self.bbk_input_write_count,
+                        "last_bbk_input_error": self.last_bbk_input_error,
+                        "mailbox": None,
+                        "mailbox_seq": None,
+                        "gui_idle_pump": {
+                            "source": "qemu-c-machine",
+                            "skipped": True,
+                            "reason": "bbk9588-input-chardev-unavailable",
+                        },
+                    }
+                )
+                row["error"] = "QEMU input chardev is not connected; refusing guest-RAM mailbox/global fallback"
+                self.guest_input_events.append(row)
+                del self.guest_input_events[:-32]
+                return row
             if self.gdb_sock is None:
                 row["error"] = "QEMU GDB stub is not connected"
                 return row
@@ -5890,75 +6114,6 @@ class QemuProcessBackend:
                 old_group = self._read_u8_paused_locked(input_group_va)
                 if old_input is None or old_group is None:
                     row["error"] = "unreadable-input-state"
-                    return row
-                if self.config.machine.lower() == "bbk9588":
-                    source = "qemu-c-machine-chardev"
-                    if self.bbk_input_sock is not None:
-                        self._resume_after_gdb_locked()
-                        sent_chardev = self._send_bbk_input_locked(f"K {key_code} {1 if down else 0}")
-                        time.sleep(0.08)
-                        self._pause_for_gdb_locked()
-                    else:
-                        sent_chardev = False
-                    new_input = self._read_u8_paused_locked(input_byte_va)
-                    new_group = self._read_u8_paused_locked(input_group_va)
-                    new_flags = self._read_u8_paused_locked(node_va + 0x34)
-                    new_gate = self._read_u8_paused_locked(0x80473F08)
-                    if down:
-                        applied = (
-                            new_input is not None
-                            and new_group is not None
-                            and new_flags is not None
-                            and (new_input & mask) == mask
-                            and (new_group & group_mask) == group_mask
-                            and (new_flags & 0x08) == 0x08
-                            and new_gate == 0
-                        )
-                    else:
-                        applied = (
-                            new_input is not None
-                            and new_group is not None
-                            and new_flags is not None
-                            and (new_input & mask) == 0
-                            and (new_group & group_mask) == 0
-                            and (new_flags & 0x08) == 0
-                            and new_gate == 0
-                        )
-                    row.update(
-                        {
-                            "applied": applied,
-                            "source": source,
-                            "bbk_input_connected": self.bbk_input_sock is not None,
-                            "bbk_input_write_count": self.bbk_input_write_count,
-                            "last_bbk_input_error": self.last_bbk_input_error,
-                            "mailbox": None,
-                            "mailbox_seq": None,
-                            "slot": slot,
-                            "mask": f"0x{mask:02x}",
-                            "group_mask": f"0x{group_mask:02x}",
-                            "input_va": f"0x{input_byte_va:08x}",
-                            "input_old": f"0x{old_input:02x}",
-                            "input_new": None if new_input is None else f"0x{new_input:02x}",
-                            "group_old": f"0x{old_group:02x}",
-                            "group_new": None if new_group is None else f"0x{new_group:02x}",
-                            "flags_old": f"0x{old_flags:02x}",
-                            "flags_new": None if new_flags is None else f"0x{new_flags:02x}",
-                            "gate_80473f08_old": f"0x{old_gate:02x}",
-                            "gate_80473f08_new": None if new_gate is None else f"0x{new_gate:02x}",
-                            "gui_idle_pump": {
-                                "source": "qemu-c-machine",
-                                "skipped": True,
-                                "reason": "bbk9588-input-chardev-only",
-                            },
-                        }
-                    )
-                    if not sent_chardev:
-                        row["error"] = "QEMU input chardev is not connected; refusing guest-RAM mailbox/global fallback"
-                    if not applied:
-                        row["error"] = "key event was not consumed by QEMU C machine"
-                    self.last_gdb_error = None
-                    self.guest_input_events.append(row)
-                    del self.guest_input_events[:-32]
                     return row
                 if down:
                     new_input = old_input | mask
@@ -6037,9 +6192,7 @@ class QemuProcessBackend:
                         "bbk_input_write_count": self.bbk_input_write_count,
                         "last_bbk_input_error": self.last_bbk_input_error,
                         "mailbox": None,
-                        "touch_x_addr": "0x80370fc8",
-                        "touch_y_addr": "0x80370fcc",
-                        "latch_addr": "0x807f7110",
+                        "firmware_globals_written": False,
                         "calibration_release_seeded": False,
                         "gui_handler": {
                             "source": "qemu-c-machine",
@@ -6054,6 +6207,29 @@ class QemuProcessBackend:
                 self.guest_input_events.append(row)
                 del self.guest_input_events[:-32]
                 return row
+            if self.config.machine.lower() == "bbk9588":
+                row.update(
+                    {
+                        "source": "qemu-c-machine-chardev",
+                        "bbk_input_connected": False,
+                        "bbk_input_write_count": self.bbk_input_write_count,
+                        "last_bbk_input_error": self.last_bbk_input_error,
+                        "mailbox": None,
+                        "mailbox_seq": None,
+                        "firmware_globals_written": False,
+                        "calibration_release_seeded": False,
+                        "gui_handler": {
+                            "source": "qemu-c-machine",
+                            "called": False,
+                            "skipped": True,
+                            "reason": "bbk9588-input-chardev-unavailable",
+                        },
+                    }
+                )
+                row["error"] = "QEMU input chardev is not connected; refusing guest-RAM mailbox/global fallback"
+                self.guest_input_events.append(row)
+                del self.guest_input_events[:-32]
+                return row
             if self.gdb_sock is None:
                 row["error"] = "QEMU GDB stub is not connected"
                 return row
@@ -6062,63 +6238,6 @@ class QemuProcessBackend:
                 pc = self._read_pc_paused_locked()
                 prev_x = self._read_u32_paused_locked(0x80370FC8)
                 prev_y = self._read_u32_paused_locked(0x80370FCC)
-                if self.config.machine.lower() == "bbk9588":
-                    source = "qemu-c-machine-chardev"
-                    if self.bbk_input_sock is not None:
-                        self._resume_after_gdb_locked()
-                        sent_chardev = self._send_bbk_input_locked(
-                            f"T {x} {y} {raw_x} {raw_y} {1 if down else 0}"
-                        )
-                        time.sleep(0.08)
-                        self._pause_for_gdb_locked()
-                    else:
-                        sent_chardev = False
-                    observed_x = self._read_u32_paused_locked(0x80370FC8)
-                    observed_y = self._read_u32_paused_locked(0x80370FCC)
-                    latch_down = self._read_u8_paused_locked(0x807F7110)
-                    latch_raw_x = self._read_u16_paused_locked(0x807F7112)
-                    latch_raw_y = self._read_u16_paused_locked(0x807F7114)
-                    calibration_release_seeded = False
-                    if not down:
-                        calibration_flag = self._read_u8_paused_locked(0x80477D84)
-                        calibration_release_seeded = calibration_flag == 1 and pc is not None and 0x80017000 <= pc <= 0x80019300
-                    row.update(
-                        {
-                            "applied": observed_x == x and observed_y == y and latch_down == (1 if down else 0),
-                            "source": source,
-                            "bbk_input_connected": self.bbk_input_sock is not None,
-                            "bbk_input_write_count": self.bbk_input_write_count,
-                            "last_bbk_input_error": self.last_bbk_input_error,
-                            "pc": self._format_u32(pc),
-                            "prev_x": self._format_u32(prev_x),
-                            "prev_y": self._format_u32(prev_y),
-                            "observed_x": self._format_u32(observed_x),
-                            "observed_y": self._format_u32(observed_y),
-                            "mailbox": None,
-                            "mailbox_seq": None,
-                            "touch_x_addr": "0x80370fc8",
-                            "touch_y_addr": "0x80370fcc",
-                            "latch_addr": "0x807f7110",
-                            "latch_down": latch_down,
-                            "latch_raw_x": f"0x{(latch_raw_x or 0):03x}",
-                            "latch_raw_y": f"0x{(latch_raw_y or 0):03x}",
-                            "calibration_release_seeded": calibration_release_seeded,
-                            "gui_handler": {
-                                "source": "qemu-c-machine",
-                                "called": False,
-                                "skipped": True,
-                                "reason": "bbk9588-input-chardev-only",
-                            },
-                        }
-                    )
-                    if not sent_chardev:
-                        row["error"] = "QEMU input chardev is not connected; refusing guest-RAM mailbox/global fallback"
-                    if not row["applied"]:
-                        row["error"] = "touch event was not consumed by QEMU C machine"
-                    self.last_gdb_error = None
-                    self.guest_input_events.append(row)
-                    del self.guest_input_events[:-32]
-                    return row
                 self._write_u8_paused_locked(0x807F7110, 1 if down else 0)
                 self._write_u16_paused_locked(0x807F7112, raw_x)
                 self._write_u16_paused_locked(0x807F7114, raw_y)
@@ -6175,8 +6294,8 @@ class QemuProcessBackend:
                         9, timeout=3.0, max_hits=512
                     )
                     row["scheduler_dispatch_after_countdown"] = self._pump_gui_idle_dispatcher_paused_locked()
-                    row["storage_fastpath_service"] = self._service_storage_fastpaths_paused_locked(timeout=3.0, max_hits=512)
-                    row["resource_pump_service"] = self._service_resource_pump_rounds_paused_locked(
+                    row["legacy_python_storage_hook"] = self._service_legacy_python_storage_hooks_paused_locked(timeout=3.0, max_hits=512)
+                    row["legacy_python_resource_hook"] = self._service_legacy_python_resource_hook_rounds_paused_locked(
                         rounds=4, timeout_per_round=2.0, max_hits_per_round=512
                     )
                     row["fs_scan_probe"] = self._service_fs_scan_probe_paused_locked(timeout=3.0, max_hits=512)
@@ -6192,7 +6311,7 @@ class QemuProcessBackend:
                     row["first_file_high_level_open_probe"] = (
                         self._service_first_file_high_level_open_probe_paused_locked(timeout=3.0, max_hits=1280)
                     )
-                    row["storage_fastpath_service_after_resource_pump"] = self._service_storage_fastpaths_paused_locked(
+                    row["legacy_python_storage_hook_after_resource_hook"] = self._service_legacy_python_storage_hooks_paused_locked(
                         timeout=2.0, max_hits=512
                     )
                     row["gui_repaint_settle"] = self._settle_gui_repaint_paused_locked()
@@ -6664,6 +6783,16 @@ class QemuProcessBackend:
     def _pump_gui_idle_dispatcher_paused_locked(self) -> dict[str, object]:
         """Run the GUI idle dispatcher after injected GUI events."""
 
+        if self.config.machine.lower() == "bbk9588":
+            row = self._bbk9588_python_guest_service_disabled("qemu-gui-idle-pump")
+            row.update(
+                {
+                    "handler": "0x80007e08",
+                    "dispatcher": "0x800080f0",
+                    "called": False,
+                }
+            )
+            return row
         out: dict[str, object] = {
             "event": "qemu-gui-idle-pump",
             "handler": "0x80007e08",
@@ -6689,6 +6818,10 @@ class QemuProcessBackend:
     def _settle_gui_modal_close_paused_locked(self) -> dict[str, object]:
         """Use firmware helpers to clear the GUI busy list that can block modal close."""
 
+        if self.config.machine.lower() == "bbk9588":
+            row = self._bbk9588_python_guest_service_disabled("qemu-gui-modal-close-settle")
+            row["attempted"] = False
+            return row
         out: dict[str, object] = {
             "event": "qemu-gui-modal-close-settle",
             "attempted": False,
@@ -6756,6 +6889,10 @@ class QemuProcessBackend:
     ) -> dict[str, object]:
         """Poll and dispatch GUI events represented by queue flags rather than ring records."""
 
+        if self.config.machine.lower() == "bbk9588":
+            row = self._bbk9588_python_guest_service_disabled("qemu-gui-event-poller")
+            row.update({"scratch": f"0x{scratch_va:08x}", "events": []})
+            return row
         out: dict[str, object] = {
             "event": "qemu-gui-event-poller",
             "scratch": f"0x{scratch_va:08x}",
@@ -6812,6 +6949,10 @@ class QemuProcessBackend:
     def _settle_gui_repaint_paused_locked(self, *, rounds: int = 3, delay: float = 0.08) -> dict[str, object]:
         """Give guest-side repaint work a chance to run after synthesized GUI events."""
 
+        if self.config.machine.lower() == "bbk9588":
+            row = self._bbk9588_python_guest_service_disabled("qemu-gui-repaint-settle")
+            row.update({"rounds": [], "settled": False})
+            return row
         out: dict[str, object] = {
             "event": "qemu-gui-repaint-settle",
             "rounds": [],
@@ -6852,18 +6993,17 @@ class QemuProcessBackend:
         out["settled"] = out["final_flags"] == "0x00000000"
         return out
 
-    def snapshot(self) -> dict[str, object]:
-        self.refresh()
-        with self._lock:
-            now = time.time()
-            elapsed = None if self.started_at is None else (self.finished_at or now) - self.started_at
-            register_sample = self.register_sample
-            pc_classification = (
-                classify_guest_pc(register_sample.get("pc"))
-                if isinstance(register_sample, dict)
-                else None
-            )
-            return {
+    def _snapshot_locked(self) -> dict[str, object]:
+        now = time.time()
+        elapsed = None if self.started_at is None else (self.finished_at or now) - self.started_at
+        performance = self._update_performance_metrics_locked(now, elapsed)
+        register_sample = self.register_sample
+        pc_classification = (
+            classify_guest_pc(register_sample.get("pc"))
+            if isinstance(register_sample, dict)
+            else None
+        )
+        snapshot = {
                 "command": list(self.command),
                 "started_at": self.started_at,
                 "finished_at": self.finished_at,
@@ -6893,14 +7033,16 @@ class QemuProcessBackend:
                 "bbk_frame_connected": self.bbk_frame_sock is not None,
                 "frame_chardev_count": self.frame_chardev_count,
                 "last_frame_chardev_error": self.last_frame_chardev_error,
+                "last_guest_insn_error": self.last_guest_insn_error,
+                "performance": performance,
                 "gdb_read_count": self.gdb_read_count,
                 "gdb_write_count": self.gdb_write_count,
                 "gdb_register_read_count": self.gdb_register_read_count,
                 "gdb_register_write_count": self.gdb_register_write_count,
                 "gdb_step_count": self.gdb_step_count,
                 "guest_call_count": self.guest_call_count,
-                "storage_fastpath_count": self.storage_fastpath_count,
-                "storage_fastpath_events": list(self.storage_fastpath_events[-16:]),
+                "legacy_python_storage_hook_count": self.legacy_python_storage_hook_count,
+                "legacy_python_storage_hook_events": list(self.legacy_python_storage_hook_events[-16:]),
                 "event_loop_empty_fix_count": self.event_loop_empty_fix_count,
                 "event_loop_synth_event_count": self.event_loop_synth_event_count,
                 "task_context_trace_count": self.task_context_trace_count,
@@ -6916,7 +7058,26 @@ class QemuProcessBackend:
                 "resource_trace_events": list(self.resource_trace_events[-16:]),
                 "last_gdb_error": self.last_gdb_error,
                 "guest_input_events": list(self.guest_input_events[-16:]),
-            }
+        }
+        self._last_snapshot = dict(snapshot)
+        return snapshot
+
+    def snapshot(self, *, refresh: bool = True) -> dict[str, object]:
+        if refresh:
+            self.refresh()
+        if not refresh:
+            acquired = self._lock.acquire(blocking=False)
+            if not acquired:
+                if self._last_snapshot:
+                    return dict(self._last_snapshot)
+                with self._lock:
+                    return self._snapshot_locked()
+            try:
+                return self._snapshot_locked()
+            finally:
+                self._lock.release()
+        with self._lock:
+            return self._snapshot_locked()
 
 
 def find_qemu(executable: str = DEFAULT_QEMU_EXECUTABLE) -> str | None:
@@ -7062,6 +7223,17 @@ def default_bbk9588_machine_options(values: tuple[str, ...]) -> tuple[str, ...]:
     """Return launcher compatibility options not explicitly overridden by user."""
 
     options = tuple(str(value) for value in values if str(value))
+    removed = [
+        option
+        for option in options
+        if option.split("=", 1)[0] in REMOVED_BBK9588_MACHINE_OPTIONS
+    ]
+    if removed:
+        joined = ", ".join(removed)
+        raise ValueError(
+            f"removed bbk9588 machine option(s): {joined}; "
+            "the default path now uses modeled QEMU devices instead of legacy fastpath switches"
+        )
     return (*DEFAULT_BBK9588_COMPAT_MACHINE_OPTIONS, *options)
 
 
@@ -7083,7 +7255,7 @@ def classify_guest_pc(pc: int | str | None) -> dict[str, object] | None:
 
 def build_bbk_qemu_config(
     *,
-    boot_mode: str = "c200",
+    boot_mode: str = "nand",
     executable: str = DEFAULT_QEMU_EXECUTABLE,
     image: Path | None = None,
     payload: Path | None = None,
@@ -7111,23 +7283,50 @@ def build_bbk_qemu_config(
         firmware_patches,
         default=default_firmware_patches_for_machine(machine),
     )
-    if boot_mode == "uboot":
-        boot_image = qemu_safe_payload_path(image or find_workspace_file("u_boot_9588_4740.bin"))
-        boot_payload = QemuPayload(boot_image, load_addr if load_addr is not None else DEFAULT_UBOOT_PHYS)
-        c200 = qemu_patched_payload_path(
-            payload or find_workspace_file("C200.bin"),
-            base=DEFAULT_C200_BASE,
-            patch_names=firmware_patches,
+    if boot_mode == "nand":
+        if machine.lower() != "bbk9588":
+            raise ValueError("boot_mode='nand' requires the bbk9588 machine")
+        if image is not None or payload is not None:
+            raise ValueError("boot_mode='nand' starts from the NAND first-stage loader; use boot_mode='c200' or 'uboot' for --image/--payload")
+        boot_load_addr = load_addr if load_addr is not None else DEFAULT_BOOTROM_LOAD_PHYS
+        boot_payload = None
+        extra_payloads = ()
+        boot_pc = pc if pc is not None else DEFAULT_BOOTROM_ENTRY
+        bbk_machine_options = (
+            "bootrom-nand=on",
+            *bbk_machine_options,
         )
-        extra_payloads = (QemuPayload(c200, payload_addr),)
-        boot_pc = pc if pc is not None else DEFAULT_UBOOT_BASE
+    elif boot_mode == "uboot":
+        if image is None and machine.lower() == "bbk9588":
+            boot_load_addr = load_addr if load_addr is not None else DEFAULT_BOOTROM_LOAD_PHYS
+            boot_payload = None
+            bbk_machine_options = (
+                "bootrom-nand=on",
+                *bbk_machine_options,
+            )
+            boot_pc = pc if pc is not None else DEFAULT_BOOTROM_ENTRY
+        else:
+            boot_load_addr = load_addr if load_addr is not None else DEFAULT_UBOOT_PHYS
+            boot_image = qemu_safe_payload_path(image or find_workspace_file("u_boot_9588_4740.bin"))
+            boot_payload = QemuPayload(boot_image, boot_load_addr)
+            boot_pc = pc if pc is not None else DEFAULT_UBOOT_BASE
+        if payload is not None:
+            c200 = qemu_patched_payload_path(
+                payload,
+                base=DEFAULT_C200_BASE,
+                patch_names=firmware_patches,
+            )
+            extra_payloads = (QemuPayload(c200, payload_addr),)
+        else:
+            extra_payloads = ()
     elif boot_mode == "c200":
         boot_image = qemu_patched_payload_path(
             image or find_workspace_file("C200.bin"),
             base=DEFAULT_C200_BASE,
             patch_names=firmware_patches,
         )
-        boot_payload = QemuPayload(boot_image, load_addr if load_addr is not None else DEFAULT_C200_PHYS)
+        boot_load_addr = load_addr if load_addr is not None else DEFAULT_C200_PHYS
+        boot_payload = QemuPayload(boot_image, boot_load_addr)
         extra_payloads = ()
         boot_pc = pc if pc is not None else DEFAULT_C200_BASE
     else:
@@ -7149,6 +7348,7 @@ def build_bbk_qemu_config(
         bbk_frame=bbk_frame,
         bbk_machine_options=bbk_machine_options,
         boot_payload=boot_payload,
+        boot_load_addr=boot_load_addr,
         boot_pc=boot_pc,
         nand_image=None if nand_image is None else qemu_safe_payload_path(nand_image),
         extra_payloads=extra_payloads,
@@ -7162,7 +7362,7 @@ def build_bbk_qemu_config(
 def build_qemu_command(config: QemuSystemConfig) -> list[str]:
     """Build a qemu-system-mipsel command for a raw BBK firmware image."""
 
-    if config.boot_payload is None:
+    if config.boot_payload is None and config.machine.lower() != "bbk9588":
         raise ValueError("boot_payload is required")
     if config.ram_mb <= 0:
         raise ValueError("ram_mb must be positive")
@@ -7170,8 +7370,10 @@ def build_qemu_command(config: QemuSystemConfig) -> list[str]:
     bbk_machine_options = list(config.bbk_machine_options)
     if config.machine.lower() == "bbk9588":
         option_names = {option.split("=", 1)[0] for option in bbk_machine_options}
+        if config.boot_payload is None and "bootrom-nand" not in option_names:
+            raise ValueError("bbk9588 requires boot_payload or bootrom-nand=on")
         if "firmware-phys" not in option_names:
-            bbk_machine_options.append(f"firmware-phys=0x{config.boot_payload.load_addr:x}")
+            bbk_machine_options.append(f"firmware-phys=0x{config.boot_load_addr:x}")
         if "reset-pc" not in option_names:
             bbk_machine_options.append(f"reset-pc=0x{config.boot_pc:x}")
     if config.machine.lower() == "bbk9588" and bbk_machine_options:
@@ -7211,8 +7413,11 @@ def build_qemu_command(config: QemuSystemConfig) -> list[str]:
         command.extend(["-plugin", f"file={plugin_path}"])
     command.append("-no-reboot")
     if config.machine.lower() == "bbk9588":
-        command.extend(["-kernel", str(config.boot_payload.path.resolve())])
+        if config.boot_payload is not None:
+            command.extend(["-kernel", str(config.boot_payload.path.resolve())])
     else:
+        if config.boot_payload is None:
+            raise ValueError("boot_payload is required")
         command.extend(
             [
                 "-device",
@@ -7231,6 +7436,60 @@ def _find_free_tcp_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def _process_cpu_time_seconds(pid: int) -> float | None:
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetProcessTimes.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+        ]
+        kernel32.GetProcessTimes.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+        if not handle:
+            return None
+        try:
+            creation = wintypes.FILETIME()
+            exit_time = wintypes.FILETIME()
+            kernel = wintypes.FILETIME()
+            user = wintypes.FILETIME()
+            ok = kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel),
+                ctypes.byref(user),
+            )
+            if not ok:
+                return None
+            kernel_ticks = (int(kernel.dwHighDateTime) << 32) | int(kernel.dwLowDateTime)
+            user_ticks = (int(user.dwHighDateTime) << 32) | int(user.dwLowDateTime)
+            return (kernel_ticks + user_ticks) / 10_000_000.0
+        finally:
+            kernel32.CloseHandle(handle)
+
+    stat = Path(f"/proc/{pid}/stat")
+    try:
+        text = stat.read_text(encoding="ascii")
+        fields = text.rsplit(")", 1)[1].strip().split()
+        ticks = os.sysconf("SC_CLK_TCK")
+        return (int(fields[11]) + int(fields[12])) / float(ticks)
+    except Exception:
+        return None
 
 
 def _read_hmp_available(sock: socket.socket, timeout: float = 0.2) -> str:

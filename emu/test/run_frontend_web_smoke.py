@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Exercise the BBK 9588 frontend through HTTP and WebSocket like a user."""
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from emu.web.frontend_ws import WebSocketFrameReader, encode_ws_frame
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
-DEFAULT_NAND = BUILD / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin"
+DEFAULT_NAND = BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin"
 WS_RAW_FRAME_MAGIC = b"BBKRAW1\0"
 WS_RAW_FRAME_HEADER_SIZE = 20
 WS_RAW_FRAME_FORMAT_RGB565 = 1
@@ -347,7 +347,7 @@ def start_frontend(args: argparse.Namespace, port: int) -> subprocess.Popen[byte
         "--port",
         str(port),
         "--boot-mode",
-        str(getattr(args, "boot_mode", "uboot")),
+        str(getattr(args, "boot_mode", "nand")),
         "--frame-push-min-interval",
         str(args.frame_push_min_interval),
         "--quiet",
@@ -407,8 +407,8 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
         "running": status.get("running"),
         "pc": status.get("pc"),
         "stop_reason": status.get("stop_reason"),
-        "auto_calibration_stage": status.get("auto_calibration_stage"),
-        "auto_calibration_stage_label": status.get("auto_calibration_stage_label"),
+        "frontend_input_calibration_stage": status.get("frontend_input_calibration_stage"),
+        "frontend_input_calibration_stage_label": status.get("frontend_input_calibration_stage_label"),
         "pending_touches": status.get("pending_touches"),
         "pending_keys": status.get("pending_keys"),
         "input_wake_count": status.get("input_wake_count"),
@@ -443,7 +443,7 @@ def summarize_status(status: dict[str, object]) -> dict[str, object]:
 def looks_like_menu(status: dict[str, object]) -> bool:
     fb = status.get("framebuffer") if isinstance(status.get("framebuffer"), dict) else {}
     return (
-        int(status.get("auto_calibration_stage") or 0) >= 12
+        int(status.get("frontend_input_calibration_stage") or 0) >= 12
         and int(fb.get("nonzero_pixels") or 0) >= 25000
         and int(fb.get("unique_pixel_values") or 0) >= 2500
     )
@@ -453,7 +453,30 @@ def looks_like_menu_family(status: dict[str, object]) -> bool:
     fb = status.get("framebuffer") if isinstance(status.get("framebuffer"), dict) else {}
     nonzero = int(fb.get("nonzero_pixels") or 0)
     unique = int(fb.get("unique_pixel_values") or 0)
-    return int(status.get("auto_calibration_stage") or 0) >= 12 and nonzero >= 25000 and unique >= 2500
+    return int(status.get("frontend_input_calibration_stage") or 0) >= 12 and nonzero >= 25000 and unique >= 2500
+
+
+def status_pc_value(status: dict[str, object]) -> int | None:
+    qemu = status.get("qemu") if isinstance(status.get("qemu"), dict) else {}
+    sample = qemu.get("register_sample") if isinstance(qemu.get("register_sample"), dict) else {}
+    for value in (status.get("pc"), qemu.get("pc"), sample.get("pc")):
+        if value is None:
+            continue
+        try:
+            return int(str(value), 0) & 0xFFFFFFFF
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def status_pc_in_uboot(status: dict[str, object]) -> bool:
+    pc = status_pc_value(status)
+    return pc is not None and 0x80900000 <= pc < 0x80A00000
+
+
+def status_pc_in_c200(status: dict[str, object]) -> bool:
+    pc = status_pc_value(status)
+    return pc is not None and 0x80000000 <= pc < 0x80900000
 
 
 def write_png(path: Path, data: bytes | None) -> str | None:
@@ -637,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="hwemu_frontend_web_smoke")
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="nand")
     ap.add_argument("--boot-timeout", type=int, default=480)
     ap.add_argument("--chunk-steps", type=int, default=250000)
     ap.add_argument("--frame-push-min-interval", type=float, default=0.04)
@@ -652,16 +675,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--qemu-machine-option", action="append", default=[])
     ap.add_argument("--qemu-extra-arg", action="append", default=[])
     ap.add_argument(
-        "--qemu-frontend-auto-calibration",
+        "--qemu-frontend-input-calibration",
+        dest="qemu_frontend_input_calibration",
         action="store_true",
         default=True,
-        help="For QEMU backend diagnostics, use the Python frontend auto-calibration helper through the QEMU input chardev. Enabled by default.",
+        help="For QEMU backend diagnostics, use the frontend input calibration helper through the QEMU input chardev. Enabled by default.",
     )
     ap.add_argument(
-        "--qemu-no-frontend-auto-calibration",
-        dest="qemu_frontend_auto_calibration",
+        "--qemu-no-frontend-input-calibration",
+        dest="qemu_frontend_input_calibration",
         action="store_false",
-        help="Disable frontend input calibration, for explicit C-machine touch-autocal diagnostics.",
+        help="Disable the frontend input calibration helper; manual or external touch input must complete calibration.",
     )
     ap.add_argument(
         "--qemu-run-storage-service",
@@ -710,34 +734,49 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         if ns.backend == "qemu":
-            if ns.qemu_frontend_auto_calibration:
-                auto_reply = http_json(ns.host, port, "POST", "/api/command", {"op": "auto-calibration", "enabled": True})
+            if ns.qemu_frontend_input_calibration:
+                calibration_reply = http_json(ns.host, port, "POST", "/api/command", {"op": "frontend-input-calibration", "enabled": True})
                 interactions.append(
                     {
-                        "step": "qemu-enable-auto-calibration",
-                        "status": summarize_status(auto_reply or ws.last_status),
+                        "step": "qemu-enable-frontend-input-calibration",
+                        "status": summarize_status(calibration_reply or ws.last_status),
                     }
                 )
             else:
                 interactions.append(
                     {
-                        "step": "qemu-use-machine-autocal-diagnostic",
+                        "step": "qemu-frontend-input-calibration-disabled",
                         "status": summarize_status(ws.last_status),
                     }
                 )
             active_status = None
             deadline = time.time() + ns.boot_timeout
+            candidate: dict[str, object] = {}
+            last_full_probe = 0.0
             while time.time() < deadline:
+                compact = http_json(ns.host, port, "GET", "/api/status")
+                candidate = compact
+                now = time.time()
+                stage = int(compact.get("frontend_input_calibration_stage") or 0)
+                probe_full = (
+                    status_pc_in_c200(compact)
+                    or stage > 0
+                    or (not status_pc_in_uboot(compact) and now - last_full_probe >= 15.0)
+                )
+                if not probe_full:
+                    time.sleep(0.5)
+                    continue
                 candidate = http_json(ns.host, port, "GET", "/api/status?detail=full")
+                last_full_probe = now
                 gui = candidate.get("guest_gui_state") if isinstance(candidate.get("guest_gui_state"), dict) else {}
                 stage_ready = (
-                    not ns.qemu_frontend_auto_calibration
-                    or candidate.get("auto_calibration_stage") == 12
+                    not ns.qemu_frontend_input_calibration
+                    or candidate.get("frontend_input_calibration_stage") == 12
                 )
                 if stage_ready and gui.get("active_object_ready"):
                     active_status = candidate
                     break
-                time.sleep(0.25)
+                time.sleep(0.5 if status_pc_in_uboot(candidate) else 0.25)
             interactions.append(
                 {
                     "step": "qemu-wait-active-object",
@@ -778,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
                     "status": summarize_status(screen_status),
                     "framebuffer": screen_status.get("framebuffer"),
                     "qemu": screen_status.get("qemu"),
-                    "qemu_storage_bootstrap_log": screen_status.get("qemu_storage_bootstrap_log"),
+                    "legacy_python_hooks": screen_status.get("legacy_python_hooks"),
                 }
             )
             key_status = http_json(ns.host, port, "POST", "/api/command", {"op": "key", "code": 7, "down": True})
@@ -841,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
             if not looks_like_menu_family(post_touch_status):
                 failures.append(
                     "qemu main menu resources did not render completely: "
-                    f"stage={post_touch_status.get('auto_calibration_stage')} "
+                    f"stage={post_touch_status.get('frontend_input_calibration_stage')} "
                     f"nonzero={post_touch_framebuffer.get('nonzero_pixels')} "
                     f"unique={post_touch_framebuffer.get('unique_pixel_values')}"
                 )
@@ -900,12 +939,12 @@ def main(argv: list[str] | None = None) -> int:
             return _write_summary(ns, port, start, menu_elapsed_seconds, failures, screenshots, interactions, logs, ws)
 
         auto_started = time.time()
-        auto_reply = ws.send_command({"op": "auto-calibration", "enabled": True}, timeout=3)
+        calibration_reply = ws.send_command({"op": "frontend-input-calibration", "enabled": True}, timeout=3)
         interactions.append(
             {
-                "step": "enable-auto-calibration",
+                "step": "enable-frontend-input-calibration",
                 "elapsed_seconds": round(time.time() - auto_started, 3),
-                "status": summarize_status(auto_reply or ws.last_status),
+                "status": summarize_status(calibration_reply or ws.last_status),
             }
         )
 

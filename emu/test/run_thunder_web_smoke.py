@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Drive the Thunder Fighter path through the real web frontend."""
 
 from __future__ import annotations
@@ -424,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nand-image", type=Path, default=None, help="Override app.py's default NAND image.")
     ap.add_argument("--out-dir", type=Path, default=BUILD)
     ap.add_argument("--prefix", default="thunder_web_smoke")
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="nand")
     ap.add_argument("--boot-timeout", type=int, default=240)
     ap.add_argument("--runtime-timeout", type=int, default=45)
     ap.add_argument("--chunk-steps", type=int, default=250000)
@@ -464,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
 
         ws.send_json({"op": "reset"})
         pump_for(ws, 1.0)
-        ws.send_json({"op": "auto-calibration", "enabled": True})
+        ws.send_json({"op": "frontend-input-calibration", "enabled": True})
         if ns.backend == "qemu":
             resource_trace_status = ws.send_command(
                 {"op": "qemu-resource-trace", "timeout": min(20.0, ns.boot_timeout), "max_hits": 2048},
@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             ) or {}
             interactions.append(
                 {
-                    "step": "qemu-resource-trace-after-autocalibration",
+                    "step": "qemu-resource-trace-after-frontend-input-calibration",
                     "result": resource_trace_status.get("qemu_resource_trace_result"),
                     "qemu": resource_trace_status.get("qemu"),
                 }
@@ -483,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
             while time.time() < deadline:
                 last_status = http_json(ns.host, port, "GET", "/api/status?detail=full")
                 gui = last_status.get("guest_gui_state") if isinstance(last_status.get("guest_gui_state"), dict) else {}
-                if last_status.get("auto_calibration_stage") == 12 and gui.get("active_object_ready"):
+                if last_status.get("frontend_input_calibration_stage") == 12 and gui.get("active_object_ready"):
                     active_status = last_status
                     break
                 pump_for(ws, 0.2)
@@ -493,12 +493,12 @@ def main(argv: list[str] | None = None) -> int:
                     "status": summarize_status(active_status or last_status),
                     "guest_display_surface": (active_status or last_status).get("guest_display_surface"),
                     "guest_gui_state": (active_status or last_status).get("guest_gui_state"),
-                    "qemu_auto_calibration_log": (active_status or last_status).get("qemu_auto_calibration_log"),
-                    "qemu_storage_bootstrap_log": (active_status or last_status).get("qemu_storage_bootstrap_log"),
+                    "qemu_frontend_input_calibration_log": (active_status or last_status).get("qemu_frontend_input_calibration_log"),
+                    "legacy_python_hooks": (active_status or last_status).get("legacy_python_hooks"),
                 }
             )
             if active_status is None:
-                failures.append("qemu auto-calibration did not reach an active GUI object")
+                failures.append("qemu frontend input calibration did not reach an active GUI object")
             else:
                 modal_capture = capture_after(
                     ws,

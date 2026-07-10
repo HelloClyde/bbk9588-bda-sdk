@@ -30,23 +30,40 @@ powershell -ExecutionPolicy Bypass -File .\start-web.ps1
 http://127.0.0.1:8000/
 ```
 
+Web 端的“NAND 镜像”面板可以在 `build/` 下的可用镜像之间切换，也可以输入本机路径；
+切换后会自动重启 QEMU。
+
 ## 必需的本地数据
 
-公开 release 不包含固件、NAND 镜像、BDA 应用或商业资源。请把你自己的本地 dump 放到
-`start-web.ps1` 同级目录：
+公开 release 不包含固件、NAND 镜像、BDA 应用或商业资源。
+
+默认启动路径由 QEMU BootROM 从 NAND address `0` 按 JZ4740 spare valid flag 读取
+`loader_9588_4740.bin`，入口为 `0x80000004`，
+再由 loader/U-Boot 通过 FAT/FTL 读取 `系统/数据/kj409588.bin` 并进入系统固件。
+运行时只需要：
+
+- `build/bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin`
+
+如果还没有 runtime NAND 镜像，请把你自己的本地 dump 放到 `start-web.ps1` 同级目录，
+首次启动时脚本会自动生成 NAND：
 
 ```text
 系统/
   数据/
-    C200.bin
+    loader_9588_4740.bin
     u_boot_9588_4740.bin
+    kj409588.bin
 应用/
 ```
 
-首次启动时脚本会自动生成：
+`C200.bin` 只用于 `-BootMode c200` direct-boot 兼容诊断模式。
+
+生成的 FAT 卷匹配真机规格：495 MB、FAT16、16 KiB allocation unit。
+
+生成结果：
 
 ```text
-build/bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin
+build/bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin
 ```
 
 强制重建镜像：
@@ -58,11 +75,14 @@ powershell -ExecutionPolicy Bypass -File .\start-web.ps1 -RebuildImages
 修改端口或追加前端参数：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\start-web.ps1 -Port 8010 --no-auto-calibration
+powershell -ExecutionPolicy Bypass -File .\start-web.ps1 -Port 8010 --orientation rot180
 ```
+
+前端输入校准 helper 默认关闭；它只用于 Web smoke test。需要复现实验校准流程时，
+可追加 `--frontend-input-calibration`。
 
 ## 故障排查
 
-- 提示缺少 NAND 镜像：确认 `系统/数据/C200.bin` 和 `应用/` 已放在包根目录。
+- 提示缺少 NAND 镜像：确认 `系统/数据/loader_9588_4740.bin`、`系统/数据/u_boot_9588_4740.bin`、`系统/数据/kj409588.bin` 和 `应用/` 已放在包根目录，或手动放入预构建 NAND。
 - 端口被占用：使用 `-Port 8010` 换端口。
 - 不想自动打开浏览器：加 `-NoOpenBrowser`。

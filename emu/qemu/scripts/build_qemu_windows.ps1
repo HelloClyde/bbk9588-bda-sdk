@@ -4,6 +4,7 @@ param(
   [string]$MsysBash = "C:\msys64\usr\bin\bash.exe",
   [int]$Jobs = 0,
   [switch]$SkipPatch,
+  [switch]$SkipOverlay,
   [switch]$UseOverlay,
   [switch]$Reconfigure,
   [switch]$ConfigureOnly
@@ -12,7 +13,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
-$patchScript = Join-Path $repoRoot "emu\qemu\scripts\apply_qemu_patch.py"
 $overlayScript = Join-Path $repoRoot "emu\qemu\scripts\install_qemu_overlay.py"
 
 if (-not (Test-Path -LiteralPath $QemuSource)) {
@@ -22,27 +22,10 @@ if (-not (Test-Path -LiteralPath $MsysBash)) {
   throw "MSYS2 bash not found: $MsysBash"
 }
 
-if (-not $SkipPatch) {
-  if ($UseOverlay) {
-    python $overlayScript --qemu-source $QemuSource
-    if ($LASTEXITCODE -ne 0) {
-      throw "failed to install QEMU source overlay"
-    }
-  } else {
-    python $patchScript --qemu-source $QemuSource --check
-    if ($LASTEXITCODE -eq 0) {
-      python $patchScript --qemu-source $QemuSource
-      if ($LASTEXITCODE -ne 0) {
-        throw "failed to apply QEMU patch"
-      }
-    } else {
-      python $patchScript --qemu-source $QemuSource --reverse --check
-      if ($LASTEXITCODE -eq 0) {
-        Write-Host "QEMU patch is already applied"
-      } else {
-        throw "QEMU source tree is neither clean nor already patched"
-      }
-    }
+if (-not $SkipOverlay -and -not $SkipPatch) {
+  python $overlayScript --qemu-source $QemuSource
+  if ($LASTEXITCODE -ne 0) {
+    throw "failed to install QEMU source overlay"
   }
 }
 

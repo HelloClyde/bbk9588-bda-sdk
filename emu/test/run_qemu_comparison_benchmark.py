@@ -137,7 +137,7 @@ def write_outputs(ns: argparse.Namespace, summary: dict[str, object]) -> tuple[P
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Probe the QEMU process backend and web frontend.")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="c200")
     ap.add_argument("--qemu", default="qemu-system-mipsel")
     ap.add_argument("--qemu-machine", default="bbk9588")
     ap.add_argument("--qemu-cpu", default="24Kf")

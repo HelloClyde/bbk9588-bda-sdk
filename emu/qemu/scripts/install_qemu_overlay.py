@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         if not ns.dry_run:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
+            dst.touch()
 
     if ns.check and mismatches:
         return 1

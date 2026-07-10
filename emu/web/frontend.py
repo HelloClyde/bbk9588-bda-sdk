@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Small local web frontend for the BBK 9588 QEMU system emulator."""
 
 from __future__ import annotations
@@ -51,8 +51,12 @@ HTML = r"""<!doctype html>
     .keypad button { min-height: 42px; }
     .keypad button.blank { visibility: hidden; pointer-events: none; }
     .keypad button.active { background: #5794ff; }
-    input { width: 90px; color: #e8eaed; background: #111317; border: 1px solid #3b414b; border-radius: 6px; padding: 7px; }
+    input, select { color: #e8eaed; background: #111317; border: 1px solid #3b414b; border-radius: 6px; padding: 7px; }
+    input { width: 90px; }
     input[type="checkbox"] { width: auto; accent-color: #5794ff; }
+    .grow { flex: 1 1 180px; min-width: 0; }
+    .path-input { flex: 1 1 260px; width: auto; min-width: 0; }
+    .image-status { min-height: 1.2em; overflow-wrap: anywhere; }
     .check { display: inline-flex; gap: 6px; align-items: center; color: #c9d1d9; font-size: 12px; }
     pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.45; color: #c9d1d9; }
     .muted { color: #9aa4b2; font-size: 12px; }
@@ -63,10 +67,22 @@ HTML = r"""<!doctype html>
   <main>
     <div>
       <h1>BBK 9588 硬件仿真器</h1>
-      <div class="muted">真实 C200.bin 硬件级冷启动；画面来自模拟 framebuffer，触摸和按键通过前端事件队列送入。</div>
+      <div class="muted">真实 NAND 硬件级冷启动；画面来自模拟 framebuffer，触摸和按键通过前端事件队列送入。</div>
     </div>
     <div class="screen-wrap">
       <canvas id="screen" width="240" height="320"></canvas>
+    </div>
+    <div class="panel">
+      <h2>NAND 镜像</h2>
+      <div class="row">
+        <select id="nandImageSelect" class="grow"></select>
+        <button id="reloadImages" class="secondary">刷新</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="nandImagePath" class="path-input" placeholder="NAND 镜像路径">
+        <button id="applyNandImage">切换并重启</button>
+      </div>
+      <div id="imageStatus" class="muted image-status" style="margin-top:8px"></div>
     </div>
     <div class="panel">
       <h2>运行</h2>
@@ -80,7 +96,7 @@ HTML = r"""<!doctype html>
       <div class="row" style="margin-top:10px">
         <label class="muted">每片指令</label>
         <input id="steps" type="number" min="1000" max="2000000" step="10000" value="250000">
-        <label class="check"><input id="autoBoot" type="checkbox">自动冷启动输入</label>
+        <label class="check"><input id="frontendInputCalibration" type="checkbox">前端输入校准</label>
       </div>
     </div>
     <div class="panel keypad">
@@ -112,11 +128,18 @@ screenCtx.imageSmoothingEnabled = false;
 const statusEl = document.getElementById('status');
 const eventsEl = document.getElementById('events');
 const stepsEl = document.getElementById('steps');
-const autoBootEl = document.getElementById('autoBoot');
+const frontendInputCalibrationEl = document.getElementById('frontendInputCalibration');
+const nandImageSelect = document.getElementById('nandImageSelect');
+const nandImagePath = document.getElementById('nandImagePath');
+const imageStatusEl = document.getElementById('imageStatus');
 let timer = null;
 let poller = null;
+let framePoller = null;
+let framePollInFlight = false;
 let ws = null;
 let wsOpenPromise = null;
+let wsWatchdog = null;
+let wsLastMessageAt = 0;
 let continuousActive = false;
 let pointerActive = false;
 let activePointerId = null;
@@ -126,21 +149,69 @@ let currentOrientation = 'rot180';
 let rgb565Lut = null;
 let rawImageData = null;
 const minTouchHoldMs = 180;
+const wsIdleReconnectMs = 5000;
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   if (!res.ok) throw new Error(await res.text());
   return await res.json();
 }
-function wsSend(msg) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    return fetch('/api/command', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(msg)
-    }).then(r => r.json()).then(renderStatus);
+function commandFetchFallback(msg) {
+  return fetch('/api/command', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(msg)
+  }).then(r => r.json()).then(renderStatus);
+}
+function ensurePolling() {
+  if (!poller) poller = setInterval(() => refresh().catch(console.error), 1000);
+  ensureFramePolling();
+}
+function ensureFramePolling() {
+  if (!framePoller) {
+    framePoller = setInterval(() => refreshFrameFallback().catch(console.error), 250);
+    refreshFrameFallback().catch(console.error);
   }
-  ws.send(JSON.stringify(msg));
+}
+function wsIsStale() {
+  return ws && ws.readyState === WebSocket.OPEN && performance.now() - wsLastMessageAt > wsIdleReconnectMs;
+}
+function dropWs(reason = 'stale websocket') {
+  const sock = ws;
+  ws = null;
+  wsOpenPromise = null;
+  stopWsWatchdog();
+  ensurePolling();
+  if (!sock || sock.readyState === WebSocket.CLOSED) return;
+  try { sock.close(4000, reason); } catch (err) { console.error(err); }
+}
+function wsSend(msg) {
+  if (wsIsStale()) {
+    dropWs();
+    connectWs().catch(() => {});
+    return commandFetchFallback(msg);
+  }
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify(msg));
+      return Promise.resolve();
+    } catch (err) {
+      dropWs('websocket send failed');
+      connectWs().catch(() => {});
+      return commandFetchFallback(msg);
+    }
+  }
+  if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+    connectWs().catch(() => {});
+  }
+  if (wsOpenPromise) {
+    return wsOpenPromise.then(sock => {
+      if (!sock || sock.readyState !== WebSocket.OPEN) return commandFetchFallback(msg);
+      sock.send(JSON.stringify(msg));
+      return undefined;
+    }).catch(() => commandFetchFallback(msg));
+  }
+  return commandFetchFallback(msg);
 }
 function screenPointFromClient(clientX, clientY, clamp = false) {
   const r = screen.getBoundingClientRect();
@@ -201,6 +272,82 @@ function formatJobSteps(job) {
   const total = job.total_steps || 'inf';
   return `${job.observed_insn_delta ?? 0}/${job.requested_done_steps ?? job.done_steps}/${total}`;
 }
+function basename(path) {
+  return String(path || '').split(/[\\/]/).pop() || String(path || '');
+}
+function formatBytes(value) {
+  const n = Number(value || 0);
+  if (!n) return '';
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${n} B`;
+}
+function firstNumber(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && !Number.isNaN(Number(value))) return Number(value);
+  }
+  return null;
+}
+function formatRate(value, unit, fallback = 'n/a') {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return fallback;
+  return `${Number(value).toFixed(1)} ${unit}`;
+}
+function formatPercent(value, fallback = 'n/a') {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return fallback;
+  return `${Number(value).toFixed(1)}%`;
+}
+function formatGuestIps(perf) {
+  if (!perf || !perf.guest_ips_available) return 'n/a';
+  const ips = Number(perf.guest_ips || 0);
+  if (ips >= 1000000) return `${(ips / 1000000).toFixed(1)} Mips`;
+  if (ips >= 1000) return `${(ips / 1000).toFixed(1)} Kips`;
+  return `${ips.toFixed(0)} ips`;
+}
+async function refreshImages() {
+  const catalog = await api('/api/images');
+  const images = Array.isArray(catalog.images) ? catalog.images : [];
+  nandImageSelect.replaceChildren();
+  for (const image of images) {
+    const option = document.createElement('option');
+    option.value = image.path || '';
+    const size = image.size ? ` ${formatBytes(image.size)}` : '';
+    option.textContent = `${image.current ? '* ' : ''}${image.name || basename(image.path)}${size}${image.exists ? '' : ' 缺失'}`;
+    option.disabled = !image.exists;
+    option.selected = Boolean(image.current);
+    nandImageSelect.appendChild(option);
+  }
+  if (!nandImageSelect.options.length) {
+    const option = document.createElement('option');
+    option.textContent = '未找到 NAND 镜像';
+    option.disabled = true;
+    nandImageSelect.appendChild(option);
+  }
+  const current = catalog.current_path || nandImageSelect.value || '';
+  if (!nandImagePath.value || current) nandImagePath.value = current;
+  imageStatusEl.textContent = current ? `当前 ${current}` : '未选择 NAND 镜像';
+}
+async function applyNandImage() {
+  const path = (nandImagePath.value || nandImageSelect.value || '').trim();
+  if (!path) {
+    imageStatusEl.textContent = '没有可用镜像';
+    return;
+  }
+  imageStatusEl.textContent = '正在切换镜像...';
+  setContinuousActive(false);
+  stopPolling();
+  try {
+    const status = await api('/api/command', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({op:'set-nand-image', path, reset:true})
+    });
+    renderStatus(status);
+    await refreshImages();
+    connectWs().catch(console.error);
+  } catch (err) {
+    imageStatusEl.textContent = String(err.message || err);
+  }
+}
 function qemuCp0Status(s) {
   return s.cp0 || s.qemu?.cp0 || null;
 }
@@ -238,14 +385,22 @@ function formatLastInput(s) {
 }
 function renderStatus(s) {
   currentOrientation = s.orientation || currentOrientation;
-  autoBootEl.checked = Boolean(s.auto_calibration);
+  frontendInputCalibrationEl.checked = Boolean(s.frontend_input_calibration);
+  const qemuPerf = s.qemu?.performance || {};
+  const frontendPerf = s.frontend_performance || {};
   const rows = [
     ['running', s.running],
     ['since reset', formatElapsed(s.reset_elapsed_seconds ?? s.emulator_elapsed_seconds)],
     ['run elapsed', formatElapsed(s.run_elapsed_seconds)],
+    ['qemu fps', formatRate(firstNumber(qemuPerf.frame_chardev_fps, qemuPerf.frame_chardev_average_fps), 'fps')],
+    ['web fps', formatRate(frontendPerf.websocket_fps, 'fps')],
+    ['png fps', formatRate(frontendPerf.screen_png_fps, 'fps')],
+    ['qemu cpu', formatPercent(firstNumber(qemuPerf.qemu_cpu_one_core_percent, qemuPerf.qemu_cpu_host_percent))],
+    ['guest ips', formatGuestIps(qemuPerf)],
     ['boot', s.boot_mode || ''],
+    ['nand', basename(s.nand_image || '')],
     ['orientation', s.orientation || ''],
-    ['auto boot', `${s.auto_calibration ? 'on' : 'off'}:${s.auto_calibration_stage_label || s.auto_calibration_stage || 0}`],
+    ['input calib', `${s.frontend_input_calibration ? 'on' : 'off'}:${s.frontend_input_calibration_stage_label || s.frontend_input_calibration_stage || 0}`],
     ['touch queue', s.pending_touches ?? 0],
     ['key queue', s.pending_keys ?? 0],
     ['input wake', s.input_wake_count ?? 0],
@@ -273,6 +428,17 @@ function renderStatus(s) {
   eventsEl.textContent = JSON.stringify((s.events || []).slice(-12), null, 2);
 }
 async function refresh() { renderStatus(await api('/api/status')); }
+async function refreshFrameFallback() {
+  if (framePollInFlight || (ws && ws.readyState === WebSocket.OPEN)) return;
+  framePollInFlight = true;
+  try {
+    const res = await fetch(`/screen.png?fallback=${Date.now()}`, {cache:'no-store'});
+    if (!res.ok) throw new Error(await res.text());
+    await drawPngFrame(await res.blob());
+  } finally {
+    framePollInFlight = false;
+  }
+}
 function ensureScreenSize(width, height) {
   if (screen.width !== width || screen.height !== height) {
     screen.width = width;
@@ -382,6 +548,21 @@ async function drawPngFrame(data) {
   screenCtx.drawImage(bitmap, 0, 0);
   bitmap.close?.();
 }
+function stopWsWatchdog() {
+  if (wsWatchdog) {
+    clearInterval(wsWatchdog);
+    wsWatchdog = null;
+  }
+}
+function startWsWatchdog() {
+  stopWsWatchdog();
+  wsLastMessageAt = performance.now();
+  wsWatchdog = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (performance.now() - wsLastMessageAt <= wsIdleReconnectMs) return;
+    ws.close(4000, 'stale websocket');
+  }, 1000);
+}
 function connectWs() {
   if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve(ws);
   if (ws && ws.readyState === WebSocket.CONNECTING) return wsOpenPromise || Promise.resolve(ws);
@@ -391,8 +572,13 @@ function connectWs() {
     ws.addEventListener('error', () => reject(new Error('websocket failed')), {once:true});
   });
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => stopPolling();
+  ws.onopen = () => {
+    stopPolling();
+    stopFramePolling();
+    startWsWatchdog();
+  };
   ws.onmessage = async ev => {
+    wsLastMessageAt = performance.now();
     if (ev.data instanceof ArrayBuffer) {
       if (!drawRawRgb565Frame(ev.data)) await drawPngFrame(ev.data);
       return;
@@ -404,9 +590,10 @@ function connectWs() {
     try { renderStatus(JSON.parse(ev.data)); } catch (err) { console.error(err); }
   };
   ws.onclose = () => {
+    stopWsWatchdog();
     ws = null;
     wsOpenPromise = null;
-    if (!poller) poller = setInterval(() => refresh().catch(console.error), 1000);
+    ensurePolling();
     setTimeout(connectWs, 1500);
   };
   ws.onerror = () => ws?.close();
@@ -414,6 +601,9 @@ function connectWs() {
 }
 function stopPolling() {
   if (poller) { clearInterval(poller); poller = null; }
+}
+function stopFramePolling() {
+  if (framePoller) { clearInterval(framePoller); framePoller = null; }
 }
 function setContinuousActive(active) {
   continuousActive = active;
@@ -472,9 +662,16 @@ document.getElementById('stop').onclick = async () => {
   stopPolling();
   requestStop();
 };
-autoBootEl.onchange = () => {
-  wsSend({op:'auto-calibration', enabled:autoBootEl.checked});
+frontendInputCalibrationEl.onchange = () => {
+  wsSend({op:'frontend-input-calibration', enabled:frontendInputCalibrationEl.checked});
 };
+nandImageSelect.onchange = () => {
+  if (nandImageSelect.value) nandImagePath.value = nandImageSelect.value;
+};
+document.getElementById('reloadImages').onclick = () => refreshImages().catch(err => {
+  imageStatusEl.textContent = String(err.message || err);
+});
+document.getElementById('applyNandImage').onclick = applyNandImage;
 const activeButtonPointers = new Map();
 const activeKeyboardKeys = new Set();
 function sendKeyButton(btn, down, phase = '') {
@@ -605,6 +802,7 @@ screen.addEventListener('touchend', ev => {
 }, {passive:false});
 connectWs();
 refresh().catch(console.error);
+refreshImages().catch(console.error);
 </script>
 </body>
 </html>
@@ -621,7 +819,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--frame-push-min-interval",
         type=float,
-        default=0.04,
+        default=1.0 / 30.0,
         help="Minimum seconds between QEMU frame-chardev WebSocket frame pushes.",
     )
     ap.add_argument(
@@ -630,20 +828,30 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="Minimum seconds between full framebuffer-stat rescans for status JSON.",
     )
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="uboot", help="QEMU cold-boot path.")
-    ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="nand", help="QEMU cold-boot path.")
     ap.add_argument(
-        "--auto-calibration",
-        dest="auto_calibration",
-        action="store_true",
-        default=False,
-        help="Feed cold-boot calibration touches through the QEMU input chardev.",
+        "--image",
+        type=Path,
+        help="Optional direct boot image path for c200/uboot compatibility modes.",
     )
     ap.add_argument(
-        "--no-auto-calibration",
-        dest="auto_calibration",
+        "--payload",
+        type=Path,
+        help="Optional legacy C200 RAM preload for uboot mode.",
+    )
+    ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
+    ap.add_argument(
+        "--frontend-input-calibration",
+        dest="frontend_input_calibration",
+        action="store_true",
+        default=False,
+        help="Frontend diagnostic helper: feed cold-boot calibration touches through the QEMU input chardev.",
+    )
+    ap.add_argument(
+        "--no-frontend-input-calibration",
+        dest="frontend_input_calibration",
         action="store_false",
-        help="Disable automatic cold-boot touchscreen calibration input.",
+        help="Disable the frontend input calibration helper.",
     )
     ap.add_argument("--orientation", choices=["raw", "rot180", "cw90", "ccw90", "hflip", "vflip"], default="rot180")
     ap.add_argument("--profile-out", type=Path, help="Write a cProfile report when the frontend exits normally.")
@@ -655,9 +863,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--qemu-accel", default="tcg,thread=multi,tb-size=256", help="QEMU accelerator options.")
     ap.add_argument("--qemu-gdb", default="none", help="QEMU GDB stub target; use 'auto' to allocate a local port.")
     ap.add_argument("--qemu-timeout", type=float, default=5.0, help="Default bounded-run timeout used by QEMU probes.")
-    ap.add_argument("--qemu-machine-option", action="append", default=[], help="Append one bbk9588 -M option. Can be repeated.")
+    ap.add_argument(
+        "--qemu-machine-option",
+        action="append",
+        default=[],
+        help="Append one diagnostic bbk9588 -M option, for example progress-trace=on. Can be repeated.",
+    )
     ap.add_argument("--qemu-extra-arg", action="append", default=[], help="Append one raw QEMU argument. Can be repeated.")
-    ap.add_argument("--qemu-firmware-patch", action="append", default=None, help="QEMU-only firmware patch name, or 'none'.")
+    ap.add_argument(
+        "--qemu-firmware-patch",
+        action="append",
+        default=None,
+        help="Legacy diagnostic QEMU-only firmware patch name for compatibility runs, or 'none'.",
+    )
+    ap.add_argument(
+        "--allow-gdb-diagnostics",
+        action="store_true",
+        default=False,
+        help="Enable explicit intrusive GDB diagnostics such as write watches and breakpoint traces.",
+    )
     args = ap.parse_args(argv)
     args.backend = "qemu"
 

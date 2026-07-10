@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import threading
 import time
@@ -23,13 +24,26 @@ from emu.qemu.system import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
-COMBINED_NAND_IMAGE = BUILD / "bbk9588_nand_c200_fat_page1c40_root256_ftloob.bin"
-FALLBACK_COMBINED_NAND_IMAGE = BUILD / "bbk9588_nand_c200_fat_page1c40.bin"
+COMBINED_NAND_IMAGE_CANDIDATES = (
+    BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin",
+    BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root256_ftloob.bin",
+    BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40.bin",
+    BUILD / "bbk9588_nand_fat_page1c40_root512_ftloob.bin",
+    BUILD / "bbk9588_nand_fat_page1c40_root256_ftloob.bin",
+    BUILD / "bbk9588_nand_fat_page1c40.bin",
+    BUILD / "bbk9588_nand_uboot40_fat_page1c40_root512_ftloob.bin",
+    BUILD / "bbk9588_nand_uboot40_fat_page1c40_root256_ftloob.bin",
+    BUILD / "bbk9588_nand_uboot40_fat_page1c40.bin",
+)
+NAND_IMAGE_GLOB_PATTERNS = (
+    "bbk9588_nand*.bin",
+    "bbk9588_nand*.img",
+)
 
-AUTO_BOOT_DIALOG_X = 150
-AUTO_BOOT_DIALOG_Y = 205
-AUTO_CALIBRATION_TARGETS = tuple((x, y) for x, y, _raw_x, _raw_y in TOUCH_CALIBRATION_REFERENCE_POINTS)
-AUTO_BOOT_STAGE_LABELS = {
+FRONTEND_INPUT_DIALOG_X = 150
+FRONTEND_INPUT_DIALOG_Y = 205
+FRONTEND_INPUT_CALIBRATION_TARGETS = tuple((x, y) for x, y, _raw_x, _raw_y in TOUCH_CALIBRATION_REFERENCE_POINTS)
+FRONTEND_INPUT_CALIBRATION_STAGE_LABELS = {
     0: "calib-1-down",
     1: "calib-1-up",
     2: "calib-2-down",
@@ -188,6 +202,7 @@ class FrontendState:
         self.status_lock = threading.RLock()
         self.frontend_activity_condition = threading.Condition()
         self.input_lock = threading.RLock()
+        self.frame_io_lock = threading.Lock()
 
         self.qemu_backend: QemuProcessBackend | None = None
         self.qemu_worker: threading.Thread | None = None
@@ -214,15 +229,12 @@ class FrontendState:
         self.pending_touches: deque[tuple[int, int, bool]] = deque(maxlen=32)
         self.pending_keys: deque[tuple[int, bool]] = deque(maxlen=32)
 
-        self.auto_calibration_stage = 0
-        self.auto_calibration_last_stage_step = -1
-        self.qemu_auto_calibration_last_action_at = 0.0
-        self.qemu_auto_calibration_log: list[dict[str, object]] = []
-        self.qemu_storage_bootstrap_done = False
-        self.qemu_storage_bootstrap_attempts = 0
-        self.qemu_storage_bootstrap_log: list[dict[str, object]] = []
+        self.frontend_input_calibration_stage = 0
+        self.frontend_input_calibration_last_stage_step = -1
+        self.qemu_frontend_input_calibration_last_action_at = 0.0
+        self.qemu_frontend_input_calibration_log: list[dict[str, object]] = []
 
-        self.frame_push_min_interval = max(0.0, float(getattr(args, "frame_push_min_interval", 0.04)))
+        self.frame_push_min_interval = max(0.0, float(getattr(args, "frame_push_min_interval", 1.0 / 30.0)))
         self.frame_info_min_interval = max(0.0, float(getattr(args, "frame_info_min_interval", 1.0)))
         self.frame_push_last_time = 0.0
         self.frame_push_hook_count = 0
@@ -238,6 +250,7 @@ class FrontendState:
         self.cached_status: dict[str, object] = {}
         self.cached_frame_bytes: bytes | None = None
         self.cached_frame_time = 0.0
+        self.cached_frame_seq: int | None = None
         self.cached_ws_frame_bytes: bytes | None = None
         self.cached_ws_frame_time = 0.0
         self.qemu_last_ws_frame_seq: int | None = None
@@ -248,6 +261,12 @@ class FrontendState:
         self.ws_frame_last_kind = ""
         self.ws_frame_last_bytes = 0
         self.ws_frame_last_sent_at = 0.0
+        self.screen_png_count = 0
+        self.screen_png_last_sent_at = 0.0
+        self.frontend_performance_metrics: dict[str, object] = {}
+        self._perf_last_time: float | None = None
+        self._perf_last_ws_frame_sent_count = 0
+        self._perf_last_screen_png_count = 0
         self.ws_command_count = 0
         self.ws_last_command_op = ""
         self.ws_last_command_seq: object | None = None
@@ -261,11 +280,69 @@ class FrontendState:
     def _default_nand_image(self) -> Path | None:
         if self.args.nand_image is not None:
             return self.args.nand_image
-        if COMBINED_NAND_IMAGE.exists():
-            return COMBINED_NAND_IMAGE
-        if FALLBACK_COMBINED_NAND_IMAGE.exists():
-            return FALLBACK_COMBINED_NAND_IMAGE
+        for candidate in COMBINED_NAND_IMAGE_CANDIDATES:
+            if candidate.exists():
+                return candidate
         return None
+
+    @staticmethod
+    def _path_key(path: Path) -> str:
+        return str(path.resolve()).lower()
+
+    def _resolve_nand_image_path(self, value: object) -> Path:
+        text = os.path.expandvars(str(value or "").strip()).strip('"')
+        if not text:
+            raise ValueError("missing NAND image path")
+        path = Path(text).expanduser()
+        if not path.is_absolute():
+            path = ROOT / path
+        path = path.resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"NAND image does not exist: {path}")
+        return path
+
+    def nand_image_catalog(self) -> dict[str, object]:
+        current = self._default_nand_image()
+        current_path = str(current.resolve()) if current is not None else ""
+        paths: list[Path] = []
+        if getattr(self.args, "nand_image", None) is not None:
+            paths.append(Path(self.args.nand_image))
+        paths.extend(COMBINED_NAND_IMAGE_CANDIDATES)
+        if BUILD.exists():
+            for pattern in NAND_IMAGE_GLOB_PATTERNS:
+                paths.extend(sorted(BUILD.glob(pattern)))
+
+        seen: set[str] = set()
+        images: list[dict[str, object]] = []
+        for path in paths:
+            resolved = path.resolve()
+            key = self._path_key(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            exists = resolved.is_file()
+            item: dict[str, object] = {
+                "name": resolved.name,
+                "path": str(resolved),
+                "exists": exists,
+                "current": bool(current_path and key == self._path_key(Path(current_path))),
+            }
+            if exists:
+                try:
+                    item["size"] = resolved.stat().st_size
+                except OSError:
+                    pass
+            images.append(item)
+        return {"current_path": current_path, "images": images}
+
+    def set_nand_image(self, path: object, *, reset: bool = True) -> dict[str, object]:
+        selected = self._resolve_nand_image_path(path)
+        self.args.nand_image = selected
+        if reset:
+            return self.reset()
+        with self.lock:
+            self._publish_snapshot_locked()
+            return self.snapshot()
 
     def _reset_runtime_fields_locked(self) -> None:
         self.last_error = None
@@ -289,16 +366,14 @@ class FrontendState:
         self.input_worker_pending = False
         self.input_wake_count = 0
         self.last_input_event = None
-        self.auto_calibration_stage = 0
-        self.auto_calibration_last_stage_step = -1
-        self.qemu_auto_calibration_last_action_at = 0.0
-        self.qemu_auto_calibration_log = []
-        self.qemu_storage_bootstrap_done = False
-        self.qemu_storage_bootstrap_attempts = 0
-        self.qemu_storage_bootstrap_log = []
+        self.frontend_input_calibration_stage = 0
+        self.frontend_input_calibration_last_stage_step = -1
+        self.qemu_frontend_input_calibration_last_action_at = 0.0
+        self.qemu_frontend_input_calibration_log = []
         self.reset_at = time.time()
         self.cached_frame_bytes = None
         self.cached_frame_time = 0.0
+        self.cached_frame_seq = None
         self.cached_ws_frame_bytes = None
         self.cached_ws_frame_time = 0.0
         self.qemu_last_ws_frame_seq = None
@@ -318,6 +393,12 @@ class FrontendState:
         self.ws_frame_last_kind = ""
         self.ws_frame_last_bytes = 0
         self.ws_frame_last_sent_at = 0.0
+        self.screen_png_count = 0
+        self.screen_png_last_sent_at = 0.0
+        self.frontend_performance_metrics = {}
+        self._perf_last_time = None
+        self._perf_last_ws_frame_sent_count = 0
+        self._perf_last_screen_png_count = 0
         with self.input_lock:
             self.pending_touches.clear()
             self.pending_keys.clear()
@@ -335,8 +416,10 @@ class FrontendState:
             self.cancel_run.clear()
             self._reset_runtime_fields_locked()
             config = build_bbk_qemu_config(
-                boot_mode=getattr(self.args, "boot_mode", "uboot"),
+                boot_mode=getattr(self.args, "boot_mode", "nand"),
                 executable=getattr(self.args, "qemu", DEFAULT_QEMU_EXECUTABLE),
+                image=getattr(self.args, "image", None),
+                payload=getattr(self.args, "payload", None),
                 ram_mb=int(getattr(self.args, "ram_mb", 160)),
                 machine=getattr(self.args, "qemu_machine", DEFAULT_QEMU_MACHINE),
                 cpu=getattr(self.args, "qemu_cpu", "24Kf"),
@@ -354,7 +437,7 @@ class FrontendState:
             self.qemu_backend = QemuProcessBackend(config)
             try:
                 self.qemu_backend.start()
-                self.running = self.qemu_backend.running()
+                self.running = bool(self._backend_snapshot(self.qemu_backend, refresh=False).get("running"))
                 self._start_qemu_tick_worker_locked()
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
@@ -372,15 +455,18 @@ class FrontendState:
                 try:
                     with self.lock:
                         backend = self.qemu_backend
-                        if backend is None or not backend.running():
+                        if backend is None:
                             break
-                        self._apply_qemu_auto_calibration_locked(backend)
+                        qemu = self._backend_snapshot(backend, refresh=False)
+                        if not qemu.get("running"):
+                            break
+                        self._apply_frontend_input_calibration_locked(backend)
                 except Exception as exc:
                     with self.lock:
-                        self.qemu_auto_calibration_log.append(
-                            {"event": "qemu-auto-worker-error", "error": f"{type(exc).__name__}: {exc}"}
+                        self.qemu_frontend_input_calibration_log.append(
+                            {"event": "qemu-frontend-input-worker-error", "error": f"{type(exc).__name__}: {exc}"}
                         )
-                        del self.qemu_auto_calibration_log[:-16]
+                        del self.qemu_frontend_input_calibration_log[:-16]
                 self._notify_frontend_activity()
                 time.sleep(0.5)
 
@@ -391,10 +477,14 @@ class FrontendState:
         if self.qemu_backend is None:
             self.reset()
         assert self.qemu_backend is not None
-        if not self.qemu_backend.running() and self.qemu_backend.snapshot().get("returncode") is not None:
+        qemu = self._backend_snapshot(self.qemu_backend, refresh=False)
+        if not qemu.get("running"):
+            qemu = self._backend_snapshot(self.qemu_backend, refresh=True)
+        if not qemu.get("running") and qemu.get("returncode") is not None:
             self.qemu_backend.start()
             self._start_qemu_tick_worker_locked()
-        self.running = self.qemu_backend.running()
+            qemu = self._backend_snapshot(self.qemu_backend, refresh=False)
+        self.running = bool(qemu.get("running"))
         return self.qemu_backend
 
     def _ws_payload_from_raw_frame(self, seq: int, raw: bytes) -> bytes:
@@ -433,6 +523,10 @@ class FrontendState:
             seq, captured_at, raw = latest
             if self.qemu_last_ws_frame_seq == seq:
                 return None
+            now = time.time()
+            if self.qemu_last_ws_frame_seq is not None and now - self.frame_push_last_time < self.frame_push_min_interval:
+                self.frame_push_throttle_count += 1
+                return None
             try:
                 payload = self._ws_payload_from_raw_frame(seq, raw)
             except Exception as exc:
@@ -443,32 +537,114 @@ class FrontendState:
             self.cached_ws_frame_bytes = payload
             self.cached_ws_frame_time = captured_at
             self.frame_push_queued_count += 1
-            self.frame_push_last_time = time.time()
+            self.frame_push_last_time = now
             self._notify_frontend_activity()
             return payload
 
     def pop_latest_queued_ws_frame(self) -> bytes | None:
         return self.pop_queued_ws_frame()
 
+    def _cache_ws_raw_frame_locked(self, seq: int, captured_at: float, raw: bytes, source: str) -> bytes:
+        payload = self._ws_payload_from_raw_frame(seq, raw)
+        self.cached_ws_frame_bytes = payload
+        self.cached_ws_frame_time = captured_at
+        self.qemu_last_ws_frame_seq = seq
+        self.last_frame = self._frame_info_from_raw(raw, source)
+        return payload
+
+    def _cache_png_raw_frame_locked(
+        self,
+        raw: bytes,
+        source: str,
+        captured_at: float | None = None,
+        seq: int | None = None,
+    ) -> bytes:
+        self.last_frame, rgb = rgb565_raw_to_info_rgb(
+            raw,
+            LIVE_FRAMEBUFFER_ADDR,
+            LIVE_FRAMEBUFFER_OFFSET_BYTES,
+            LIVE_FRAMEBUFFER_WIDTH,
+            LIVE_FRAMEBUFFER_HEIGHT,
+            LIVE_FRAMEBUFFER_STRIDE_PIXELS,
+            LIVE_FRAMEBUFFER_FORMAT,
+            getattr(self.args, "orientation", "rot180"),
+        )
+        self.last_frame["backend"] = "qemu"
+        self.last_frame["source"] = source
+        self.last_frame["available"] = True
+        frame = png_bytes_from_rgb(int(self.last_frame["output_width"]), int(self.last_frame["output_height"]), rgb)
+        self.cached_frame_bytes = frame
+        self.cached_frame_time = time.time() if captured_at is None else captured_at
+        self.cached_frame_seq = seq
+        return frame
+
+    def _placeholder_png_frame_locked(self, reason: str) -> bytes:
+        self.last_frame = {
+            "backend": "qemu",
+            "available": False,
+            "reason": reason,
+            "output_width": LIVE_FRAMEBUFFER_WIDTH,
+            "output_height": LIVE_FRAMEBUFFER_HEIGHT,
+        }
+        rgb = bytes([0x12, 0x16, 0x1C]) * (LIVE_FRAMEBUFFER_WIDTH * LIVE_FRAMEBUFFER_HEIGHT)
+        frame = png_bytes_from_rgb(LIVE_FRAMEBUFFER_WIDTH, LIVE_FRAMEBUFFER_HEIGHT, rgb)
+        self.cached_frame_bytes = frame
+        self.cached_frame_time = time.time()
+        self.cached_frame_seq = None
+        return frame
+
+    def _placeholder_ws_frame_locked(self, reason: str) -> bytes:
+        self.last_frame = {
+            "backend": "qemu",
+            "available": False,
+            "reason": reason,
+            "output_width": LIVE_FRAMEBUFFER_WIDTH,
+            "output_height": LIVE_FRAMEBUFFER_HEIGHT,
+        }
+        raw = b"\x00\x00" * (LIVE_FRAMEBUFFER_WIDTH * LIVE_FRAMEBUFFER_HEIGHT)
+        seq = int(time.time() * 1000)
+        payload = self._ws_payload_from_raw_frame(seq, raw)
+        self.cached_ws_frame_bytes = payload
+        self.cached_ws_frame_time = time.time()
+        self.qemu_last_ws_frame_seq = seq
+        return payload
+
     def dump_ws_frame(self) -> bytes:
+        backend: QemuProcessBackend
         with self.lock:
             backend = self._ensure_qemu_started_locked()
             latest = self._latest_qemu_raw_frame_locked()
             if latest is not None:
                 seq, captured_at, raw = latest
-                payload = self._ws_payload_from_raw_frame(seq, raw)
-                self.cached_ws_frame_bytes = payload
-                self.cached_ws_frame_time = captured_at
-                self.qemu_last_ws_frame_seq = seq
+                payload = self._cache_ws_raw_frame_locked(seq, captured_at, raw, "qemu-frame-chardev")
+                self._notify_frontend_activity()
                 return payload
-            raw, source = backend.read_display_rgb565_frame()
-            seq = int(backend.frame_chardev_count or time.time() * 1000)
-            payload = self._ws_payload_from_raw_frame(seq, raw)
-            self.cached_ws_frame_bytes = payload
-            self.cached_ws_frame_time = time.time()
-            self.qemu_last_ws_frame_seq = seq
-            self.last_frame = self._frame_info_from_raw(raw, source)
-            return payload
+            if self.cached_ws_frame_bytes is not None:
+                return self.cached_ws_frame_bytes
+
+        if not self.frame_io_lock.acquire(blocking=False):
+            with self.lock:
+                if self.cached_ws_frame_bytes is not None:
+                    return self.cached_ws_frame_bytes
+                payload = self._placeholder_ws_frame_locked("frame read already in progress")
+                self._notify_frontend_activity()
+                return payload
+        try:
+            try:
+                raw, source = backend.read_display_rgb565_frame()
+            except Exception as exc:
+                with self.lock:
+                    self.last_error = f"frame {type(exc).__name__}: {exc}"
+                    payload = self._placeholder_ws_frame_locked(self.last_error)
+                    self._notify_frontend_activity()
+                    return payload
+            with self.lock:
+                seq = int(backend.frame_chardev_count or time.time() * 1000)
+                payload = self._cache_ws_raw_frame_locked(seq, time.time(), raw, source)
+                self._notify_frontend_activity()
+                return payload
+        finally:
+            self.frame_io_lock.release()
 
     def cached_frame(self) -> bytes | None:
         return self.cached_frame_bytes
@@ -491,8 +667,54 @@ class FrontendState:
             self.ws_frame_last_kind = "unknown"
             self.ws_frame_last_seq = None
 
+    def _record_screen_png_dump_locked(self, now: float) -> None:
+        self.screen_png_count += 1
+        self.screen_png_last_sent_at = now
+
+    def _frontend_performance_snapshot_locked(self, now: float, elapsed: float) -> dict[str, object]:
+        interval = (
+            max(0.0, now - self._perf_last_time)
+            if self._perf_last_time is not None
+            else None
+        )
+        websocket_fps: float | None = None
+        screen_png_fps: float | None = None
+        if interval is not None and interval > 0:
+            websocket_fps = max(
+                0,
+                self.ws_frame_sent_count - self._perf_last_ws_frame_sent_count,
+            ) / interval
+            screen_png_fps = max(
+                0,
+                self.screen_png_count - self._perf_last_screen_png_count,
+            ) / interval
+        websocket_average_fps = self.ws_frame_sent_count / elapsed if elapsed > 0 else None
+        screen_png_average_fps = self.screen_png_count / elapsed if elapsed > 0 else None
+        metrics: dict[str, object] = {
+            "sampled_at": now,
+            "sample_interval_seconds": None if interval is None else round(interval, 3),
+            "websocket_fps": None if websocket_fps is None else round(websocket_fps, 2),
+            "websocket_average_fps": (
+                None if websocket_average_fps is None else round(websocket_average_fps, 2)
+            ),
+            "screen_png_fps": None if screen_png_fps is None else round(screen_png_fps, 2),
+            "screen_png_average_fps": (
+                None if screen_png_average_fps is None else round(screen_png_average_fps, 2)
+            ),
+            "screen_png_count": self.screen_png_count,
+            "screen_png_last_sent_at": self.screen_png_last_sent_at,
+        }
+        self.frontend_performance_metrics = metrics
+        self._perf_last_time = now
+        self._perf_last_ws_frame_sent_count = self.ws_frame_sent_count
+        self._perf_last_screen_png_count = self.screen_png_count
+        return metrics
+
     def seconds_until_deferred_frame(self) -> float | None:
-        return None
+        if self.frame_push_min_interval <= 0:
+            return None
+        remaining = self.frame_push_min_interval - (time.time() - self.frame_push_last_time)
+        return remaining if remaining > 0 else None
 
     def _notify_frontend_activity(self) -> None:
         with self.frontend_activity_condition:
@@ -530,7 +752,14 @@ class FrontendState:
 
     def worker_active(self) -> bool:
         backend = self.qemu_backend
-        return False if backend is None else backend.running()
+        return False if backend is None else bool(self._backend_snapshot(backend, refresh=False).get("running"))
+
+    @staticmethod
+    def _backend_snapshot(backend: QemuProcessBackend, *, refresh: bool) -> dict[str, object]:
+        try:
+            return backend.snapshot(refresh=refresh)
+        except TypeError:
+            return backend.snapshot()
 
     def step(self, steps: int) -> dict[str, object]:
         return self.run_start("qemu-step", max(0, int(steps)), max(0, int(steps)))
@@ -545,7 +774,7 @@ class FrontendState:
         with self.lock:
             try:
                 backend = self._ensure_qemu_started_locked()
-                self.running = backend.running()
+                self.running = bool(self._backend_snapshot(backend, refresh=False).get("running"))
                 self.job_name = name or "qemu"
                 self.job_total_steps = max(0, int(total_steps))
                 self.job_done_steps = 0
@@ -652,11 +881,25 @@ class FrontendState:
                 snapshot["warning"] = "advance is ignored by the QEMU process backend"
             return snapshot
 
-    def set_auto_calibration(self, enabled: bool) -> dict[str, object]:
-        self.args.auto_calibration = bool(enabled)
+    def set_frontend_input_calibration(self, enabled: bool) -> dict[str, object]:
+        self.args.frontend_input_calibration = bool(enabled)
         with self.lock:
             self._publish_snapshot_locked()
             return self.snapshot()
+
+    def _frontend_input_calibration_enabled(self) -> bool:
+        return bool(getattr(self.args, "frontend_input_calibration", False))
+
+    def _gdb_diagnostics_enabled(self) -> bool:
+        return bool(getattr(self.args, "allow_gdb_diagnostics", False))
+
+    def _gdb_diagnostics_disabled_error(self, op: str) -> dict[str, object]:
+        return {
+            "error": (
+                f"{op} is disabled by default; pass --allow-gdb-diagnostics "
+                "for explicit intrusive GDB diagnostics"
+            )
+        }
 
     def command(self, msg: dict[str, object]) -> dict[str, object]:
         op = str(msg.get("op", "status"))
@@ -668,13 +911,20 @@ class FrontendState:
             return self.stop()
         if op == "step":
             return self.step(int(msg.get("steps", 250000)))
-        if op in {"auto-calibration", "auto_calibration", "set-auto-calibration"}:
+        if op in {
+            "frontend-input-calibration",
+            "frontend_input_calibration",
+            "set-frontend-input-calibration",
+        }:
             enabled = self._coerce_optional_bool(msg.get("enabled"))
             if enabled is None:
-                enabled = not bool(getattr(self.args, "auto_calibration", False))
-            return self.set_auto_calibration(enabled)
+                enabled = not self._frontend_input_calibration_enabled()
+            return self.set_frontend_input_calibration(enabled)
+        if op in {"set-nand-image", "set_nand_image", "select-nand-image", "select_nand_image"}:
+            reset = self._coerce_optional_bool(msg.get("reset"))
+            return self.set_nand_image(msg.get("path") or msg.get("image"), reset=reset is not False)
         if op in {"qemu-storage-service", "qemu_storage_service"}:
-            return {"error": "qemu-storage-service is disabled; Python/GDB fastpath services were removed"}
+            return {"error": "qemu-storage-service is disabled; legacy Python/GDB storage hooks are not part of the bbk9588 default path"}
         if op in {"qemu-task-trace", "qemu_task_trace", "qemu-fs-trace", "qemu_fs_trace", "qemu-event-loop-trace", "qemu_event_loop_trace", "qemu-resource-trace", "qemu_resource_trace"}:
             return {"error": f"{op} is disabled; use QEMU machine/device instrumentation instead of Python/GDB services"}
         if op in {"qemu-read-memory", "qemu_read_memory"}:
@@ -697,6 +947,8 @@ class FrontendState:
                     pass
             return out
         if op in {"qemu-watch-write", "qemu_watch_write"}:
+            if not self._gdb_diagnostics_enabled():
+                return self._gdb_diagnostics_disabled_error(op)
             if self.qemu_backend is None:
                 return {"error": "QEMU backend is not initialized"}
             addr = int(str(msg.get("addr", 0)), 0)
@@ -720,6 +972,8 @@ class FrontendState:
                 int(msg.get("max_hits", 1)),
             )
         if op in {"qemu-trace-breakpoints", "qemu_trace_breakpoints"}:
+            if not self._gdb_diagnostics_enabled():
+                return self._gdb_diagnostics_disabled_error(op)
             if self.qemu_backend is None:
                 return {"error": "QEMU backend is not initialized"}
             pcs_raw = msg.get("pcs", [])
@@ -785,7 +1039,7 @@ class FrontendState:
         backend = self.qemu_backend
         if backend is None:
             return {"count": 0, "limit": limit, "events": []}
-        snap = backend.snapshot()
+        snap = self._backend_snapshot(backend, refresh=False)
         lines = [
             *[{"stream": "stdout", "text": line} for line in snap.get("stdout_tail", [])],
             *[{"stream": "stderr", "text": line} for line in snap.get("stderr_tail", [])],
@@ -798,7 +1052,7 @@ class FrontendState:
             backend = self.qemu_backend
             removed = 0
             if backend is not None:
-                snap = backend.snapshot()
+                snap = self._backend_snapshot(backend, refresh=False)
                 removed = len(snap.get("stdout_tail", [])) + len(snap.get("stderr_tail", []))
                 backend.stdout_tail.clear()
                 backend.stderr_tail.clear()
@@ -822,46 +1076,52 @@ class FrontendState:
         return info
 
     def dump_frame(self) -> bytes:
-        cached = self.cached_frame_bytes
         now = time.time()
-        if cached is not None and now - self.cached_frame_time < 0.25:
-            return cached
         with self.lock:
+            self._record_screen_png_dump_locked(now)
+            cached = self.cached_frame_bytes
+            cached_frame_time = self.cached_frame_time
+        if cached is not None and now - cached_frame_time < 0.25:
+            return cached
+        backend: QemuProcessBackend
+        with self.lock:
+            backend = self._ensure_qemu_started_locked()
+            latest = self._latest_qemu_raw_frame_locked()
+            if latest is not None:
+                seq, captured_at, raw = latest
+                if self.cached_frame_bytes is not None and self.cached_frame_seq == seq:
+                    return self.cached_frame_bytes
+                frame = self._cache_png_raw_frame_locked(raw, "qemu-frame-chardev", captured_at, seq)
+                self._notify_frontend_activity()
+                return frame
+            if cached is not None:
+                return cached
+
+        if not self.frame_io_lock.acquire(blocking=False):
+            with self.lock:
+                if self.cached_frame_bytes is not None:
+                    return self.cached_frame_bytes
+                frame = self._placeholder_png_frame_locked("frame read already in progress")
+                self._notify_frontend_activity()
+                return frame
+        try:
             try:
-                backend = self._ensure_qemu_started_locked()
                 try:
                     raw, source = backend.read_display_rgb565_frame()
                 except Exception:
                     raw = backend.read_physical_memory(LIVE_FRAMEBUFFER_ADDR & 0x1FFFFFFF, LIVE_FRAMEBUFFER_RAW_BYTES)
                     source = "hmp-pmemsave"
-                self.last_frame, rgb = rgb565_raw_to_info_rgb(
-                    raw,
-                    LIVE_FRAMEBUFFER_ADDR,
-                    LIVE_FRAMEBUFFER_OFFSET_BYTES,
-                    LIVE_FRAMEBUFFER_WIDTH,
-                    LIVE_FRAMEBUFFER_HEIGHT,
-                    LIVE_FRAMEBUFFER_STRIDE_PIXELS,
-                    LIVE_FRAMEBUFFER_FORMAT,
-                    getattr(self.args, "orientation", "rot180"),
-                )
-                self.last_frame["backend"] = "qemu"
-                self.last_frame["source"] = source
-                self.last_frame["available"] = True
-                frame = png_bytes_from_rgb(int(self.last_frame["output_width"]), int(self.last_frame["output_height"]), rgb)
             except Exception as exc:
-                self.last_frame = {
-                    "backend": "qemu",
-                    "available": False,
-                    "reason": f"{type(exc).__name__}: {exc}",
-                    "output_width": LIVE_FRAMEBUFFER_WIDTH,
-                    "output_height": LIVE_FRAMEBUFFER_HEIGHT,
-                }
-                rgb = bytes([0x12, 0x16, 0x1C]) * (LIVE_FRAMEBUFFER_WIDTH * LIVE_FRAMEBUFFER_HEIGHT)
-                frame = png_bytes_from_rgb(LIVE_FRAMEBUFFER_WIDTH, LIVE_FRAMEBUFFER_HEIGHT, rgb)
-            self.cached_frame_bytes = frame
-            self.cached_frame_time = now
-            self._publish_snapshot_locked()
-            return frame
+                with self.lock:
+                    frame = self._placeholder_png_frame_locked(f"{type(exc).__name__}: {exc}")
+                    self._notify_frontend_activity()
+                    return frame
+            with self.lock:
+                frame = self._cache_png_raw_frame_locked(raw, source)
+                self._notify_frontend_activity()
+                return frame
+        finally:
+            self.frame_io_lock.release()
 
     def dump_qemu_guest_rgb565(
         self,
@@ -902,9 +1162,9 @@ class FrontendState:
 
     def _build_snapshot_locked(self, *, detail: str = "compact") -> dict[str, object]:
         backend = self.qemu_backend
-        if backend is not None:
-            self._apply_qemu_auto_calibration_locked(backend)
-        qemu = {} if backend is None else backend.snapshot()
+        if backend is not None and detail in {"full", "traces"}:
+            self._apply_frontend_input_calibration_locked(backend)
+        qemu = {} if backend is None else self._backend_snapshot(backend, refresh=detail in {"full", "traces"})
         qemu_sample = qemu.get("register_sample") if isinstance(qemu.get("register_sample"), dict) else {}
         qemu_pc = qemu.get("pc") or (qemu_sample.get("pc") if isinstance(qemu_sample, dict) else None)
         qemu_cp0 = qemu.get("cp0") or (qemu_sample.get("cp0") if isinstance(qemu_sample, dict) else None)
@@ -913,6 +1173,7 @@ class FrontendState:
         active = bool(qemu.get("running"))
         now = time.time()
         reset_elapsed = max(0.0, now - self.reset_at)
+        frontend_performance = self._frontend_performance_snapshot_locked(now, reset_elapsed)
         elapsed = qemu.get("elapsed_seconds")
         job = {
             "name": self.job_name or "qemu",
@@ -933,10 +1194,12 @@ class FrontendState:
             "observed_steps_per_second": None,
             "requested_steps_per_second": None,
         }
+        effective_nand_image = self._default_nand_image()
         snapshot: dict[str, object] = {
             "backend": "qemu",
             "running": active,
-            "boot_mode": getattr(self.args, "boot_mode", "uboot"),
+            "boot_mode": getattr(self.args, "boot_mode", "nand"),
+            "nand_image": str(effective_nand_image.resolve()) if effective_nand_image is not None else "",
             "orientation": getattr(self.args, "orientation", "rot180"),
             "reset_at": self.reset_at,
             "reset_elapsed_seconds": reset_elapsed,
@@ -946,11 +1209,18 @@ class FrontendState:
             "run_elapsed_seconds": elapsed,
             "run_steps_per_second": None,
             "run_requested_steps_per_second": None,
-            "fast_hooks": False,
-            "resource_cache16": False,
-            "auto_calibration": bool(getattr(self.args, "auto_calibration", False)),
-            "auto_calibration_stage": self.auto_calibration_stage,
-            "auto_calibration_stage_label": AUTO_BOOT_STAGE_LABELS.get(self.auto_calibration_stage, str(self.auto_calibration_stage)),
+            "legacy_python_hooks": {
+                "enabled": False,
+                "storage_hook_enabled": False,
+                "resource_hook_enabled": False,
+                "reason": "Legacy Python/GDB hooks are disabled; default bbk9588 behavior is modeled in QEMU.",
+            },
+            "frontend_input_calibration": self._frontend_input_calibration_enabled(),
+            "frontend_input_calibration_stage": self.frontend_input_calibration_stage,
+            "frontend_input_calibration_stage_label": FRONTEND_INPUT_CALIBRATION_STAGE_LABELS.get(
+                self.frontend_input_calibration_stage,
+                str(self.frontend_input_calibration_stage),
+            ),
             "pending_touches": self._pending_touch_count_locked(),
             "pending_keys": self._pending_key_count_locked(),
             "job": job,
@@ -974,6 +1244,7 @@ class FrontendState:
             "framebuffer_dirty_seq": 0,
             "framebuffer_dirty_last": None,
             "queued_frames": 0,
+            "frontend_performance": frontend_performance,
             "frame_push": {
                 "min_interval": self.frame_push_min_interval,
                 "hook_count": self.frame_push_hook_count,
@@ -993,6 +1264,10 @@ class FrontendState:
                 "ws_last_kind": self.ws_frame_last_kind,
                 "ws_last_bytes": self.ws_frame_last_bytes,
                 "ws_last_sent_at": self.ws_frame_last_sent_at,
+                "ws_fps": frontend_performance.get("websocket_fps"),
+                "ws_average_fps": frontend_performance.get("websocket_average_fps"),
+                "screen_png_count": self.screen_png_count,
+                "screen_png_fps": frontend_performance.get("screen_png_fps"),
             },
             "qemu": qemu,
             "qemu_pc_classification": qemu_pc_classification,
@@ -1006,8 +1281,8 @@ class FrontendState:
             },
             "status_cached_at": time.time(),
         }
-        if detail == "full":
-            snapshot["detail"] = "full"
+        if detail in {"full", "traces"}:
+            snapshot["detail"] = detail
             if backend is not None:
                 snapshot["event_queue"] = backend.guest_queue_snapshot(0x80473F6C)
                 snapshot["display_event_queue"] = backend.guest_display_queue_snapshot(0x80825840)
@@ -1015,15 +1290,15 @@ class FrontendState:
                 snapshot["qemu_scheduler_state"] = backend.guest_scheduler_state_snapshot()
                 snapshot["guest_touch_device"] = backend.guest_touch_device_snapshot()
                 snapshot["guest_runtime_tables"] = backend.guest_runtime_table_snapshot()
-                snapshot["guest_surface_trace"] = backend.guest_surface_trace_snapshot()
-                snapshot["guest_storage_trace"] = backend.guest_storage_trace_snapshot()
-                snapshot["guest_msc_trace"] = backend.guest_msc_trace_snapshot()
-                snapshot["guest_fs_probe_trace"] = backend.guest_fs_probe_trace_snapshot()
-                snapshot["guest_progress_trace"] = backend.guest_progress_trace_snapshot()
                 snapshot["guest_display_surface"] = backend.guest_display_surface_snapshot()
+                if detail == "traces":
+                    snapshot["guest_surface_trace"] = backend.guest_surface_trace_snapshot()
+                    snapshot["guest_storage_trace"] = backend.guest_storage_trace_snapshot()
+                    snapshot["guest_msc_trace"] = backend.guest_msc_trace_snapshot()
+                    snapshot["guest_fs_probe_trace"] = backend.guest_fs_probe_trace_snapshot()
+                    snapshot["guest_progress_trace"] = backend.guest_progress_trace_snapshot()
                 snapshot["recent_event_queue_snapshots"] = []
-            snapshot["qemu_auto_calibration_log"] = list(self.qemu_auto_calibration_log)
-            snapshot["qemu_storage_bootstrap_log"] = list(self.qemu_storage_bootstrap_log)
+            snapshot["qemu_frontend_input_calibration_log"] = list(self.qemu_frontend_input_calibration_log)
             snapshot["qemu_limitations"] = [
                 "QEMU bbk9588 models the default process, frame chardev, input chardev, timers, interrupts, GPIO/SADC touch state, and NAND-backed storage paths.",
                 "Remaining work belongs in the QEMU SoC model, not in Python firmware hooks.",
@@ -1036,40 +1311,39 @@ class FrontendState:
         self._notify_frontend_activity()
 
     def snapshot(self, *, detail: str = "compact") -> dict[str, object]:
-        with self.lock:
-            snapshot = self._build_snapshot_locked(detail=detail)
+        if detail == "compact":
+            acquired = self.lock.acquire(blocking=False)
+            if not acquired:
+                with self.status_lock:
+                    if self.cached_status:
+                        return dict(self.cached_status)
+                with self.lock:
+                    snapshot = self._build_snapshot_locked(detail=detail)
+            else:
+                try:
+                    snapshot = self._build_snapshot_locked(detail=detail)
+                finally:
+                    self.lock.release()
+        else:
+            with self.lock:
+                snapshot = self._build_snapshot_locked(detail=detail)
         with self.status_lock:
             self.cached_status = dict(snapshot)
         return snapshot
 
-    def _apply_qemu_auto_calibration_locked(self, backend: QemuProcessBackend) -> None:
+    def _apply_frontend_input_calibration_locked(self, backend: QemuProcessBackend) -> None:
         """Feed cold-boot calibration touches through the QEMU input chardev."""
 
-        if not getattr(self.args, "auto_calibration", False) or getattr(self.args, "boot_mode", "uboot") not in {"c200", "uboot"}:
+        if not self._frontend_input_calibration_enabled() or getattr(self.args, "boot_mode", "nand") not in {"nand", "c200", "uboot"}:
             return
-        if not backend.running():
+        qemu = self._backend_snapshot(backend, refresh=False)
+        if not qemu.get("running"):
             return
-        if backend.config.machine.lower() == "bbk9588":
-            self.qemu_storage_bootstrap_done = True
-        elif not self.qemu_storage_bootstrap_done and self.qemu_storage_bootstrap_attempts < 4:
-            self.qemu_storage_bootstrap_attempts += 1
-            self.qemu_storage_bootstrap_log.append(
-                {
-                    "event": "qemu-storage-bootstrap",
-                    "disabled": True,
-                    "reason": "Python/GDB services were removed from the hardware-model path",
-                    "handled_count": 0,
-                }
-            )
-            del self.qemu_storage_bootstrap_log[:-16]
-            if self.qemu_storage_bootstrap_attempts >= 4:
-                self.qemu_storage_bootstrap_done = True
-        if self.auto_calibration_stage >= 12:
+        if self.frontend_input_calibration_stage >= 12:
             return
         now = time.time()
-        if now - self.qemu_auto_calibration_last_action_at < 0.45:
+        if now - self.qemu_frontend_input_calibration_last_action_at < 0.45:
             return
-        qemu = backend.snapshot()
         pc_s = qemu.get("pc")
         try:
             pc = int(str(pc_s), 16)
@@ -1082,125 +1356,116 @@ class FrontendState:
         except Exception:
             ra = 0
 
-        point_count = len(AUTO_CALIBRATION_TARGETS)
+        point_count = len(FRONTEND_INPUT_CALIBRATION_TARGETS)
+        pc_unknown = pc == 0 and ra == 0
+        in_touch_boot = 0x80017B74 <= pc <= 0x80019300 or 0x80017B74 <= ra <= 0x80019300
+        in_uboot = 0x80900000 <= pc < 0x80A00000 or 0x80900000 <= ra < 0x80A00000
+        in_c200 = 0x80000000 <= pc < 0x80900000 or 0x80000000 <= ra < 0x80900000
+
+        if in_uboot or (not pc_unknown and not in_c200 and not in_touch_boot):
+            return
+
+        if self.frontend_input_calibration_stage < point_count * 2:
+            if not pc_unknown and not in_touch_boot and pc != 0:
+                return
+            point_index = self.frontend_input_calibration_stage // 2
+            down = self.frontend_input_calibration_stage % 2 == 0
+            x, y = FRONTEND_INPUT_CALIBRATION_TARGETS[point_index]
+            result = backend.apply_touch_state(x, y, down)
+            self.frontend_input_calibration_stage += 1
+            self.frontend_input_calibration_last_stage_step += 1
+            self.qemu_frontend_input_calibration_last_action_at = now
+            self.qemu_frontend_input_calibration_log.append(
+                {
+                    "event": "qemu-frontend-input-calibration-touch",
+                    "stage": self.frontend_input_calibration_stage,
+                    "point": point_index + 1,
+                    "down": down,
+                    "x": x,
+                    "y": y,
+                    "pc": f"0x{pc:08x}",
+                    "ra": f"0x{ra:08x}",
+                    "result": result,
+                }
+            )
+            del self.qemu_frontend_input_calibration_log[:-16]
+            return
+
         gui: dict[str, object] = {}
         try:
             gui = backend.guest_gui_state_snapshot()
         except Exception as exc:
             gui = {"error": f"{type(exc).__name__}: {exc}"}
 
-        if self.auto_calibration_stage >= point_count * 2:
-            active = int(str(gui.get("active_object_80474048") or "0x0"), 16) if "error" not in gui else 0
-            active_ready = bool(gui.get("active_object_ready"))
-            modal = int(str(gui.get("modal_804a65c0") or "0x0"), 16) if "error" not in gui else 0
-            if active == 0x80959670 or active_ready or "error" in gui:
-                self.auto_calibration_stage = 12
-                self.auto_calibration_last_stage_step += 1
-                self.qemu_auto_calibration_last_action_at = now
-                self.qemu_auto_calibration_log.append(
+        if self.frontend_input_calibration_stage >= point_count * 2:
+            if "error" in gui:
+                self.qemu_frontend_input_calibration_last_action_at = now
+                self.qemu_frontend_input_calibration_log.append(
                     {
-                        "event": "qemu-auto-calibration-complete",
+                        "event": "qemu-frontend-input-calibration-status-deferred",
+                        "stage": self.frontend_input_calibration_stage,
+                        "pc": f"0x{pc:08x}",
+                        "ra": f"0x{ra:08x}",
+                        "error": gui.get("error"),
+                    }
+                )
+                del self.qemu_frontend_input_calibration_log[:-16]
+                return
+            active = int(str(gui.get("active_object_80474048") or "0x0"), 16)
+            active_ready = bool(gui.get("active_object_ready"))
+            modal = int(str(gui.get("modal_804a65c0") or "0x0"), 16)
+            if active == 0x80959670 or active_ready:
+                self.frontend_input_calibration_stage = 12
+                self.frontend_input_calibration_last_stage_step += 1
+                self.qemu_frontend_input_calibration_last_action_at = now
+                self.qemu_frontend_input_calibration_log.append(
+                    {
+                        "event": "qemu-frontend-input-calibration-complete",
                         "pc": f"0x{pc:08x}",
                         "ra": f"0x{ra:08x}",
                         "active": gui.get("active_object_80474048"),
                         "reason": "main-menu-active" if active == 0x80959670 else "calibration-touches-complete",
                     }
                 )
-                del self.qemu_auto_calibration_log[:-16]
+                del self.qemu_frontend_input_calibration_log[:-16]
                 return
-            if modal and self.auto_calibration_stage == point_count * 2:
-                result = backend.apply_touch_state(AUTO_BOOT_DIALOG_X, AUTO_BOOT_DIALOG_Y, True)
-                self.auto_calibration_stage = point_count * 2 + 1
-                self.auto_calibration_last_stage_step += 1
-                self.qemu_auto_calibration_last_action_at = now
-                self.qemu_auto_calibration_log.append(
+            if modal and self.frontend_input_calibration_stage == point_count * 2:
+                result = backend.apply_touch_state(FRONTEND_INPUT_DIALOG_X, FRONTEND_INPUT_DIALOG_Y, True)
+                self.frontend_input_calibration_stage = point_count * 2 + 1
+                self.frontend_input_calibration_last_stage_step += 1
+                self.qemu_frontend_input_calibration_last_action_at = now
+                self.qemu_frontend_input_calibration_log.append(
                     {
-                        "event": "qemu-auto-dialog-touch",
-                        "stage": self.auto_calibration_stage,
+                        "event": "qemu-frontend-input-dialog-touch",
+                        "stage": self.frontend_input_calibration_stage,
                         "down": True,
-                        "x": AUTO_BOOT_DIALOG_X,
-                        "y": AUTO_BOOT_DIALOG_Y,
+                        "x": FRONTEND_INPUT_DIALOG_X,
+                        "y": FRONTEND_INPUT_DIALOG_Y,
                         "pc": f"0x{pc:08x}",
                         "modal": f"0x{modal:08x}",
                         "result": result,
                     }
                 )
-                del self.qemu_auto_calibration_log[:-16]
+                del self.qemu_frontend_input_calibration_log[:-16]
                 return
-            if modal and self.auto_calibration_stage == point_count * 2 + 1:
-                result = backend.apply_touch_state(AUTO_BOOT_DIALOG_X, AUTO_BOOT_DIALOG_Y, False)
-                self.auto_calibration_stage = point_count * 2 + 2
-                self.auto_calibration_last_stage_step += 1
-                self.qemu_auto_calibration_last_action_at = now
-                self.qemu_auto_calibration_log.append(
+            if modal and self.frontend_input_calibration_stage == point_count * 2 + 1:
+                result = backend.apply_touch_state(FRONTEND_INPUT_DIALOG_X, FRONTEND_INPUT_DIALOG_Y, False)
+                self.frontend_input_calibration_stage = point_count * 2 + 2
+                self.frontend_input_calibration_last_stage_step += 1
+                self.qemu_frontend_input_calibration_last_action_at = now
+                self.qemu_frontend_input_calibration_log.append(
                     {
-                        "event": "qemu-auto-dialog-touch",
-                        "stage": self.auto_calibration_stage,
+                        "event": "qemu-frontend-input-dialog-touch",
+                        "stage": self.frontend_input_calibration_stage,
                         "down": False,
-                        "x": AUTO_BOOT_DIALOG_X,
-                        "y": AUTO_BOOT_DIALOG_Y,
+                        "x": FRONTEND_INPUT_DIALOG_X,
+                        "y": FRONTEND_INPUT_DIALOG_Y,
                         "pc": f"0x{pc:08x}",
                         "modal": f"0x{modal:08x}",
                         "result": result,
                     }
                 )
-                del self.qemu_auto_calibration_log[:-16]
+                del self.qemu_frontend_input_calibration_log[:-16]
             return
 
-        if "error" not in gui:
-            active = int(str(gui.get("active_object_80474048") or "0x0"), 16)
-            modal = int(str(gui.get("modal_804a65c0") or "0x0"), 16)
-            active_ready = bool(gui.get("active_object_ready"))
-            if active_ready or modal:
-                if active == 0x80959670:
-                    self.auto_calibration_stage = 12
-                    self.auto_calibration_last_stage_step += 1
-                    self.qemu_auto_calibration_last_action_at = now
-                    self.qemu_auto_calibration_log.append(
-                        {
-                            "event": "qemu-auto-calibration-complete",
-                            "pc": f"0x{pc:08x}",
-                            "ra": f"0x{ra:08x}",
-                            "active": gui.get("active_object_80474048"),
-                            "reason": "active-gui-before-next-calibration-touch",
-                        }
-                    )
-                else:
-                    self.qemu_auto_calibration_last_action_at = now
-                    self.qemu_auto_calibration_log.append(
-                        {
-                            "event": "qemu-auto-calibration-abort-active-gui",
-                            "stage": self.auto_calibration_stage,
-                            "pc": f"0x{pc:08x}",
-                            "ra": f"0x{ra:08x}",
-                            "active": gui.get("active_object_80474048"),
-                            "modal": gui.get("modal_804a65c0"),
-                        }
-                    )
-                del self.qemu_auto_calibration_log[:-16]
-                return
-
-        in_touch_boot = 0x80017B74 <= pc <= 0x80019300 or 0x80017B74 <= ra <= 0x80019300
-        if not in_touch_boot and pc != 0:
-            return
-        point_index = self.auto_calibration_stage // 2
-        down = self.auto_calibration_stage % 2 == 0
-        x, y = AUTO_CALIBRATION_TARGETS[point_index]
-        result = backend.apply_touch_state(x, y, down)
-        self.auto_calibration_stage += 1
-        self.auto_calibration_last_stage_step += 1
-        self.qemu_auto_calibration_last_action_at = now
-        self.qemu_auto_calibration_log.append(
-            {
-                "event": "qemu-auto-calibration-touch",
-                "stage": self.auto_calibration_stage,
-                "point": point_index + 1,
-                "down": down,
-                "x": x,
-                "y": y,
-                "pc": f"0x{pc:08x}",
-                "ra": f"0x{ra:08x}",
-                "result": result,
-            }
-        )
-        del self.qemu_auto_calibration_log[:-16]
+        return

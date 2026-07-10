@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import socket
 import threading
 import time
 from collections import deque
@@ -19,10 +20,13 @@ class FrontendHandler(BaseHTTPRequestHandler):
     html: str = ""
 
     def _send(self, status: int, body: bytes, content_type: str) -> None:
+        self.close_connection = True
+        self.connection.settimeout(1.0)
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -194,6 +198,14 @@ class FrontendHandler(BaseHTTPRequestHandler):
             pass
         finally:
             alive.clear()
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                self.connection.close()
+            except OSError:
+                pass
             reader_thread.join(timeout=0.5)
             if reader_alive_setter is not None:
                 reader_alive_setter(False)
@@ -207,10 +219,12 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._handle_ws()
             elif parsed.path == "/api/status":
                 detail = parse_qs(parsed.query).get("detail", ["compact"])[0]
-                if detail == "full":
-                    self._json(self.state.snapshot(detail="full"))
+                if detail in {"full", "traces"}:
+                    self._json(self.state.snapshot(detail=detail))
                 else:
                     self._json(self.state.snapshot())
+            elif parsed.path == "/api/images":
+                self._json(self.state.nand_image_catalog())
             elif parsed.path == "/api/logs":
                 limit = int(parse_qs(parsed.query).get("limit", ["512"])[0])
                 self._json(self.state.logs(limit))
@@ -250,8 +264,13 @@ class FrontendHandler(BaseHTTPRequestHandler):
             else:
                 ctype = mimetypes.guess_type(parsed.path)[0] or "text/plain"
                 self._send(404, b"not found", ctype)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
+            return
         except Exception as exc:
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            try:
+                self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
+                return
 
     def do_POST(self) -> None:
         try:
@@ -298,8 +317,13 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._json(self.state.touch(x, y, down))
             else:
                 self._send(404, b"not found", "text/plain")
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
+            return
         except Exception as exc:
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            try:
+                self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
+                return
 
     def log_message(self, fmt: str, *args: object) -> None:
         if not getattr(self.state.args, "quiet", False):

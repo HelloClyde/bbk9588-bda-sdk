@@ -32,6 +32,7 @@ def _boot_config(ns: argparse.Namespace):
         image=ns.image,
         payload=ns.payload,
         payload_addr=ns.payload_addr,
+        nand_image=ns.nand_image,
         load_addr=ns.load_addr,
         pc=ns.pc,
         machine=ns.machine,
@@ -49,11 +50,25 @@ def _boot_config(ns: argparse.Namespace):
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     ap = argparse.ArgumentParser(description="Launch BBK 9588 firmware with QEMU system emulation.")
     ap.add_argument("--qemu", default=DEFAULT_QEMU_EXECUTABLE)
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200")
-    ap.add_argument("--image", type=Path, help="Override the boot image path.")
-    ap.add_argument("--payload", type=Path, help="For --boot-mode uboot: override C200 payload path.")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="nand")
+    ap.add_argument(
+        "--image",
+        type=Path,
+        help="Optional direct boot image path for c200/uboot compatibility modes.",
+    )
+    ap.add_argument(
+        "--payload",
+        type=Path,
+        help="For --boot-mode uboot: optional legacy RAM preload for a C200 payload; omitted by default.",
+    )
+    ap.add_argument("--nand-image", type=Path, help="Raw NAND image used by nand/uboot boot modes.")
     ap.add_argument("--payload-addr", type=lambda value: int(value, 0), default=DEFAULT_C200_PHYS)
     ap.add_argument("--load-addr", type=lambda value: int(value, 0), help="Physical load address for the boot image.")
     ap.add_argument("--pc", type=lambda value: int(value, 0), help="Initial virtual PC.")
@@ -68,10 +83,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--qemu-machine-option",
         action="append",
-        help="Append one bbk9588 -M option, for example synthetic-wait-wake=off. Repeat as needed.",
+        help="Append one diagnostic bbk9588 -M option, for example progress-trace=on. Repeat as needed.",
     )
     ap.add_argument("--extra-arg", action="append", help="Append one raw QEMU argument. Repeat as needed.")
-    ap.add_argument("--qemu-firmware-patch", action="append", default=None, help="QEMU-only firmware patch name, or 'none'.")
+    ap.add_argument(
+        "--qemu-firmware-patch",
+        action="append",
+        default=None,
+        help="Legacy diagnostic QEMU-only firmware patch name for compatibility runs, or 'none'.",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Print the QEMU command as JSON without starting QEMU.")
     ap.add_argument("--probe", action="store_true", help="Check qemu-system-mipsel availability and print version text.")
     ns = ap.parse_args(argv)

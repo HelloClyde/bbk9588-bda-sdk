@@ -34,7 +34,6 @@ REQUIRED_RUNTIME = (
 
 FORBIDDEN_RUNTIME_PREFIXES = (
     "emu/packaging/",
-    "emu/qemu/patches/",
     "emu/qemu/scripts/",
     "emu/qemu/source-overlay/",
     "emu/test/",

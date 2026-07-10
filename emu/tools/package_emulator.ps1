@@ -105,7 +105,6 @@ if ($QemuRuntimeDir) {
         "emu\packaging",
         "emu\qemu\README.md",
         "emu\qemu\check_source_tree.py",
-        "emu\qemu\patches",
         "emu\qemu\scripts",
         "emu\qemu\source-overlay",
         "emu\test",

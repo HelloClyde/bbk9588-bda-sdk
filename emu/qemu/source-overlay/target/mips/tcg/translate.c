@@ -15277,9 +15277,30 @@ static void mips_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
     }
 }
 
+static void gen_bbk9588_guest_insn_count(DisasContext *ctx, CPUState *cs)
+{
+#ifndef CONFIG_USER_ONLY
+    CPUMIPSState *env = cpu_env(cs);
+
+    if (env->bbk9588_guest_insn_count_enabled && ctx->base.num_insns > 0) {
+        TCGv_i64 count = tcg_temp_new_i64();
+
+        tcg_gen_ld_i64(count, tcg_env,
+                       offsetof(CPUMIPSState, bbk9588_guest_insn_count));
+        tcg_gen_addi_i64(count, count, ctx->base.num_insns);
+        tcg_gen_st_i64(count, tcg_env,
+                       offsetof(CPUMIPSState, bbk9588_guest_insn_count));
+    }
+#endif
+}
+
 static void mips_tr_tb_stop(DisasContextBase *dcbase, CPUState *cs)
 {
     DisasContext *ctx = container_of(dcbase, DisasContext, base);
+
+    if (ctx->base.is_jmp != DISAS_NORETURN) {
+        gen_bbk9588_guest_insn_count(ctx, cs);
+    }
 
     switch (ctx->base.is_jmp) {
     case DISAS_STOP:

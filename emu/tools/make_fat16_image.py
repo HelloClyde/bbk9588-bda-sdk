@@ -21,15 +21,16 @@ if __package__ in (None, ""):
 
 
 BYTES_PER_SECTOR = 512
-SECTORS_PER_CLUSTER = 16
+DEFAULT_SECTORS_PER_CLUSTER = 32
 RESERVED_SECTORS = 1
 FAT_COPIES = 2
-ROOT_ENTRIES = 256
+ROOT_ENTRIES = 512
 MEDIA_DESCRIPTOR = 0xF8
 END_CLUSTER = 0xFFFF
 DEFAULT_PREFIX_BYTES = 0
 DEFAULT_PARTITION_OFFSET_SECTORS = 32
 DEFAULT_FREE_CLUSTERS = 4096
+DEFAULT_VOLUME_SECTORS = 0xF7AE0
 
 
 @dataclass
@@ -157,7 +158,7 @@ def find_child(node: FsNode, name: str) -> FsNode | None:
     return None
 
 
-def add_bbk_compat_aliases(root: FsNode) -> None:
+def add_systp_compat_alias(root: FsNode) -> None:
     system = find_child_dir(root, "系统")
     if system is None or find_child(system, "SysTp.cfg") is not None:
         return
@@ -175,6 +176,10 @@ def add_bbk_compat_aliases(root: FsNode) -> None:
             size=systp.size,
         )
     )
+
+
+def add_bbk_compat_aliases(root: FsNode) -> None:
+    add_systp_compat_alias(root)
 
 
 def read_node(path: Path, name: str) -> FsNode:
@@ -265,13 +270,13 @@ def directory_entries(node: FsNode, parent_cluster: int) -> bytes:
     return data + b"\x00" * 32
 
 
-def cluster_count_for_size(size: int) -> int:
+def cluster_count_for_size(size: int, sectors_per_cluster: int) -> int:
     if size <= 0:
         return 0
-    return math.ceil(size / (BYTES_PER_SECTOR * SECTORS_PER_CLUSTER))
+    return math.ceil(size / (BYTES_PER_SECTOR * sectors_per_cluster))
 
 
-def assign_clusters(root: FsNode) -> int:
+def assign_clusters(root: FsNode, sectors_per_cluster: int) -> int:
     next_cluster = 2
     for node in iter_nodes(root):
         if node.is_dir:
@@ -279,7 +284,7 @@ def assign_clusters(root: FsNode) -> int:
             size = len(directory_entries(node, 0))
         else:
             size = node.size
-        count = max(1, cluster_count_for_size(size)) if node.is_dir or node.size else 0
+        count = max(1, cluster_count_for_size(size, sectors_per_cluster)) if node.is_dir or node.size else 0
         if count:
             node.first_cluster = next_cluster
             next_cluster += count
@@ -294,14 +299,14 @@ def assign_parent_clusters(node: FsNode, parent_cluster: int) -> None:
             assign_parent_clusters(child, child.first_cluster)
 
 
-def build_fat(root: FsNode, cluster_count: int) -> bytearray:
+def build_fat(root: FsNode, cluster_count: int, sectors_per_cluster: int) -> bytearray:
     fat = bytearray((cluster_count + 2) * 2)
     struct.pack_into("<H", fat, 0, MEDIA_DESCRIPTOR | 0xFF00)
     struct.pack_into("<H", fat, 2, END_CLUSTER)
     for node in iter_nodes(root):
-        count = cluster_count_for_size(node.size)
+        count = cluster_count_for_size(node.size, sectors_per_cluster)
         if node.is_dir:
-            count = max(1, cluster_count_for_size(len(directory_entries(node, node.parent_cluster))))
+            count = max(1, cluster_count_for_size(len(directory_entries(node, node.parent_cluster)), sectors_per_cluster))
         if not count:
             continue
         for i in range(count):
@@ -310,10 +315,43 @@ def build_fat(root: FsNode, cluster_count: int) -> bytearray:
     return fat
 
 
-def write_cluster(data: bytearray, first_data_sector: int, cluster: int, payload: bytes) -> None:
-    cluster_size = BYTES_PER_SECTOR * SECTORS_PER_CLUSTER
-    offset = (first_data_sector + (cluster - 2) * SECTORS_PER_CLUSTER) * BYTES_PER_SECTOR
+def write_cluster(
+    data: bytearray,
+    first_data_sector: int,
+    cluster: int,
+    payload: bytes,
+    sectors_per_cluster: int,
+) -> None:
+    offset = (first_data_sector + (cluster - 2) * sectors_per_cluster) * BYTES_PER_SECTOR
     data[offset : offset + len(payload)] = payload
+
+
+def resolve_fat_layout(
+    used_cluster_count: int,
+    sectors_per_cluster: int,
+    free_clusters: int,
+    requested_volume_sectors: int,
+) -> tuple[int, int, int, int]:
+    root_dir_sectors = (ROOT_ENTRIES * 32 + BYTES_PER_SECTOR - 1) // BYTES_PER_SECTOR
+    if requested_volume_sectors > 0:
+        cluster_count = max(used_cluster_count, used_cluster_count + max(0, free_clusters))
+        while True:
+            sectors_per_fat = math.ceil(((cluster_count + 2) * 2) / BYTES_PER_SECTOR)
+            first_data_sector = RESERVED_SECTORS + FAT_COPIES * sectors_per_fat + root_dir_sectors
+            if requested_volume_sectors <= first_data_sector:
+                raise ValueError("--volume-sectors is too small for FAT metadata")
+            available_clusters = (requested_volume_sectors - first_data_sector) // sectors_per_cluster
+            if available_clusters < used_cluster_count:
+                raise ValueError("--volume-sectors is too small for the selected files")
+            if available_clusters == cluster_count:
+                return cluster_count, sectors_per_fat, first_data_sector, requested_volume_sectors
+            cluster_count = available_clusters
+
+    cluster_count = used_cluster_count + max(0, free_clusters)
+    sectors_per_fat = math.ceil(((cluster_count + 2) * 2) / BYTES_PER_SECTOR)
+    first_data_sector = RESERVED_SECTORS + FAT_COPIES * sectors_per_fat + root_dir_sectors
+    volume_sectors = first_data_sector + cluster_count * sectors_per_cluster
+    return cluster_count, sectors_per_fat, first_data_sector, volume_sectors
 
 
 def build_image(
@@ -322,14 +360,22 @@ def build_image(
     prefix_bytes: int,
     partition_offset_sectors: int,
     free_clusters: int,
+    sectors_per_cluster: int,
+    volume_sectors: int,
 ) -> bytes:
-    last_cluster = assign_clusters(root)
+    if sectors_per_cluster <= 0 or sectors_per_cluster > 128:
+        raise ValueError("--sectors-per-cluster must be between 1 and 128")
+    last_cluster = assign_clusters(root, sectors_per_cluster)
     used_cluster_count = last_cluster - 2
-    cluster_count = used_cluster_count + max(0, free_clusters)
+    cluster_count, sectors_per_fat, first_data_sector, volume_sectors = resolve_fat_layout(
+        used_cluster_count,
+        sectors_per_cluster,
+        free_clusters,
+        volume_sectors,
+    )
+    if cluster_count > 0xFFF5:
+        raise ValueError("FAT16 cluster count exceeds firmware-compatible range")
     root_dir_sectors = (ROOT_ENTRIES * 32 + BYTES_PER_SECTOR - 1) // BYTES_PER_SECTOR
-    sectors_per_fat = math.ceil(((cluster_count + 2) * 2) / BYTES_PER_SECTOR)
-    first_data_sector = RESERVED_SECTORS + FAT_COPIES * sectors_per_fat + root_dir_sectors
-    volume_sectors = first_data_sector + cluster_count * SECTORS_PER_CLUSTER
     volume_base = prefix_bytes + partition_offset_sectors * BYTES_PER_SECTOR
     image = bytearray(volume_base + volume_sectors * BYTES_PER_SECTOR)
 
@@ -337,7 +383,7 @@ def build_image(
     boot[0:3] = b"\xEB\x3C\x90"
     boot[3:11] = b"MSWIN4.1"
     struct.pack_into("<H", boot, 11, BYTES_PER_SECTOR)
-    boot[13] = SECTORS_PER_CLUSTER
+    boot[13] = sectors_per_cluster
     struct.pack_into("<H", boot, 14, RESERVED_SECTORS)
     boot[16] = FAT_COPIES
     struct.pack_into("<H", boot, 17, ROOT_ENTRIES)
@@ -369,7 +415,7 @@ def build_image(
         image[0:BYTES_PER_SECTOR] = mbr
     image[volume_base : volume_base + BYTES_PER_SECTOR] = boot
 
-    fat = build_fat(root, cluster_count)
+    fat = build_fat(root, cluster_count, sectors_per_cluster)
     fat = fat + b"\x00" * (sectors_per_fat * BYTES_PER_SECTOR - len(fat))
     fat_start = volume_base + RESERVED_SECTORS * BYTES_PER_SECTOR
     for copy in range(FAT_COPIES):
@@ -382,7 +428,7 @@ def build_image(
         : root_dir_sectors * BYTES_PER_SECTOR
     ]
 
-    cluster_size = BYTES_PER_SECTOR * SECTORS_PER_CLUSTER
+    cluster_size = BYTES_PER_SECTOR * sectors_per_cluster
     for node in iter_nodes(root):
         if not node.first_cluster:
             continue
@@ -392,7 +438,7 @@ def build_image(
             assert node.source is not None
             payload = node.source.read_bytes()
         payload = payload + b"\x00" * (align_up(len(payload), cluster_size) - len(payload))
-        write_cluster(image, partition_offset_sectors + first_data_sector, node.first_cluster, payload)
+        write_cluster(image, partition_offset_sectors + first_data_sector, node.first_cluster, payload, sectors_per_cluster)
     return bytes(image)
 
 
@@ -418,11 +464,31 @@ def main() -> int:
         default=DEFAULT_FREE_CLUSTERS,
         help="Append unused clusters so firmware free-space scans can find zero FAT entries.",
     )
+    ap.add_argument(
+        "--sectors-per-cluster",
+        type=int,
+        default=DEFAULT_SECTORS_PER_CLUSTER,
+        help="FAT sectors per allocation unit. The dumped BBK9588 volume uses 32 sectors, i.e. 16 KiB.",
+    )
+    ap.add_argument(
+        "--volume-sectors",
+        type=lambda text: int(text, 0),
+        default=DEFAULT_VOLUME_SECTORS,
+        help="FAT volume sector count. Use 0 to size the image from file data plus --free-clusters.",
+    )
     ap.add_argument("paths", type=Path, nargs="+", help="Top-level directories/files to place in the FAT root.")
     ns = ap.parse_args()
 
     root = build_tree(ns.paths)
-    image = build_image(root, ns.volume_label, ns.prefix_bytes, ns.partition_offset_sectors, ns.free_clusters)
+    image = build_image(
+        root,
+        ns.volume_label,
+        ns.prefix_bytes,
+        ns.partition_offset_sectors,
+        ns.free_clusters,
+        ns.sectors_per_cluster,
+        ns.volume_sectors,
+    )
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     ns.output.write_bytes(image)
     print(f"wrote {ns.output} ({len(image)} bytes)")

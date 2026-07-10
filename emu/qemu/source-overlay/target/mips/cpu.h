@@ -1177,7 +1177,8 @@ typedef struct CPUArchState {
     bool bbk9588_storage_trace;
     bool bbk9588_wait_nop;
     bool bbk9588_irq_ip2_level;
-    uint32_t bbk9588_storage_size_bytes;
+    bool bbk9588_guest_insn_count_enabled;
+    uint64_t bbk9588_guest_insn_count;
     target_ulong bbk9588_heap_next;
     CPUMIPSMVPContext *mvp;
 #if !defined(CONFIG_USER_ONLY)

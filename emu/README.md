@@ -21,12 +21,19 @@ Release 包中已经包含：
 ```text
 系统/
   数据/
+    loader_9588_4740.bin
     C200.bin
+    kj409588.bin
     u_boot_9588_4740.bin
 应用/
 ```
 
-然后双击 `start-web.cmd`，或运行：
+`loader_9588_4740.bin`、`u_boot_9588_4740.bin`、`kj409588.bin` 和 `应用/` 用于首次构建
+runtime NAND。默认启动链路是 QEMU BootROM 从 NAND address `0` 按 JZ4740 spare valid flag
+读取最多 8 KiB loader，并跳到 internal SRAM `0x80000004`，
+再由 loader/U-Boot 通过 FAT/FTL 读取 `系统/数据/kj409588.bin` 并进入系统固件；
+不会再把外部 U-Boot、C200 或 `kj409588.bin` 作为 RAM payload 预加载。然后双击 `start-web.cmd`，
+或运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start-web.ps1
@@ -51,7 +58,9 @@ python -m pip install -r requirements.txt
 ```text
 系统/
   数据/
+    loader_9588_4740.bin
     C200.bin
+    kj409588.bin
     u_boot_9588_4740.bin
 应用/
 ```
@@ -68,7 +77,8 @@ powershell -ExecutionPolicy Bypass -File .\emu\tools\build_runtime_images.ps1
 python -m emu.web.frontend `
   --host 127.0.0.1 `
   --port 8000 `
-  --boot-mode uboot `
+  --boot-mode nand `
+  --nand-image .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
@@ -87,8 +97,7 @@ emu/
   qemu/
     system.py                    QEMU 进程后端、命令构建、监控和设备交互
     source-overlay/              覆盖到 QEMU 11.0.0 的修改源码
-    patches/                     对应 patch
-    scripts/                     QEMU overlay/patch/build 脚本
+    scripts/                     QEMU overlay/build 脚本
 ```
 
 更多说明：
@@ -100,7 +109,7 @@ emu/
 
 ## 构建 QEMU
 
-源码仓库不 vendoring 完整 QEMU 树，只保存 overlay 和 patch。当前目标版本：
+源码仓库不 vendoring 完整 QEMU 树，只保存 overlay。当前目标版本：
 
 ```text
 QEMU 11.0.0
@@ -150,10 +159,14 @@ python .\emu\tools\validate_release_package.py .\build\dist\bbk9588-emulator-版
 
 ## 当前状态
 
-QEMU 后端已经能进入系统 UI，支持 framebuffer 输出、Web 前端触摸/按键输入，并能打开多
-个内置应用。仍在推进的部分：
+QEMU/C200 运行路径已经能进入系统 UI，支持 framebuffer 输出、Web 前端触摸/按键输入，
+并能打开多个内置应用。默认路径已经改为 BootROM -> loader (`0x80000004`) -> U-Boot -> FAT/FTL ->
+`kj409588.bin`；旧的 BootROM 直接读取 FAT `C200.bin` 路径只作为显式 legacy 诊断选项保留。
+Web 前端
+可以切换可用 NAND 镜像并重启。仍在推进的部分：
 
 - NAND/FTL/FAT/cache 路径仍需继续靠硬件模型完善。
+- U-Boot 冷启动路径需要继续优化 QEMU C NAND data port 性能和真机 OOB 元数据匹配。
 - 部分主菜单资源渲染路径仍有兼容性问题。
-- 诊断 machine property 和 TCG helper 仍保留在 QEMU patch 中，但默认运行路径不应依赖
+- 诊断 machine property 和 TCG helper 仍保留在 QEMU overlay 中，但默认运行路径不应依赖
   Python/GDB 固件 hook。

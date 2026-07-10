@@ -81,12 +81,20 @@ python reverse\dlx_inspect.py path\to\text_A.dlx
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\emu\tools\build_runtime_images.ps1
-python -m emu.web.frontend --boot-mode uboot --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
+python -m emu.web.frontend --boot-mode nand `
+  --nand-image .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
+  --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
 Release 包由 `.github/workflows/release-emulator.yml` 构建。包内包含编译好的
 `bin/bbk9588-qemu-system-mipsel.exe`、QEMU 运行 DLL、Web 前端、启动脚本和
-Python runtime。公开 release 不包含固件和应用资源，用户需要自行提供本地 dump。
+Python runtime。公开 release 不包含固件和应用资源，用户需要自行提供本地 dump；
+默认启动链路为 QEMU BootROM 从 NAND address `0` 按 JZ4740 spare valid flag 读取
+`loader_9588_4740.bin`，入口为 internal SRAM `0x80000004`，
+再由 loader/U-Boot 通过 FAT/FTL 读取 `系统/数据/kj409588.bin` 并进入系统固件。
+`--boot-mode uboot` 仍保留为诊断模式，用于直接复查 NAND page `0x40` 的 U-Boot。
+Web 前端可以在运行页面切换可用 NAND
+镜像并重启。
 
 ## 质量检查
 

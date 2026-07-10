@@ -234,6 +234,16 @@ BBK_LCD_FRAME_DONE_PROBE_FRAME_VA = 0xA1F82000
 BBK_LCD_FRAME_DONE_PROBE_BYTES = 240 * 320 * 2
 BBK_KEY_GPIO_PROBE_CODE_VA = 0x807F8A00
 BBK_KEY_GPIO_PROBE_STATUS_VA = 0x807F8B00
+BBK_UART_REGISTER_PROBE_CODE_VA = 0x807F8C00
+BBK_UART_REGISTER_PROBE_STATUS_VA = 0x807F8D00
+BBK_SADC_BATTERY_PROBE_CODE_VA = 0x807F8E00
+BBK_SADC_BATTERY_PROBE_STATUS_VA = 0x807F8F00
+BBK_RTC_HIBERNATE_PROBE_CODE_VA = 0x807F9000
+BBK_RTC_HIBERNATE_PROBE_STATUS_VA = 0x807FA000
+BBK_RTC_ALARM_IRQ_PROBE_CODE_VA = 0x807FB000
+BBK_RTC_ALARM_IRQ_PROBE_STATUS_VA = 0x807FC000
+BBK_SADC_DEFAULT_BATTERY_RAW = 0x0E68
+BBK_SADC_DEFAULT_SADCIN_RAW = 0x0000
 BBK_KEY_GPIO_PROBE_CODE = 7
 BBK_KEY_GPIO_PROBE_MASK = 0x08000000
 BBK_KEY_GPIO_PROBE_IRQ_MASK = 1 << 27
@@ -323,11 +333,11 @@ BBK_FAT_FAT_LBA_VA = 0x80474260
 BBK_FAT_FIRST_DATA_LBA_VA = 0x80474238
 BBK_FAT_DRIVE_READY_VA = 0x8047428D
 BBK_FAT_EXPECTED_LAYOUT = {
-    "sectors_per_cluster": 0x10,
-    "root_dir_sectors": 0x10,
-    "root_lba": 0x159,
+    "sectors_per_cluster": 0x20,
+    "root_dir_sectors": 0x20,
+    "root_lba": 0x119,
     "fat_lba": 0x21,
-    "first_data_lba": 0x169,
+    "first_data_lba": 0x139,
 }
 BBK_FAT_EXPECTED_DRIVE_READY = {1, 2}
 
@@ -674,23 +684,90 @@ def _run_udc_idle_probe(config) -> dict[str, object]:
         time.sleep(0.8)
         with backend._lock:
             backend._pause_for_gdb_locked()
-            data = backend._read_virtual_memory_paused_locked(BBK_UDC_BASE_VA, 0x20)
-            words = list(struct.unpack("<8I", data))
+            data = backend._read_virtual_memory_paused_locked(BBK_UDC_BASE_VA, 0x80)
+            words = list(struct.unpack("<8I", data[:0x20]))
             pc = backend._read_register_paused_locked(37) & 0xFFFFFFFF
             try:
                 backend._resume_after_gdb_locked()
             except Exception as exc:
                 row["resume_error"] = f"{type(exc).__name__}: {exc}"
+        faddr = data[0x00]
+        power = data[0x01]
+        intr_in = struct.unpack_from("<H", data, 0x02)[0]
+        intr_out = struct.unpack_from("<H", data, 0x04)[0]
+        intr_in_enable = struct.unpack_from("<H", data, 0x06)[0]
+        intr_out_enable = struct.unpack_from("<H", data, 0x08)[0]
+        intr_usb = data[0x0A]
+        intr_usb_enable = data[0x0B]
+        frame = struct.unpack_from("<H", data, 0x0C)[0]
+        index = data[0x0E]
+        testmode = data[0x0F]
+        in_maxp = struct.unpack_from("<H", data, 0x10)[0]
+        in_csr = struct.unpack_from("<H", data, 0x12)[0]
+        out_maxp = struct.unpack_from("<H", data, 0x14)[0]
+        out_csr = struct.unpack_from("<H", data, 0x16)[0]
+        count = struct.unpack_from("<H", data, 0x18)[0]
+        epinfo = data[0x78]
+        raminfo = data[0x79]
+        errors: list[str] = []
+        if power & 0x1A:
+            errors.append(f"Power has read-only host-state bits set: 0x{power:02x}")
+        if power & ~0xE5:
+            errors.append(f"Power exposes bits outside writable mask: 0x{power:02x}")
+        if intr_in != 0:
+            errors.append(f"IntrIn active in no-host idle: 0x{intr_in:04x}")
+        if intr_out != 0:
+            errors.append(f"IntrOut active in no-host idle: 0x{intr_out:04x}")
+        if intr_usb != 0:
+            errors.append(f"IntrUSB active in no-host idle: 0x{intr_usb:02x}")
+        if intr_out_enable & 0x0001:
+            errors.append(f"IntrOutE endpoint0 enable bit should stay clear: 0x{intr_out_enable:04x}")
+        if intr_usb_enable & ~0x0F:
+            errors.append(f"IntrUSBE exposes undefined bits: 0x{intr_usb_enable:02x}")
+        if frame & ~0x07FF:
+            errors.append(f"Frame exceeds 11-bit counter width: 0x{frame:04x}")
+        if index & ~0x0F:
+            errors.append(f"Index exposes undefined bits: 0x{index:02x}")
+        if testmode & ~0x3F:
+            errors.append(f"Testmode exposes undefined bits: 0x{testmode:02x}")
+        if count != 0:
+            errors.append(f"Count0/OutCount should be empty without host data: 0x{count:04x}")
+        if any(data[0x20:0x60]):
+            errors.append("UDC FIFO window is not idle zero")
+        if epinfo != 0x23:
+            errors.append(f"EPInfo should report 3 IN / 2 OUT endpoints: 0x{epinfo:02x}")
+        if raminfo != 0:
+            errors.append(f"RAMInfo expected idle zero: 0x{raminfo:02x}")
         row.update(
             {
                 "pc": f"0x{pc:08x}",
                 "classification": classify_guest_pc(f"0x{pc:08x}"),
                 "words": [f"0x{word:08x}" for word in words],
-                "ok": all(word == 0 for word in words),
+                "registers": {
+                    "faddr": f"0x{faddr:02x}",
+                    "power": f"0x{power:02x}",
+                    "intr_in": f"0x{intr_in:04x}",
+                    "intr_out": f"0x{intr_out:04x}",
+                    "intr_in_enable": f"0x{intr_in_enable:04x}",
+                    "intr_out_enable": f"0x{intr_out_enable:04x}",
+                    "intr_usb": f"0x{intr_usb:02x}",
+                    "intr_usb_enable": f"0x{intr_usb_enable:02x}",
+                    "frame": f"0x{frame:04x}",
+                    "index": f"0x{index:02x}",
+                    "testmode": f"0x{testmode:02x}",
+                    "in_maxp": f"0x{in_maxp:04x}",
+                    "in_csr": f"0x{in_csr:04x}",
+                    "out_maxp": f"0x{out_maxp:04x}",
+                    "out_csr": f"0x{out_csr:04x}",
+                    "count": f"0x{count:04x}",
+                    "epinfo": f"0x{epinfo:02x}",
+                    "raminfo": f"0x{raminfo:02x}",
+                },
+                "ok": not errors,
             }
         )
         if not row["ok"]:
-            row["error"] = "UDC no-host reads should not echo guest-written shadow registers"
+            row["error"] = "; ".join(errors)
         row["backend_snapshot"] = backend.snapshot()
         return row
     except Exception as exc:
@@ -2071,6 +2148,8 @@ def _build_msc_dma_write_probe_code(lba: int) -> bytes:
     li(t0, 0xB0020000)
     li(t2, 0xB3020000)
     li(t3, BBK_MSC_DMA_PROBE_STATUS_VA)
+    li(t1, 1)
+    words.append(_mips_sw(t1, 0x300, t2))
 
     li(t1, 0x18)
     words.append(_mips_sw(t1, 0x102C, t0))
@@ -2197,6 +2276,548 @@ def _run_msc_dma_write_probe(config, *, lba: int = BBK_MSC_DMA_PROBE_LBA) -> dic
                 row["resume_error"] = f"{type(exc).__name__}: {exc}"
         if not row["ok"]:
             row["error"] = "MSC DMA write/readback did not match"
+        row["backend_snapshot"] = backend.snapshot()
+        return row
+    except Exception as exc:
+        row["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            row["backend_snapshot"] = backend.snapshot()
+        except Exception:
+            pass
+        return row
+    finally:
+        backend.stop()
+
+
+def _build_uart_register_probe_code() -> bytes:
+    t0 = 8
+    t1 = 9
+    t2 = 10
+    v0 = 2
+    ra = 31
+    words: list[int] = []
+
+    def li(reg: int, value: int) -> None:
+        words.extend(_mips_li(reg, value))
+
+    li(t0, 0xB0030000)
+    li(t1, BBK_UART_REGISTER_PROBE_STATUS_VA)
+
+    li(t2, 0x00)
+    words.append(_mips_sw(t2, 0x0C, t0))  # ULCR.DLAB clear
+    words.append(_mips_sw(t2, 0x08, t0))  # UFCR/FIFO disabled
+    words.append(_mips_sw(t2, 0x04, t0))  # UIER disabled
+
+    words.append(_mips_lw(v0, 0x14, t0))  # ULSR reset: TEMP | TDRQ
+    words.append(_mips_sw(v0, 0, t1))
+    words.append(_mips_lw(v0, 0x08, t0))  # UIIR reset: no pending
+    words.append(_mips_sw(v0, 4, t1))
+
+    li(t2, 0x80)  # ULCR.DLAB
+    words.append(_mips_sw(t2, 0x0C, t0))
+    li(t2, 0x34)
+    words.append(_mips_sw(t2, 0x00, t0))  # UDLLR
+    li(t2, 0x12)
+    words.append(_mips_sw(t2, 0x04, t0))  # UDLHR
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 8, t1))
+    words.append(_mips_lw(v0, 0x04, t0))
+    words.append(_mips_sw(v0, 12, t1))
+
+    li(t2, 0x03)  # 8-bit word length, DLAB clear
+    words.append(_mips_sw(t2, 0x0C, t0))
+    li(t2, 0x11)  # UFCR.FME | UFCR.UME
+    words.append(_mips_sw(t2, 0x08, t0))
+    li(t2, 0x02)  # UIER.TDRIE
+    words.append(_mips_sw(t2, 0x04, t0))
+    words.append(_mips_lw(v0, 0x08, t0))
+    words.append(_mips_sw(v0, 16, t1))
+
+    li(t2, 0x92)  # UMCR.MDCE | UMCR.LOOP | UMCR.RTS
+    words.append(_mips_sw(t2, 0x10, t0))
+    li(t2, 0x01)  # UIER.RDRIE
+    words.append(_mips_sw(t2, 0x04, t0))
+    li(t2, 0xA5)
+    words.append(_mips_sw(t2, 0x00, t0))  # loopback into URBR
+    words.append(_mips_lw(v0, 0x14, t0))
+    words.append(_mips_sw(v0, 20, t1))
+    words.append(_mips_lw(v0, 0x08, t0))
+    words.append(_mips_sw(v0, 24, t1))
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 28, t1))
+    words.append(_mips_lw(v0, 0x14, t0))
+    words.append(_mips_sw(v0, 32, t1))
+
+    li(t2, 0x13)  # UFCR.UME | UFCR.RFRT | UFCR.FME
+    words.append(_mips_sw(t2, 0x08, t0))
+    words.append(_mips_lw(v0, 0x14, t0))
+    words.append(_mips_sw(v0, 36, t1))
+
+    words.append(_mips_r(ra, 0, 0, 0, 0x08))
+    words.append(0)
+    return _pack_mips_words(words)
+
+
+def _run_uart_register_probe(config) -> dict[str, object]:
+    backend = QemuProcessBackend(config)
+    row: dict[str, object] = {
+        "event": "qemu-uart-register-probe",
+        "code": _format_u32(BBK_UART_REGISTER_PROBE_CODE_VA),
+        "status_buffer": _format_u32(BBK_UART_REGISTER_PROBE_STATUS_VA),
+        "ok": False,
+    }
+    try:
+        backend.start()
+        with backend._lock:
+            backend._pause_for_gdb_locked()
+            code = _build_uart_register_probe_code()
+            backend._write_virtual_memory_paused_locked(BBK_UART_REGISTER_PROBE_CODE_VA, code)
+            backend._write_virtual_memory_paused_locked(BBK_UART_REGISTER_PROBE_STATUS_VA, b"\x00" * 40)
+            row["code_size"] = len(code)
+            call = backend._call_guest_function_stepped_paused_locked(
+                BBK_UART_REGISTER_PROBE_CODE_VA,
+                return_pc=BBK_WAIT_PROBE_PC,
+                max_steps=80,
+                max_recorded_steps=12,
+            )
+            row["guest_call"] = call
+            status_data = backend._read_virtual_memory_paused_locked(
+                BBK_UART_REGISTER_PROBE_STATUS_VA, 40
+            )
+            status_words = list(struct.unpack("<10I", status_data))
+            row["status_words"] = [_format_u32(value) for value in status_words]
+            status_low = [value & 0xFF for value in status_words]
+            row["status_low"] = [f"0x{value:02x}" for value in status_low]
+            row["status_lifecycle_ok"] = (
+                status_low[0] == 0x60
+                and status_low[1] == 0x01
+                and status_low[2] == 0x34
+                and status_low[3] == 0x12
+                and status_low[4] == 0xC2
+                and (status_low[5] & 0x61) == 0x61
+                and status_low[6] == 0xC4
+                and status_low[7] == 0xA5
+                and status_low[8] == 0x60
+                and status_low[9] == 0x60
+            )
+            row["ok"] = bool(call.get("returned")) and bool(row["status_lifecycle_ok"])
+            try:
+                backend._resume_after_gdb_locked()
+            except Exception as exc:
+                row["resume_error"] = f"{type(exc).__name__}: {exc}"
+        if not row["ok"]:
+            row["error"] = "UART register lifecycle did not match JZ4740/16550 expectations"
+        row["backend_snapshot"] = backend.snapshot()
+        return row
+    except Exception as exc:
+        row["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            row["backend_snapshot"] = backend.snapshot()
+        except Exception:
+            pass
+        return row
+    finally:
+        backend.stop()
+
+
+def _build_sadc_battery_probe_code() -> bytes:
+    t0 = 8
+    t1 = 9
+    t2 = 10
+    v0 = 2
+    ra = 31
+    words: list[int] = []
+
+    def li(reg: int, value: int) -> None:
+        words.extend(_mips_li(reg, value))
+
+    li(t0, 0xB0070000)
+    li(t1, BBK_SADC_BATTERY_PROBE_STATUS_VA)
+
+    li(t2, 0x00)
+    words.append(_mips_sw(t2, 0x00, t0))  # ADENA
+    words.append(_mips_sw(t2, 0x1C, t0))  # ADBDAT clear
+    words.append(_mips_sw(t2, 0x20, t0))  # ADSDAT clear
+    li(t2, 0x1F)
+    words.append(_mips_sw(t2, 0x0C, t0))  # ADSTATE clear all flags
+
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 0, t1))
+    words.append(_mips_lw(v0, 0x0C, t0))
+    words.append(_mips_sw(v0, 4, t1))
+
+    li(t2, 0x03)  # ADENA.SADCINEN | ADENA.PBATEN
+    words.append(_mips_sw(t2, 0x00, t0))
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 8, t1))
+    words.append(_mips_lw(v0, 0x0C, t0))
+    words.append(_mips_sw(v0, 12, t1))
+    words.append(_mips_lw(v0, 0x1C, t0))
+    words.append(_mips_sw(v0, 16, t1))
+    words.append(_mips_lw(v0, 0x20, t0))
+    words.append(_mips_sw(v0, 20, t1))
+
+    li(t2, 0x00)
+    words.append(_mips_sw(t2, 0x1C, t0))
+    words.append(_mips_lw(v0, 0x1C, t0))
+    words.append(_mips_sw(v0, 24, t1))
+    words.append(_mips_lw(v0, 0x0C, t0))
+    words.append(_mips_sw(v0, 28, t1))
+    words.append(_mips_sw(t2, 0x20, t0))
+    words.append(_mips_lw(v0, 0x20, t0))
+    words.append(_mips_sw(v0, 32, t1))
+    words.append(_mips_lw(v0, 0x0C, t0))
+    words.append(_mips_sw(v0, 36, t1))
+
+    li(t2, 0x02)  # ADENA.PBATEN
+    words.append(_mips_sw(t2, 0x00, t0))
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 40, t1))
+    words.append(_mips_lw(v0, 0x0C, t0))
+    words.append(_mips_sw(v0, 44, t1))
+    words.append(_mips_lw(v0, 0x1C, t0))
+    words.append(_mips_sw(v0, 48, t1))
+
+    words.append(_mips_r(ra, 0, 0, 0, 0x08))
+    words.append(0)
+    return _pack_mips_words(words)
+
+
+def _run_sadc_battery_probe(config) -> dict[str, object]:
+    backend = QemuProcessBackend(config)
+    row: dict[str, object] = {
+        "event": "qemu-sadc-battery-probe",
+        "code": _format_u32(BBK_SADC_BATTERY_PROBE_CODE_VA),
+        "status_buffer": _format_u32(BBK_SADC_BATTERY_PROBE_STATUS_VA),
+        "ok": False,
+    }
+    try:
+        backend.start()
+        with backend._lock:
+            backend._pause_for_gdb_locked()
+            code = _build_sadc_battery_probe_code()
+            backend._write_virtual_memory_paused_locked(BBK_SADC_BATTERY_PROBE_CODE_VA, code)
+            backend._write_virtual_memory_paused_locked(BBK_SADC_BATTERY_PROBE_STATUS_VA, b"\x00" * 52)
+            row["code_size"] = len(code)
+            call = backend._call_guest_function_stepped_paused_locked(
+                BBK_SADC_BATTERY_PROBE_CODE_VA,
+                return_pc=BBK_WAIT_PROBE_PC,
+                max_steps=96,
+                max_recorded_steps=12,
+            )
+            row["guest_call"] = call
+            status_data = backend._read_virtual_memory_paused_locked(
+                BBK_SADC_BATTERY_PROBE_STATUS_VA, 52
+            )
+            status_words = list(struct.unpack("<13I", status_data))
+            row["status_words"] = [_format_u32(value) for value in status_words]
+            status_low = [value & 0xFFFF for value in status_words]
+            row["status_low"] = [f"0x{value:04x}" for value in status_low]
+            row["status_lifecycle_ok"] = (
+                status_low[0] == 0x0000
+                and status_low[1] == 0x0000
+                and status_low[2] == 0x0000
+                and status_low[3] == 0x0003
+                and status_low[4] == BBK_SADC_DEFAULT_BATTERY_RAW
+                and status_low[5] == BBK_SADC_DEFAULT_SADCIN_RAW
+                and status_low[6] == 0x0000
+                and status_low[7] == 0x0001
+                and status_low[8] == 0x0000
+                and status_low[9] == 0x0000
+                and status_low[10] == 0x0000
+                and status_low[11] == 0x0002
+                and status_low[12] == BBK_SADC_DEFAULT_BATTERY_RAW
+            )
+            row["ok"] = bool(call.get("returned")) and bool(row["status_lifecycle_ok"])
+            try:
+                backend._resume_after_gdb_locked()
+            except Exception as exc:
+                row["resume_error"] = f"{type(exc).__name__}: {exc}"
+        if not row["ok"]:
+            row["error"] = "SADC PBAT/SADCIN lifecycle did not match JZ4740 ADENA/ADSTATE/ADBDAT semantics"
+        row["backend_snapshot"] = backend.snapshot()
+        return row
+    except Exception as exc:
+        row["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            row["backend_snapshot"] = backend.snapshot()
+        except Exception:
+            pass
+        return row
+    finally:
+        backend.stop()
+
+
+def _build_rtc_hibernate_probe_code() -> bytes:
+    t0 = 8
+    t1 = 9
+    t2 = 10
+    v0 = 2
+    ra = 31
+    words: list[int] = []
+
+    def li(reg: int, value: int) -> None:
+        words.extend(_mips_li(reg, value))
+
+    li(t0, 0xB0003000)
+    li(t1, BBK_RTC_HIBERNATE_PROBE_STATUS_VA)
+
+    li(t2, 0x00000000)
+    words.append(_mips_sw(t2, 0x20, t0))  # HCR.PD clear before setup
+    words.append(_mips_sw(t2, 0x00, t0))  # RTCCR.RTCE off; keep seconds stable
+    li(t2, 0x11111111)
+    words.append(_mips_sw(t2, 0x04, t0))  # RTCSR
+    li(t2, 0x22222222)
+    words.append(_mips_sw(t2, 0x08, t0))  # RTCSAR
+    li(t2, 0x000055AA)
+    words.append(_mips_sw(t2, 0x0C, t0))  # RTCGR
+    li(t2, 0x0000ABC0)
+    words.append(_mips_sw(t2, 0x24, t0))  # HWFCR
+    li(t2, 0x00000BE0)
+    words.append(_mips_sw(t2, 0x28, t0))  # HRCR
+    li(t2, 0x00000001)
+    words.append(_mips_sw(t2, 0x2C, t0))  # HWCR.EALM
+    li(t2, 0x12345678)
+    words.append(_mips_sw(t2, 0x34, t0))  # HSPR
+
+    for out_off, rtc_off in enumerate((0x00, 0x04, 0x08, 0x0C, 0x24, 0x28, 0x2C, 0x34, 0x30)):
+        words.append(_mips_lw(v0, rtc_off, t0))
+        words.append(_mips_sw(v0, out_off * 4, t1))
+
+    li(t2, 0x00000001)
+    words.append(_mips_sw(t2, 0x20, t0))  # enter hibernate
+    words.append(_mips_lw(v0, 0x20, t0))
+    words.append(_mips_sw(v0, 9 * 4, t1))
+
+    li(t2, 0x33333333)
+    words.append(_mips_sw(t2, 0x04, t0))
+    li(t2, 0x44444444)
+    words.append(_mips_sw(t2, 0x08, t0))
+    li(t2, 0x0000AAAA)
+    words.append(_mips_sw(t2, 0x0C, t0))
+    li(t2, 0x00000000)
+    words.append(_mips_sw(t2, 0x24, t0))
+    words.append(_mips_sw(t2, 0x28, t0))
+    words.append(_mips_sw(t2, 0x2C, t0))
+    words.append(_mips_sw(t2, 0x30, t0))
+    li(t2, 0x87654321)
+    words.append(_mips_sw(t2, 0x34, t0))
+    li(t2, 0x00000000)
+    words.append(_mips_sw(t2, 0x20, t0))  # HCR.PD should not clear by write
+    li(t2, 0x00000020)
+    words.append(_mips_sw(t2, 0x00, t0))  # only RTCCR.1HZIE remains writable
+
+    for idx, rtc_off in enumerate((0x00, 0x04, 0x08, 0x0C, 0x24, 0x28, 0x2C, 0x34, 0x30, 0x20), start=10):
+        words.append(_mips_lw(v0, rtc_off, t0))
+        words.append(_mips_sw(v0, idx * 4, t1))
+
+    words.append(_mips_r(ra, 0, 0, 0, 0x08))
+    words.append(0)
+    return _pack_mips_words(words)
+
+
+def _run_rtc_hibernate_probe(config) -> dict[str, object]:
+    backend = QemuProcessBackend(config)
+    row: dict[str, object] = {
+        "event": "qemu-rtc-hibernate-probe",
+        "code": _format_u32(BBK_RTC_HIBERNATE_PROBE_CODE_VA),
+        "status_buffer": _format_u32(BBK_RTC_HIBERNATE_PROBE_STATUS_VA),
+        "ok": False,
+    }
+    try:
+        backend.start()
+        with backend._lock:
+            backend._pause_for_gdb_locked()
+            code = _build_rtc_hibernate_probe_code()
+            backend._write_virtual_memory_paused_locked(BBK_RTC_HIBERNATE_PROBE_CODE_VA, code)
+            backend._write_virtual_memory_paused_locked(BBK_RTC_HIBERNATE_PROBE_STATUS_VA, b"\x00" * 80)
+            row["code_size"] = len(code)
+            call = backend._call_guest_function_stepped_paused_locked(
+                BBK_RTC_HIBERNATE_PROBE_CODE_VA,
+                return_pc=BBK_WAIT_PROBE_PC,
+                max_steps=160,
+                max_recorded_steps=12,
+            )
+            row["guest_call"] = call
+            status_data = backend._read_virtual_memory_paused_locked(
+                BBK_RTC_HIBERNATE_PROBE_STATUS_VA, 80
+            )
+            status_words = list(struct.unpack("<20I", status_data))
+            row["status_words"] = [_format_u32(value) for value in status_words]
+            row["status_lifecycle_ok"] = (
+                status_words[0] == 0x00000080
+                and status_words[1] == 0x11111111
+                and status_words[2] == 0x22222222
+                and status_words[3] == 0x000055AA
+                and status_words[4] == 0x0000ABC0
+                and status_words[5] == 0x00000BE0
+                and status_words[6] == 0x00000001
+                and status_words[7] == 0x12345678
+                and status_words[9] == 0x00000001
+                and status_words[10] == 0x000000A0
+                and status_words[11] == 0x11111111
+                and status_words[12] == 0x22222222
+                and status_words[13] == 0x000055AA
+                and status_words[14] == 0x0000ABC0
+                and status_words[15] == 0x00000BE0
+                and status_words[16] == 0x00000001
+                and status_words[17] == 0x12345678
+                and status_words[18] == status_words[8]
+                and status_words[19] == 0x00000001
+            )
+            row["ok"] = bool(call.get("returned")) and bool(row["status_lifecycle_ok"])
+            try:
+                backend._resume_after_gdb_locked()
+            except Exception as exc:
+                row["resume_error"] = f"{type(exc).__name__}: {exc}"
+        if not row["ok"]:
+            row["error"] = "RTC hibernate write protection did not match JZ4740 HCR.PD semantics"
+        row["backend_snapshot"] = backend.snapshot()
+        return row
+    except Exception as exc:
+        row["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            row["backend_snapshot"] = backend.snapshot()
+        except Exception:
+            pass
+        return row
+    finally:
+        backend.stop()
+
+
+def _build_rtc_alarm_irq_probe_code() -> bytes:
+    t0 = 8
+    t1 = 9
+    t2 = 10
+    t3 = 11
+    t4 = 12
+    s0 = 16
+    v0 = 2
+    ra = 31
+    rtc_irq_bit = 0x00008000
+    words: list[int] = []
+
+    def li(reg: int, value: int) -> None:
+        words.extend(_mips_li(reg, value))
+
+    def read_intc_masked(out_off: int, intc_off: int) -> None:
+        words.append(_mips_lw(v0, intc_off, t2))
+        li(t3, rtc_irq_bit)
+        words.append(_mips_r(v0, t3, v0, 0, 0x24))  # and v0, v0, t3
+        words.append(_mips_sw(v0, out_off, t1))
+
+    words.append((0x10 << 26) | (s0 << 16) | (12 << 11))  # mfc0 s0, Status
+    li(t3, 0xFFFFFFFE)
+    words.append(_mips_r(s0, t3, t4, 0, 0x24))  # and t4, s0, t3
+    words.append((0x10 << 26) | (4 << 21) | (t4 << 16) | (12 << 11))  # mtc0 t4, Status
+    words.append(0)
+
+    li(t0, 0xB0003000)
+    li(t1, BBK_RTC_ALARM_IRQ_PROBE_STATUS_VA)
+    li(t2, 0xB0001000)
+
+    li(t3, 0x00000000)
+    words.append(_mips_sw(t3, 0x00, t0))  # RTCCR disabled; clear flags
+    words.append(_mips_sw(t3, 0x20, t0))  # HCR clear
+    words.append(_mips_sw(t3, 0x2C, t0))  # HWCR clear
+    words.append(_mips_sw(t3, 0x30, t0))  # HWRSR clear writable bits
+
+    li(t3, 0x00001000)
+    words.append(_mips_sw(t3, 0x04, t0))  # RTCSR
+    words.append(_mips_sw(t3, 0x08, t0))  # RTCSAR
+    li(t3, 0x0000000D)  # RTCE | AE | AIE
+    words.append(_mips_sw(t3, 0x00, t0))
+    li(t3, rtc_irq_bit)
+    words.append(_mips_sw(t3, 0x0C, t2))  # ICMCR: unmask RTC source
+
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 0, t1))
+    read_intc_masked(4, 0x00)   # ICSR RTC bit
+    read_intc_masked(8, 0x10)   # ICPR RTC bit
+
+    li(t3, 0x00002000)
+    words.append(_mips_sw(t3, 0x08, t0))  # move alarm away; clears AF
+    li(t3, 0x00000001)  # RTCE only; disable alarm IRQ
+    words.append(_mips_sw(t3, 0x00, t0))
+    words.append(_mips_lw(v0, 0x00, t0))
+    words.append(_mips_sw(v0, 12, t1))
+    read_intc_masked(16, 0x00)
+    read_intc_masked(20, 0x10)
+
+    li(t3, 0x00000000)
+    words.append(_mips_sw(t3, 0x00, t0))
+    words.append(_mips_sw(t3, 0x20, t0))
+    words.append(_mips_sw(t3, 0x2C, t0))
+    words.append(_mips_sw(t3, 0x30, t0))
+    li(t3, 0x00003000)
+    words.append(_mips_sw(t3, 0x04, t0))
+    words.append(_mips_sw(t3, 0x08, t0))
+    li(t3, 0x00000001)
+    words.append(_mips_sw(t3, 0x2C, t0))  # HWCR.EALM
+    li(t3, 0x00000005)  # RTCE | AE
+    words.append(_mips_sw(t3, 0x00, t0))
+    li(t3, 0x00000001)
+    words.append(_mips_sw(t3, 0x20, t0))  # enter hibernate
+    words.append(_mips_lw(v0, 0x00, t0))  # latch alarm and hibernate wake
+    words.append(_mips_sw(v0, 24, t1))
+    words.append(_mips_lw(v0, 0x20, t0))
+    words.append(_mips_sw(v0, 28, t1))
+    words.append(_mips_lw(v0, 0x30, t0))
+    words.append(_mips_sw(v0, 32, t1))
+
+    words.append((0x10 << 26) | (4 << 21) | (s0 << 16) | (12 << 11))  # mtc0 s0, Status
+    words.append(0)
+    words.append(_mips_r(ra, 0, 0, 0, 0x08))
+    words.append(0)
+    return _pack_mips_words(words)
+
+
+def _run_rtc_alarm_irq_probe(config) -> dict[str, object]:
+    backend = QemuProcessBackend(config)
+    row: dict[str, object] = {
+        "event": "qemu-rtc-alarm-irq-probe",
+        "code": _format_u32(BBK_RTC_ALARM_IRQ_PROBE_CODE_VA),
+        "status_buffer": _format_u32(BBK_RTC_ALARM_IRQ_PROBE_STATUS_VA),
+        "ok": False,
+    }
+    try:
+        backend.start()
+        with backend._lock:
+            backend._pause_for_gdb_locked()
+            code = _build_rtc_alarm_irq_probe_code()
+            backend._write_virtual_memory_paused_locked(BBK_RTC_ALARM_IRQ_PROBE_CODE_VA, code)
+            backend._write_virtual_memory_paused_locked(BBK_RTC_ALARM_IRQ_PROBE_STATUS_VA, b"\x00" * 36)
+            row["code_size"] = len(code)
+            call = backend._call_guest_function_stepped_paused_locked(
+                BBK_RTC_ALARM_IRQ_PROBE_CODE_VA,
+                return_pc=BBK_WAIT_PROBE_PC,
+                max_steps=180,
+                max_recorded_steps=12,
+            )
+            row["guest_call"] = call
+            status_data = backend._read_virtual_memory_paused_locked(
+                BBK_RTC_ALARM_IRQ_PROBE_STATUS_VA, 36
+            )
+            status_words = list(struct.unpack("<9I", status_data))
+            row["status_words"] = [_format_u32(value) for value in status_words]
+            row["status_lifecycle_ok"] = (
+                status_words[0] == 0x0000009D
+                and status_words[1] == 0x00008000
+                and status_words[2] == 0x00008000
+                and status_words[3] == 0x00000081
+                and status_words[4] == 0x00000000
+                and status_words[5] == 0x00000000
+                and status_words[6] == 0x00000095
+                and status_words[7] == 0x00000000
+                and status_words[8] == 0x00000001
+            )
+            row["ok"] = bool(call.get("returned")) and bool(row["status_lifecycle_ok"])
+            try:
+                backend._resume_after_gdb_locked()
+            except Exception as exc:
+                row["resume_error"] = f"{type(exc).__name__}: {exc}"
+        if not row["ok"]:
+            row["error"] = "RTC alarm IRQ or hibernate alarm wake state did not match JZ4740 semantics"
         row["backend_snapshot"] = backend.snapshot()
         return row
     except Exception as exc:
@@ -2373,6 +2994,30 @@ def _run_lcd_frame_done_probe(config) -> dict[str, object]:
         "framebuffer": _format_u32(BBK_LCD_FRAME_DONE_PROBE_FRAME_VA),
         "ok": False,
     }
+
+    def call_probe_code_with_irqs_disabled(
+        code_va: int,
+        *,
+        max_steps: int,
+        max_recorded_steps: int,
+    ) -> dict[str, object]:
+        cp0_status = backend._read_register_paused_locked(32) & 0xFFFFFFFF
+        backend.gdb_register_read_count += 1
+        backend._write_register_paused_locked(32, cp0_status & ~0x1)
+        backend.gdb_register_write_count += 1
+        try:
+            call = backend._call_guest_function_stepped_paused_locked(
+                code_va,
+                return_pc=BBK_WAIT_PROBE_PC,
+                max_steps=max_steps,
+                max_recorded_steps=max_recorded_steps,
+            )
+            call["cp0_status_before"] = _format_u32(cp0_status)
+            return call
+        finally:
+            backend._write_register_paused_locked(32, cp0_status)
+            backend.gdb_register_write_count += 1
+
     try:
         backend.start()
         with backend._lock:
@@ -2398,11 +3043,10 @@ def _run_lcd_frame_done_probe(config) -> dict[str, object]:
                 ack_code,
             )
             row["ack_code_size"] = len(ack_code)
-            ack_call = backend._call_guest_function_stepped_paused_locked(
+            ack_call = call_probe_code_with_irqs_disabled(
                 BBK_LCD_FRAME_DONE_PROBE_CODE_VA,
-                return_pc=BBK_WAIT_PROBE_PC,
-                max_steps=32,
-                max_recorded_steps=12,
+                max_steps=256,
+                max_recorded_steps=16,
             )
             row["ack_guest_call"] = ack_call
             backend._write_virtual_memory_paused_locked(
@@ -2422,9 +3066,8 @@ def _run_lcd_frame_done_probe(config) -> dict[str, object]:
                 read_code,
             )
             row["read_code_size"] = len(read_code)
-            read_call = backend._call_guest_function_stepped_paused_locked(
+            read_call = call_probe_code_with_irqs_disabled(
                 BBK_LCD_FRAME_DONE_PROBE_CODE_VA,
-                return_pc=BBK_WAIT_PROBE_PC,
                 max_steps=24,
                 max_recorded_steps=12,
             )
@@ -4922,9 +5565,9 @@ def _run_touch_move_sadc_probe(config) -> dict[str, object]:
     }
     labels = (
         "magic",
-        "touch_autocal_enabled",
-        "touch_autocal_stage",
-        "touch_autocal_polls",
+        "reserved_04",
+        "reserved_08",
+        "reserved_0c",
         "touch_down",
         "touch_raw_x",
         "touch_raw_y",
@@ -5234,6 +5877,10 @@ def run_probe(ns: argparse.Namespace) -> int:
         or ns.cache_scan_caller_probe
         or ns.fat_cache_io_probe
         or ns.msc_dma_write_probe
+        or ns.uart_register_probe
+        or ns.sadc_battery_probe
+        or ns.rtc_hibernate_probe
+        or ns.rtc_alarm_irq_probe
         or ns.bch_status_probe
         or ns.lcd_frame_done_probe
         or ns.config_cluster_watch_probe
@@ -5295,6 +5942,22 @@ def run_probe(ns: argparse.Namespace) -> int:
             )
             summary["msc_dma_write_probe"] = msc_dma_probe
             summary["ok"] = bool(summary["ok"]) and bool(msc_dma_probe.get("ok"))
+        if ns.uart_register_probe:
+            uart_probe = _run_uart_register_probe(config)
+            summary["uart_register_probe"] = uart_probe
+            summary["ok"] = bool(summary["ok"]) and bool(uart_probe.get("ok"))
+        if ns.sadc_battery_probe:
+            sadc_probe = _run_sadc_battery_probe(config)
+            summary["sadc_battery_probe"] = sadc_probe
+            summary["ok"] = bool(summary["ok"]) and bool(sadc_probe.get("ok"))
+        if ns.rtc_hibernate_probe:
+            rtc_probe = _run_rtc_hibernate_probe(config)
+            summary["rtc_hibernate_probe"] = rtc_probe
+            summary["ok"] = bool(summary["ok"]) and bool(rtc_probe.get("ok"))
+        if ns.rtc_alarm_irq_probe:
+            rtc_alarm_probe = _run_rtc_alarm_irq_probe(config)
+            summary["rtc_alarm_irq_probe"] = rtc_alarm_probe
+            summary["ok"] = bool(summary["ok"]) and bool(rtc_alarm_probe.get("ok"))
         if ns.bch_status_probe:
             bch_probe = _run_bch_status_probe(config)
             summary["bch_status_probe"] = bch_probe
@@ -5604,8 +6267,44 @@ def run_probe(ns: argparse.Namespace) -> int:
         words = udc_probe.get("words")
         if isinstance(words, list):
             lines.append(f"- words={words}")
+        registers = udc_probe.get("registers")
+        if isinstance(registers, dict):
+            lines.append(f"- registers={registers}")
         if udc_probe.get("error"):
             lines.append(f"- Error: {udc_probe.get('error')}")
+    sadc_probe = summary.get("sadc_battery_probe")
+    if isinstance(sadc_probe, dict):
+        lines += ["", "## SADC Battery Probe", ""]
+        lines.append(f"- Result: {'PASS' if sadc_probe.get('ok') else 'FAIL'}")
+        lines.append(f"- code={sadc_probe.get('code')} status={sadc_probe.get('status_buffer')}")
+        status_low = sadc_probe.get("status_low")
+        if isinstance(status_low, list):
+            lines.append(f"- status_low={status_low}")
+        if sadc_probe.get("error"):
+            lines.append(f"- Error: {sadc_probe.get('error')}")
+    rtc_probe = summary.get("rtc_hibernate_probe")
+    if isinstance(rtc_probe, dict):
+        lines += ["", "## RTC Hibernate Probe", ""]
+        lines.append(f"- Result: {'PASS' if rtc_probe.get('ok') else 'FAIL'}")
+        lines.append(f"- code={rtc_probe.get('code')} status={rtc_probe.get('status_buffer')}")
+        status_words = rtc_probe.get("status_words")
+        if isinstance(status_words, list):
+            lines.append(f"- status_words={status_words}")
+        if rtc_probe.get("error"):
+            lines.append(f"- Error: {rtc_probe.get('error')}")
+    rtc_alarm_probe = summary.get("rtc_alarm_irq_probe")
+    if isinstance(rtc_alarm_probe, dict):
+        lines += ["", "## RTC Alarm IRQ Probe", ""]
+        lines.append(f"- Result: {'PASS' if rtc_alarm_probe.get('ok') else 'FAIL'}")
+        lines.append(
+            f"- code={rtc_alarm_probe.get('code')} "
+            f"status={rtc_alarm_probe.get('status_buffer')}"
+        )
+        status_words = rtc_alarm_probe.get("status_words")
+        if isinstance(status_words, list):
+            lines.append(f"- status_words={status_words}")
+        if rtc_alarm_probe.get("error"):
+            lines.append(f"- Error: {rtc_alarm_probe.get('error')}")
     storage_probe = summary.get("storage_layout_probe")
     if isinstance(storage_probe, dict):
         lines += ["", "## Storage Layout Probe", ""]
@@ -5840,6 +6539,30 @@ def run_probe(ns: argparse.Namespace) -> int:
             )
         if msc_dma_probe.get("error"):
             lines.append(f"- Error: {msc_dma_probe.get('error')}")
+    uart_probe = summary.get("uart_register_probe")
+    if isinstance(uart_probe, dict):
+        lines += ["", "## UART Register Probe", ""]
+        lines.append(f"- Result: {'PASS' if uart_probe.get('ok') else 'FAIL'}")
+        lines.append(
+            f"- status_lifecycle_ok={uart_probe.get('status_lifecycle_ok')} "
+            f"code_size={uart_probe.get('code_size')} "
+            f"status_buffer={uart_probe.get('status_buffer')}"
+        )
+        if uart_probe.get("status_low") is not None:
+            lines.append(f"- status_low={uart_probe.get('status_low')}")
+        if uart_probe.get("status_words") is not None:
+            lines.append(f"- status_words={uart_probe.get('status_words')}")
+        call = uart_probe.get("guest_call")
+        if isinstance(call, dict):
+            lines.append(
+                f"- guest_call returned={call.get('returned')} "
+                f"final_pc={call.get('final_pc')} v0={call.get('v0')} "
+                f"steps={call.get('step_count')}"
+            )
+            if call.get("error"):
+                lines.append(f"  - call_error={call.get('error')}")
+        if uart_probe.get("error"):
+            lines.append(f"- Error: {uart_probe.get('error')}")
     bch_probe = summary.get("bch_status_probe")
     if isinstance(bch_probe, dict):
         lines += ["", "## BCH/ECC Status Probe", ""]
@@ -6408,9 +7131,7 @@ def run_probe(ns: argparse.Namespace) -> int:
         touch_device = gui_touch_natural_probe.get("touch_device_after_touch")
         if isinstance(touch_device, dict):
             lines.append(
-                f"- touch_device stage={touch_device.get('touch_autocal_stage')} "
-                f"polls={touch_device.get('touch_autocal_polls')} "
-                f"down={touch_device.get('touch_down')} "
+                f"- touch_device down={touch_device.get('touch_down')} "
                 f"raw={touch_device.get('touch_raw_x')}/{touch_device.get('touch_raw_y')} "
                 f"sadc={touch_device.get('sadc_status_event')} "
                 f"reason={touch_device.get('reason')}"
@@ -6496,9 +7217,7 @@ def run_probe(ns: argparse.Namespace) -> int:
             lines.append(
                 f"- final_touch down={final_touch.get('touch_down')} "
                 f"raw={final_touch.get('touch_raw_x')}/{final_touch.get('touch_raw_y')} "
-                f"sadc={final_touch.get('sadc_status_event')} "
-                f"stage={final_touch.get('touch_autocal_stage')} "
-                f"enabled={final_touch.get('touch_autocal_enabled')}"
+                f"sadc={final_touch.get('sadc_status_event')}"
             )
         final_gui = touch_calibration_probe.get("final_gui_state")
         if isinstance(final_gui, dict):
@@ -6717,7 +7436,7 @@ def run_probe(ns: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run the experimental QEMU system-emulation probe.")
     ap.add_argument("--qemu", default=DEFAULT_QEMU_EXECUTABLE)
-    ap.add_argument("--boot-mode", choices=["c200", "uboot"], default="c200")
+    ap.add_argument("--boot-mode", choices=["nand", "c200", "uboot"], default="c200")
     ap.add_argument("--image", type=Path)
     ap.add_argument("--payload", type=Path)
     ap.add_argument("--payload-addr", type=lambda value: int(value, 0), default=0x4000)
@@ -6749,6 +7468,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fat-cache-io-flush-only", action="store_true")
     ap.add_argument("--msc-dma-write-probe", action="store_true")
     ap.add_argument("--msc-dma-write-lba", type=lambda value: int(value, 0), default=BBK_MSC_DMA_PROBE_LBA)
+    ap.add_argument("--uart-register-probe", action="store_true")
+    ap.add_argument("--sadc-battery-probe", action="store_true")
+    ap.add_argument("--rtc-hibernate-probe", action="store_true")
+    ap.add_argument("--rtc-alarm-irq-probe", action="store_true")
     ap.add_argument("--bch-status-probe", action="store_true")
     ap.add_argument("--lcd-frame-done-probe", action="store_true")
     ap.add_argument("--config-cluster-watch-probe", action="store_true")

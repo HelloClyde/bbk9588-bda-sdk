@@ -9,6 +9,12 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
+DEFAULT_PAGE_SIZE = 2048
+DEFAULT_SPARE_SIZE = 64
+DEFAULT_PAGES_PER_BLOCK = 64
+DEFAULT_NAND_BLOCKS = 4096
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Stamp minimal BBK9588/C200 FTL OOB mapping tags into a raw NAND image.")
     ap.add_argument("input", type=Path)
@@ -21,19 +27,19 @@ def main() -> None:
         help="number of FAT physical blocks to map; defaults to non-erased data blocks after --fat-page-base",
     )
     ap.add_argument("--sequence", type=lambda text: int(text, 0), default=1)
-    ap.add_argument("--page-size", type=int, default=2048)
-    ap.add_argument("--spare-size", type=int, default=64)
-    ap.add_argument("--pages-per-block", type=int, default=64)
+    ap.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE)
+    ap.add_argument("--spare-size", type=int, default=DEFAULT_SPARE_SIZE)
+    ap.add_argument("--pages-per-block", type=int, default=DEFAULT_PAGES_PER_BLOCK)
     ap.add_argument(
         "--max-physical-blocks",
         type=lambda text: int(text, 0),
-        default=0x1000,
+        default=DEFAULT_NAND_BLOCKS,
         help="FTL physical block window managed by C200; blocks beyond this remain invisible to firmware",
     )
     ap.add_argument(
         "--reserve-free-blocks",
         type=lambda text: int(text, 0),
-        default=0x40,
+        default=0,
         help="erased blocks to leave unstamped inside --max-physical-blocks for firmware FTL writes",
     )
     ap.add_argument(

@@ -4,7 +4,6 @@
 
 ```text
 emu/qemu/source-overlay/              完整修改后的覆盖文件
-emu/qemu/patches/qemu-v11.0.0-bbk9588.patch
 ```
 
 目标 QEMU 版本：
@@ -27,13 +26,6 @@ python .\emu\qemu\scripts\install_qemu_overlay.py --qemu-source E:\qemu-src
 python .\emu\qemu\scripts\install_qemu_overlay.py --qemu-source E:\qemu-src --check
 ```
 
-也可以使用 patch：
-
-```powershell
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src --check
-python .\emu\qemu\scripts\apply_qemu_patch.py --qemu-source E:\qemu-src
-```
-
 ## Windows 构建
 
 安装 MSYS2 UCRT64 依赖后运行：
@@ -45,7 +37,8 @@ powershell -ExecutionPolicy Bypass -File .\emu\qemu\scripts\build_qemu_windows.p
   -UseOverlay
 ```
 
-脚本会在缺少 `build.ninja` 时运行 QEMU configure，然后构建：
+脚本默认先安装 overlay；`-UseOverlay` 只是兼容旧命令。脚本会在缺少 `build.ninja`
+时运行 QEMU configure，然后构建：
 
 ```text
 E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
@@ -63,7 +56,8 @@ bin/bbk9588-qemu-system-mipsel.exe
 
 ```powershell
 python -m emu.web.frontend `
-  --boot-mode uboot `
+  --boot-mode nand `
+  --nand-image .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
@@ -77,11 +71,65 @@ bin/bbk9588-qemu-system-mipsel.exe
 
 `hw/mips/bbk9588.c` 当前负责：
 
-- RAM 与 firmware 加载。
-- LCD/frame chardev。
+- RAM 与 BootROM/NAND boot image 加载。默认 `nand` 路径由 QEMU BootROM 从 NAND
+  address `0` 按 spare valid flag 读取最多 8 KiB first-stage loader，并跳到
+  `0x80000004`；loader/U-Boot 再通过 FAT/FTL 读取
+  `系统/数据/kj409588.bin`。无镜像的 `uboot` 启动模式也走同一 raw
+  first-stage 路径；从 NAND page `0x40` 直接复制 U-Boot 只保留为显式
+  `bootrom-page`/`bootrom-size`/load-address 诊断 raw copy 模式，并且不再解析
+  `BBKUBOOT` 模拟器私有 header。BootROM 不再提供从 NAND FAT 直接加载 C200
+  的 `bootrom-fat-kernel` 兼容入口。
+- JZ4740 LCDC 寄存器窗口 `0xb3050000` 的基础状态/descriptor DMA
+  模型，`LCDCMDx.LEN` 完成消耗、下一 descriptor 装载，`LCDSTATE`
+  SOF/EOF/disable 状态到 INTC bit 30 的连线，以及 RGB565 frame chardev
+  输出。`0xb0043000` 仍保留为当前 C200 路径使用的 BBK status 窗口；
+  默认启动不再注入 graphics-done/LCD-ready magic，也不再暴露对应的
+  machine ready override。
 - input chardev。
-- NAND/MSC/FTL 相关存储行为。
-- timer、interrupt、GPIO/SADC touch 状态。
+- raw NAND data/OOB 访问和 MSC DMA 存储行为；默认 MSC 扇区读写按 OOB
+  FTL tag 从 logical LBA 翻译到 raw NAND page，不再扫描 FAT16 boot sector
+  来推断 NAND 偏移；NAND backing 的 page stride 也只按 2048B data +
+  64B OOB raw geometry 或 legacy 2048B page-only 兼容格式识别，raw NAND
+  program/erase 不再带构造镜像 FAT 页范围保护。旧的 QEMU C FAT16
+  boot-sector 扫描和 FAT/cluster bridge 已移除；FAT/资源逻辑由
+  U-Boot/C200 经 modeled NAND/MSC 路径执行。
+- DMAC 基础 channel 模型：`0xb3020000` 按 JZ4740
+  `DSA/DTA/DTC/DRT/DCS/DCM/DDA/DMAC/DIRQP/DDR` 组织 channel
+  register，MSC 读写通过 channel enable + global `DMAE` 完成并置
+  terminal count / `DIRQP`，不再靠读取 `DTC` 触发 DMA 完成。
+- UART0 基础 16550/JZ4740 模型：`0xb0030000` 按
+  `URBR/UTHR/UDLLR/UDLHR/UIER/UIIR/UFCR/ULCR/UMCR/ULSR/UMSR/USPR/ISR`
+  组织 8-bit register slot，支持 `DLAB`、16 字节 RX FIFO、FIFO reset、
+  `UIIR` pending、`ULSR` line status 和 serial chardev 输出。
+- UDC no-host idle 模型：`0xb3040000` 按 JZ4740 common register reset
+  value 提供 `FAddr/Power/IntrIn/IntrOut/IntrInE/IntrOutE/IntrUSB/IntrUSBE`
+  等寄存器、indexed endpoint 配置寄存器和 IRQ25 连线；无 USB host 时
+  FIFO/count/status 保持空闲，不回显 guest shadow register；不再提供
+  `irq24-period-ms` 合成中断源。
+- INTC/TCU 基本寄存器模型：JZ4740 `ICSR/ICMR/ICMSR/ICMCR/ICPR`
+  与 TCU enable/flag/mask set-clear 语义、reset mask，以及 byte/halfword
+  MMIO lane 访问；`tcu-period-ms` 仅作为显式诊断/调速 machine property，
+  默认启动命令不再注入该选项。
+- SYSCTRL 基础 reset state：`0xb0000000` 的 clock control register 通过
+  寄存器 reset 值提供 C200 延迟校准所需的 divider，不再在读路径临时补
+  固定值。
+- GPIO/SADC 输入模型：GPIO 板级电平/flag 仍保留，SADC 已按 JZ4740
+  `ADENA/ADCFG/ADCTRL/ADSTATE/ADSAME/ADWAIT/ADTCH/ADBDAT/ADSDAT`
+  寄存器和 ADTCH FIFO 提供触摸/电池采样事件；`ADENA.PBATEN/SADCINEN`
+  会装载 `sadc-battery-raw`/`sadc-sadcin-raw` 到 12-bit 数据寄存器、
+  置 `DRDY/SRDY` 并按硬件语义自动清 enable 位。
+- RTC 基础寄存器模型：`0xb0003000` 已按 JZ4740
+  `RTCCR/RTCSR/RTCSAR/RTCGR/HCR/HWFCR/HRCR/HWCR/HWRSR/HSPR`
+  提供秒计数、闹钟、hibernate wake/status 和 scratch pattern；`HCR.PD`
+  置位后除 `RTCCR.1HZ/1HZIE` 外 RTC/hibernate 写入保持冻结；`1HZIE/AIE`
+  通过 INTC bit 15 输出，`HWCR.EALM` alarm 命中会置 `HWRSR.ALM` 并退出
+  hibernate 状态。
 - 兼容性诊断寄存器和 machine property。
 
-patch 还包含少量 `target/mips` 侧 instrumentation/helper，用于当前 machine model 和诊断。
+overlay 还包含少量 `target/mips` 侧 instrumentation/helper，用于当前 machine model
+和诊断；filesystem/resource probe 写入诊断 RAM 前受 `storage-trace=on` 门控，
+默认启动不会因此改写 guest 内存。周期性 progress 采样使用
+`progress-trace-period-ms` 显式诊断 property，不再以旧的资源泵命名。
+Python/GDB 侧遗留的 resource hook、filesystem scan、file-open probe 和 GUI
+dispatcher 诊断服务在 `bbk9588` machine 上统一返回 disabled；默认路径不再通过
+Python 写 guest RAM、调用 firmware helper，或把 backing FAT 结果回填到 guest。

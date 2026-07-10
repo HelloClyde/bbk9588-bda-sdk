@@ -52,7 +52,7 @@ target_ulong helper_bitswap(target_ulong rt)
 }
 
 #ifndef CONFIG_USER_ONLY
-#define BBK9588_FS_PROBE_VA 0x807fc000u
+#define BBK9588_FS_PROBE_VA 0x89f20000u
 #define BBK9588_FS_PROBE_MAGIC 0x46534b42u
 #define BBK9588_FS_PROBE_SLOTS 96u
 #define BBK9588_FS_PROBE_WORDS 96u
@@ -134,7 +134,8 @@ void helper_bbk9588_fs_probe(CPUMIPSState *env, target_ulong pc)
     uint32_t i;
     uint32_t pc32;
 
-    if (!env || !bbk9588_probe_va_valid(BBK9588_FS_PROBE_VA, total_size)) {
+    if (!env || !env->bbk9588_storage_trace ||
+        !bbk9588_probe_va_valid(BBK9588_FS_PROBE_VA, total_size)) {
         return;
     }
 
