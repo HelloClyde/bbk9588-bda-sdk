@@ -86,17 +86,32 @@ bin/bbk9588-qemu-system-mipsel.exe
   默认启动不再注入 graphics-done/LCD-ready magic，也不再暴露对应的
   machine ready override。
 - input chardev。
-- raw NAND data/OOB 访问和 MSC DMA 存储行为；默认 MSC 扇区读写按 OOB
-  FTL tag 从 logical LBA 翻译到 raw NAND page，不再扫描 FAT16 boot sector
-  来推断 NAND 偏移；NAND backing 的 page stride 也只按 2048B data +
+- raw NAND data/OOB 访问和 MSC DMA 控制器行为；C200 自己扫描 raw NAND OOB、
+  建立 FTL map 并执行 page program/block erase。MSC 已与 NAND backing 解耦，默认
+  表示未挂载独立 removable medium，不再按 OOB tag 把 MSC LBA 翻译到 NAND page。
+  NAND backing 的 page stride 只按 2048B data +
   64B OOB raw geometry 或 legacy 2048B page-only 兼容格式识别，raw NAND
   program/erase 不再带构造镜像 FAT 页范围保护。旧的 QEMU C FAT16
   boot-sector 扫描和 FAT/cluster bridge 已移除；FAT/资源逻辑由
-  U-Boot/C200 经 modeled NAND/MSC 路径执行。
+  U-Boot/C200 经 modeled raw NAND 路径执行。后续若需要模拟 SD/MMC，必须给 MSC
+  接独立 block backend，不能复用 NAND OOB FTL。
+- Web 默认不直接修改基础 NAND。每次运行从 `build/qemu_nand_persistent/` 中与基础
+  镜像路径绑定的 canonical checkpoint 创建隔离 work copy；正常停止且已有有效画面
+  时，将 work copy 的最新 OOB logical block view 压实回 checkpoint。这样既保留应用
+  写入，也保持 loader/U-Boot 所需的 canonical boot layout。启动未完成、异常退出或
+  checkpoint 提交失败时不会覆盖上一个可启动 checkpoint；提交失败的 work copy 会
+  保留用于恢复。一次性测试和 probe 默认仍使用并删除 disposable copy。
+  Web 左侧“↺ 恢复”是唯一删除所选镜像 checkpoint 的默认操作，执行前要求确认；
+  普通 reset/Web 重启只提交或复用 checkpoint，不会恢复基础镜像。
 - DMAC 基础 channel 模型：`0xb3020000` 按 JZ4740
   `DSA/DTA/DTC/DRT/DCS/DCM/DDA/DMAC/DIRQP/DDR` 组织 channel
   register，MSC 读写通过 channel enable + global `DMAE` 完成并置
   terminal count / `DIRQP`，不再靠读取 `DTC` 触发 DMA 完成。
+- 独立 JZ4740 AIC/internal codec 模型：`0xb0020000` 提供 AIC config/control/status、
+  32-sample TX/RX FIFO、threshold/underrun/overrun、IRQ18，并通过 DMAC DRT24/25
+  搬运真实样本；internal codec sample rate、mute/volume/route 接入 QEMU audio
+  backend。音频虚拟时钟不依赖 host callback，frame-info 诊断包输出采样率、FIFO、
+  DMA samples、output frames 和 xrun。MSC 独立位于 `0xb0021000`，不再与 AIC 重叠。
 - UART0 基础 16550/JZ4740 模型：`0xb0030000` 按
   `URBR/UTHR/UDLLR/UDLHR/UIER/UIIR/UFCR/ULCR/UMCR/ULSR/UMSR/USPR/ISR`
   组织 8-bit register slot，支持 `DLAB`、16 字节 RX FIFO、FIFO reset、
@@ -133,3 +148,37 @@ overlay 还包含少量 `target/mips` 侧 instrumentation/helper，用于当前 
 Python/GDB 侧遗留的 resource hook、filesystem scan、file-open probe 和 GUI
 dispatcher 诊断服务在 `bbk9588` machine 上统一返回 disabled；默认路径不再通过
 Python 写 guest RAM、调用 firmware helper，或把 backing FAT 结果回填到 guest。
+
+## 音频 WAV 回归
+
+需要不受声卡和 DirectSound 调度影响地检查 guest 音频时，可让 Web 直接启动 QEMU
+WAV backend：
+
+```powershell
+python -m emu.web.frontend `
+  --host 127.0.0.1 --port 8001 --boot-mode nand `
+  --frontend-input-calibration `
+  --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe `
+  --qemu-machine-option audiodev=wavcap `
+  --qemu-extra-arg=-audiodev `
+  --qemu-extra-arg=driver=wav,id=wavcap,path=E:/eebbk9588/build/audio-regression/capture.wav,out.frequency=8000,out.channels=2,out.format=s16
+```
+
+在浏览器中进入待测应用并播放声音，随后通过 Web API 停止 QEMU，使退出和音频后端
+关闭按正常顺序执行：
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8001/api/stop
+```
+
+最后验证采集内容：
+
+```powershell
+python -m emu.test.qemu_audio_wav `
+  .\build\audio-regression\capture.wav `
+  --expected-rate 8000 --min-duration 10
+```
+
+QEMU WAV backend 在 Windows 上可能留下值为 0 的 RIFF/data 长度。验证工具只按文件
+实际大小补齐这两个字段，然后检查 PCM 采样率、时长、峰值、有效样本比例、削波和
+mono-to-stereo 一致性；不会修改音频样本。

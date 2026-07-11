@@ -4,7 +4,13 @@ common_ss.add(when: 'CONFIG_FW_CFG_MIPS', if_true: files('fw_cfg.c'))
 common_ss.add(when: 'CONFIG_LOONGSON3V', if_true: files('loongson3_bootp.c'))
 mips_ss.add(when: 'CONFIG_LOONGSON3V', if_true: files('loongson3_virt.c'))
 mips_ss.add(when: 'CONFIG_MALTA', if_true: files('malta.c'))
-mips_ss.add(when: 'CONFIG_BBK9588', if_true: files('bbk9588.c'))
+mips_ss.add(when: 'CONFIG_BBK9588', if_true: files(
+  'bbk9588.c',
+  '../dma/jz4740_dmac.c',
+  '../intc/jz4740_intc.c',
+  '../misc/jz4740_cpm.c',
+  '../timer/jz4740_tcu.c',
+))
 mips_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('cps.c'))
 
 if 'CONFIG_TCG' in config_all_accel

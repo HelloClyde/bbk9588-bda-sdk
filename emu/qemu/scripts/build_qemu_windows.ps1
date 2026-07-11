@@ -109,9 +109,20 @@ fi
 ninja $ninjaJobs qemu-system-mipsel.exe
 "@
 
-& $MsysBash -lc $configure
-if ($LASTEXITCODE -ne 0) {
-  throw "QEMU build failed"
+$buildScript = Join-Path $BuildDir ".qemu-build-$PID.sh"
+$buildScriptPosix = Convert-ToMsysPath $buildScript
+try {
+  [System.IO.File]::WriteAllText(
+    $buildScript,
+    $configure.Replace("`r`n", "`n"),
+    [System.Text.UTF8Encoding]::new($false)
+  )
+  & $MsysBash $buildScriptPosix
+  if ($LASTEXITCODE -ne 0) {
+    throw "QEMU build failed"
+  }
+} finally {
+  Remove-Item -LiteralPath $buildScript -Force -ErrorAction SilentlyContinue
 }
 
 if ($ConfigureOnly) {

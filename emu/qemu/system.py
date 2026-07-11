@@ -36,8 +36,10 @@ QEMU_BBK_FRAME_MAGIC = 0x464B4242
 QEMU_BBK_PERF_MAGIC = 0x504B4242
 QEMU_BBK_FRAME_FORMAT_RGB565 = 0x00005635
 QEMU_BBK_PERF_FORMAT_GUEST_INSNS = 0x00004950
+QEMU_BBK_PERF_FORMAT_AIC = 0x00434941
 QEMU_BBK_FRAME_HEADER = struct.Struct("<IIIIIII")
 QEMU_BBK_PERF_PAYLOAD = struct.Struct("<QQ")
+QEMU_BBK_AIC_PERF_PAYLOAD = struct.Struct("<24Q")
 DEFAULT_C200_BASE = 0x80004000
 DEFAULT_UBOOT_BASE = 0x80900000
 DEFAULT_C200_PHYS = DEFAULT_C200_BASE & 0x1FFFFFFF
@@ -50,6 +52,8 @@ DEFAULT_QEMU_DIAG_BASE = 0x89F00000
 DEFAULT_QEMU_GUI_EVENT_SCRATCH = DEFAULT_QEMU_DIAG_BASE + 0x0000
 DEFAULT_QEMU_TOUCH_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0100
 QEMU_TOUCH_TRACE_MAGIC = 0x54434B42
+DEFAULT_QEMU_DMAC_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0300
+QEMU_DMAC_TRACE_MAGIC = 0x444D4B42
 DEFAULT_QEMU_SURFACE_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0500
 QEMU_SURFACE_TRACE_MAGIC = 0x53555246
 DEFAULT_QEMU_NAND_IMAGE_CANDIDATES = (
@@ -480,6 +484,7 @@ class QemuSystemConfig:
     boot_load_addr: int = DEFAULT_C200_PHYS
     boot_pc: int = DEFAULT_C200_BASE
     nand_image: Path | None = None
+    persist_nand_writes: bool = False
     extra_payloads: tuple[QemuPayload, ...] = ()
     plugins: tuple[Path, ...] = ()
     extra_args: tuple[str, ...] = ()
@@ -550,6 +555,8 @@ class QemuProcessBackend:
         self.guest_insn_ips: float | None = None
         self.guest_insn_packet_count = 0
         self.last_guest_insn_error: str | None = None
+        self.audio_metrics: dict[str, object] = {}
+        self.audio_packet_count = 0
         self._perf_last_time: float | None = None
         self._perf_last_frame_chardev_count = 0
         self._perf_last_process_cpu_seconds: float | None = None
@@ -591,6 +598,10 @@ class QemuProcessBackend:
         self._frame_reader_thread: threading.Thread | None = None
         self._runtime_nand_image: Path | None = None
         self._runtime_nand_source: Path | None = None
+        self._runtime_nand_checkpoint: Path | None = None
+        self._runtime_nand_persistent = False
+        self._runtime_nand_commit_count = 0
+        self._runtime_nand_last_commit_error: str | None = None
 
     def _bbk_machine_bool_option_enabled(self, name: str) -> bool:
         needle = name.lower()
@@ -658,6 +669,8 @@ class QemuProcessBackend:
             "guest_insn_count_at": self.guest_insn_count_at or None,
             "guest_insn_count_qemu_ms": self.guest_insn_count_qemu_ms,
             "guest_insn_packet_count": self.guest_insn_packet_count,
+            "audio": dict(self.audio_metrics),
+            "audio_packet_count": self.audio_packet_count,
         }
         self.performance_metrics = metrics
         self._perf_last_time = now
@@ -701,9 +714,19 @@ class QemuProcessBackend:
                     ),
                 )
             if launch_config.machine.lower() == "bbk9588" and launch_config.nand_image is not None:
-                runtime_nand = prepare_runtime_nand_image(launch_config.nand_image)
+                runtime_nand = prepare_runtime_nand_image(
+                    launch_config.nand_image,
+                    persistent=launch_config.persist_nand_writes,
+                )
                 self._runtime_nand_image = runtime_nand
                 self._runtime_nand_source = launch_config.nand_image
+                self._runtime_nand_persistent = launch_config.persist_nand_writes
+                self._runtime_nand_checkpoint = (
+                    persistent_runtime_nand_checkpoint_path(
+                        launch_config.nand_image
+                    )
+                    if launch_config.persist_nand_writes else None
+                )
                 launch_config = replace(launch_config, nand_image=runtime_nand)
             raw_command = build_qemu_command(launch_config)
             resolved = find_qemu(raw_command[0])
@@ -734,6 +757,8 @@ class QemuProcessBackend:
             self.guest_insn_ips = None
             self.guest_insn_packet_count = 0
             self.last_guest_insn_error = None
+            self.audio_metrics = {}
+            self.audio_packet_count = 0
             self._perf_last_time = None
             self._perf_last_frame_chardev_count = 0
             self._perf_last_process_cpu_seconds = None
@@ -872,6 +897,73 @@ class QemuProcessBackend:
         self.guest_insn_packet_count += 1
         self.last_guest_insn_error = None
 
+    def _record_audio_metrics_locked(
+        self,
+        values: tuple[int, ...],
+        now: float,
+    ) -> None:
+        (
+            sample_rate,
+            tx_fifo_level,
+            rx_fifo_level,
+            flags,
+            aicfr,
+            aiccr,
+            cdccr1,
+            cdccr2,
+            tx_dma_samples,
+            rx_dma_samples,
+            output_frames,
+            input_frames,
+            underruns,
+            overruns,
+            dma_completion_count,
+            dma_rearm_count,
+            dma_last_rearm_gap_ns,
+            dma_max_rearm_gap_ns,
+            dma_total_rearm_gap_ns,
+            dma_last_gap_underruns,
+            dma_total_gap_underruns,
+            dma_last_units,
+            dma_completion_fifo,
+            dma_rearm_fifo,
+        ) = values
+        self.audio_packet_count += 1
+        self.audio_metrics = {
+            "sample_rate_hz": sample_rate,
+            "tx_fifo_level": tx_fifo_level,
+            "rx_fifo_level": rx_fifo_level,
+            "flags": flags,
+            "playing": bool(flags & 0x01),
+            "recording": bool(flags & 0x02),
+            "muted": bool(flags & 0x04),
+            "timer_running": bool(flags & 0x08),
+            "output_voice": bool(flags & 0x10),
+            "input_voice": bool(flags & 0x20),
+            "aicfr": f"0x{aicfr & 0xFFFFFFFF:08x}",
+            "aiccr": f"0x{aiccr & 0xFFFFFFFF:08x}",
+            "cdccr1": f"0x{cdccr1 & 0xFFFFFFFF:08x}",
+            "cdccr2": f"0x{cdccr2 & 0xFFFFFFFF:08x}",
+            "tx_dma_samples": tx_dma_samples,
+            "rx_dma_samples": rx_dma_samples,
+            "output_frames": output_frames,
+            "input_frames": input_frames,
+            "underruns": underruns,
+            "overruns": overruns,
+            "dma_completion_count": dma_completion_count,
+            "dma_rearm_count": dma_rearm_count,
+            "dma_last_rearm_gap_ns": dma_last_rearm_gap_ns,
+            "dma_max_rearm_gap_ns": dma_max_rearm_gap_ns,
+            "dma_total_rearm_gap_ns": dma_total_rearm_gap_ns,
+            "dma_last_gap_underruns": dma_last_gap_underruns,
+            "dma_total_gap_underruns": dma_total_gap_underruns,
+            "dma_last_units": dma_last_units,
+            "dma_completion_fifo": dma_completion_fifo,
+            "dma_rearm_fifo": dma_rearm_fifo,
+            "packet_count": self.audio_packet_count,
+            "updated_at": now,
+        }
+
     def set_frame_ready_callback(self, callback: Callable[[], None] | None) -> None:
         with self._lock:
             self.frame_ready_callback = callback
@@ -885,20 +977,33 @@ class QemuProcessBackend:
                 header = self._recv_exact(sock, QEMU_BBK_FRAME_HEADER.size)
                 magic, seq, width, height, stride, fmt, payload_len = QEMU_BBK_FRAME_HEADER.unpack(header)
                 if magic == QEMU_BBK_PERF_MAGIC:
-                    if (
-                        width != 1
-                        or fmt != QEMU_BBK_PERF_FORMAT_GUEST_INSNS
-                        or payload_len != QEMU_BBK_PERF_PAYLOAD.size
-                    ):
+                    if width != 1:
                         raise ValueError(
                             "invalid perf chardev header "
                             f"seq={seq} version={width} fmt=0x{fmt:08x} "
                             f"len={payload_len}"
                         )
-                    payload = self._recv_exact(sock, payload_len)
-                    guest_count, qemu_ms = QEMU_BBK_PERF_PAYLOAD.unpack(payload)
-                    with self._lock:
-                        self._record_guest_insn_count_locked(guest_count, qemu_ms, time.time())
+                    if (
+                        fmt == QEMU_BBK_PERF_FORMAT_GUEST_INSNS
+                        and payload_len == QEMU_BBK_PERF_PAYLOAD.size
+                    ):
+                        payload = self._recv_exact(sock, payload_len)
+                        guest_count, qemu_ms = QEMU_BBK_PERF_PAYLOAD.unpack(payload)
+                        with self._lock:
+                            self._record_guest_insn_count_locked(guest_count, qemu_ms, time.time())
+                    elif (
+                        fmt == QEMU_BBK_PERF_FORMAT_AIC
+                        and payload_len == QEMU_BBK_AIC_PERF_PAYLOAD.size
+                    ):
+                        payload = self._recv_exact(sock, payload_len)
+                        values = QEMU_BBK_AIC_PERF_PAYLOAD.unpack(payload)
+                        with self._lock:
+                            self._record_audio_metrics_locked(values, time.time())
+                    else:
+                        raise ValueError(
+                            "invalid perf chardev payload "
+                            f"seq={seq} fmt=0x{fmt:08x} len={payload_len}"
+                        )
                     continue
                 if (
                     magic != QEMU_BBK_FRAME_MAGIC
@@ -933,17 +1038,37 @@ class QemuProcessBackend:
                     self.last_guest_insn_error = self.last_frame_chardev_error
 
     def stop(self, timeout: float = 2.0) -> None:
+        quit_sent = False
         with self._lock:
             proc = self.proc
+            if (
+                proc is not None
+                and proc.poll() is None
+                and self.hmp_sock is not None
+            ):
+                try:
+                    _hmp_command(self.hmp_sock, "quit")
+                    quit_sent = True
+                except (ConnectionResetError, BrokenPipeError, EOFError):
+                    # QEMU may close the monitor before returning a prompt.
+                    quit_sent = True
+                except Exception as exc:
+                    self.last_error = f"HMP quit {type(exc).__name__}: {exc}"
         if proc is None:
             return
         if proc.poll() is None:
-            proc.terminate()
+            if not quit_sent:
+                proc.terminate()
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=timeout)
+                if quit_sent:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=timeout)
         with self._lock:
             self.returncode = proc.returncode
             self.finished_at = time.time()
@@ -971,7 +1096,27 @@ class QemuProcessBackend:
                 except OSError:
                     pass
                 self.bbk_frame_sock = None
-            self._cleanup_runtime_nand_locked()
+            self._cleanup_runtime_nand_locked(commit=quit_sent)
+
+    def set_storage_trace(self, enabled: bool) -> dict[str, object]:
+        """Enable or disable the bbk9588 storage trace at runtime."""
+
+        with self._lock:
+            if self.proc is None or self.proc.poll() is not None:
+                return {"error": "QEMU process is not running"}
+            if self.hmp_sock is None:
+                return {"error": "QEMU HMP monitor is not connected"}
+            value = "true" if enabled else "false"
+            try:
+                _hmp_command(
+                    self.hmp_sock,
+                    f"qom-set /machine storage-trace {value}",
+                )
+            except Exception as exc:
+                return {"error": f"{type(exc).__name__}: {exc}"}
+            return {
+                "storage_trace_enabled": bool(enabled),
+            }
 
     def refresh(self) -> None:
         with self._lock:
@@ -1004,7 +1149,7 @@ class QemuProcessBackend:
                     except OSError:
                         pass
                     self.bbk_frame_sock = None
-                self._cleanup_runtime_nand_locked()
+                self._cleanup_runtime_nand_locked(commit=False)
             elif proc is not None and self.hmp_sock is not None and time.time() - self.register_sample_at >= 0.5:
                 try:
                     status = _hmp_command(self.hmp_sock, "info status")
@@ -1019,12 +1164,39 @@ class QemuProcessBackend:
                 except Exception as exc:
                     self.last_error = f"HMP {type(exc).__name__}: {exc}"
 
-    def _cleanup_runtime_nand_locked(self) -> None:
+    def _cleanup_runtime_nand_locked(self, *, commit: bool = False) -> None:
         runtime_nand = self._runtime_nand_image
+        source_nand = self._runtime_nand_source
+        checkpoint = self._runtime_nand_checkpoint
+        persistent = self._runtime_nand_persistent
         self._runtime_nand_image = None
         self._runtime_nand_source = None
+        self._runtime_nand_checkpoint = None
+        self._runtime_nand_persistent = False
         if runtime_nand is None:
             return
+        if (
+            persistent and commit and self.latest_frame_chardev is not None and
+            source_nand is not None and checkpoint is not None
+        ):
+            try:
+                commit_runtime_nand_checkpoint(
+                    source_nand, runtime_nand, checkpoint
+                )
+                self._runtime_nand_commit_count += 1
+                self._runtime_nand_last_commit_error = None
+            except Exception as exc:
+                self._runtime_nand_last_commit_error = (
+                    f"{type(exc).__name__}: {exc}"
+                )
+                self.last_error = (
+                    "commit NAND " + self._runtime_nand_last_commit_error
+                )
+                self._runtime_nand_image = runtime_nand
+                self._runtime_nand_source = source_nand
+                self._runtime_nand_checkpoint = checkpoint
+                self._runtime_nand_persistent = True
+                return
         try:
             runtime_nand.unlink()
         except FileNotFoundError:
@@ -3772,6 +3944,61 @@ class QemuProcessBackend:
                     self._resume_after_gdb_locked()
                 except Exception as exc:
                     self.last_gdb_error = f"{type(exc).__name__}: {exc}"
+
+    def dmac_trace_snapshot(self) -> dict[str, object]:
+        """Read the compact DMAC state exported by the QEMU machine model."""
+
+        with self._lock:
+            if self.proc is None or self.proc.poll() is not None:
+                return {"available": False, "reason": "QEMU process is not running"}
+            try:
+                raw = self._read_guest_ram_snapshot_locked(
+                    DEFAULT_QEMU_DMAC_TRACE,
+                    16 * 4,
+                )
+                words = struct.unpack("<16I", raw)
+            except Exception as exc:
+                return {
+                    "available": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+        if words[0] != QEMU_DMAC_TRACE_MAGIC:
+            return {
+                "available": False,
+                "magic": f"0x{words[0]:08x}",
+                "reason": "DMAC trace has not been initialized",
+            }
+        event_names = {
+            1: "register-write",
+            3: "transfer-complete",
+            4: "auto-ram-complete",
+            5: "descriptor-fetch",
+            6: "audio-partial",
+        }
+        return {
+            "available": True,
+            "seq": words[1],
+            "event": words[2],
+            "event_name": event_names.get(words[2], "unknown"),
+            "channel": words[3],
+            "offset": f"0x{words[4]:08x}",
+            "value": f"0x{words[5]:08x}",
+            "pc": f"0x{words[6]:08x}",
+            "intc_pending": f"0x{words[7]:08x}",
+            "intc_mask": f"0x{words[8]:08x}",
+            "dirqp": f"0x{words[9]:08x}",
+            "channel2": {
+                "status": f"0x{words[10]:08x}",
+                "config": f"0x{words[11]:08x}",
+                "count": words[12],
+            },
+            "channel3": {
+                "status": f"0x{words[13]:08x}",
+                "config": f"0x{words[14]:08x}",
+                "count": words[15],
+            },
+        }
 
     def guest_gui_state_snapshot(self) -> dict[str, object]:
         """Read GUI/touch globals that indicate whether C200 reached interactive UI state."""
@@ -7027,6 +7254,21 @@ class QemuProcessBackend:
                 "stdout_tail": list(self.stdout_tail[-80:]),
                 "stderr_tail": list(self.stderr_tail[-80:]),
                 "last_error": self.last_error,
+                "nand_runtime_image": (
+                    None if self._runtime_nand_image is None
+                    else str(self._runtime_nand_image)
+                ),
+                "nand_source_image": (
+                    None if self._runtime_nand_source is None
+                    else str(self._runtime_nand_source)
+                ),
+                "nand_checkpoint_image": (
+                    None if self._runtime_nand_checkpoint is None
+                    else str(self._runtime_nand_checkpoint)
+                ),
+                "nand_writes_persistent": self._runtime_nand_persistent,
+                "nand_commit_count": self._runtime_nand_commit_count,
+                "nand_last_commit_error": self._runtime_nand_last_commit_error,
                 "hmp_port": self.hmp_port,
                 "gdb_port": self.gdb_port,
                 "gdb_connected": self.gdb_sock is not None,
@@ -7179,16 +7421,160 @@ def qemu_safe_payload_path(path: Path) -> Path:
     return target.resolve()
 
 
-def prepare_runtime_nand_image(path: Path) -> Path:
-    """Return a disposable NAND image copy for QEMU's writable MTD backend."""
+def persistent_runtime_nand_checkpoint_path(path: Path) -> Path:
+    original = path.resolve()
+    suffix = original.suffix or ".bin"
+    digest = hashlib.sha1(
+        os.path.normcase(str(original)).encode("utf-8")
+    ).hexdigest()[:16]
+    return (
+        Path("build") / "qemu_nand_persistent" / f"nand_{digest}{suffix}"
+    ).resolve()
 
-    source = qemu_safe_payload_path(path)
-    stage_dir = Path("build") / "qemu_nand_runs"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    target = stage_dir / f"{source.stem}_{os.getpid()}_{time.time_ns()}{source.suffix}"
-    shutil.copy2(source, target)
+
+def restore_runtime_nand_checkpoint(
+    source_path: Path,
+    *,
+    retained_work_path: Path | None = None,
+) -> tuple[Path, bool]:
+    """Delete only persistent state derived from the selected base image."""
+
+    checkpoint = persistent_runtime_nand_checkpoint_path(source_path)
+    work: Path | None = None
+    if retained_work_path is not None:
+        work = retained_work_path.resolve()
+        runs_dir = (Path("build") / "qemu_nand_runs").resolve()
+        if work.parent != runs_dir:
+            raise ValueError(f"refusing to remove NAND work image outside {runs_dir}: {work}")
+    existed = checkpoint.is_file()
+    checkpoint.unlink(missing_ok=True)
+    if work is not None:
+        work.unlink(missing_ok=True)
+    return checkpoint, existed
+
+
+def _nand_block_map(path: Path) -> tuple[int, dict[int, tuple[int, int]]]:
+    page_size = 2048
+    stride = page_size + 64
+    pages_per_block = 64
+    block_size = stride * pages_per_block
+    size = path.stat().st_size
+    if size == 0 or size % block_size:
+        raise ValueError(f"unsupported persistent NAND geometry: {path} size={size}")
+    block_count = size // block_size
+    mapping: dict[int, tuple[int, int]] = {}
+    with path.open("rb") as stream:
+        for physical in range(block_count):
+            stream.seek(physical * block_size + page_size + 58)
+            tail = stream.read(6)
+            if len(tail) != 6:
+                raise IOError(f"short NAND OOB read from {path}")
+            sequence = int.from_bytes(tail[:2], "little")
+            logical = int.from_bytes(tail[2:], "little") & 0xFFFF
+            if sequence == 0xFFFF or logical >= block_count:
+                continue
+            current = mapping.get(logical)
+            if current is None or sequence >= current[0]:
+                mapping[logical] = (sequence, physical)
+    return block_count, mapping
+
+
+def commit_runtime_nand_checkpoint(
+    source_path: Path,
+    runtime_path: Path,
+    checkpoint_path: Path | None = None,
+) -> Path:
+    """Commit the runtime FTL logical view into a bootable canonical image."""
+
+    source = qemu_safe_payload_path(source_path)
+    runtime = runtime_path.resolve()
+    checkpoint = (
+        persistent_runtime_nand_checkpoint_path(source_path)
+        if checkpoint_path is None else checkpoint_path.resolve()
+    )
+    source_blocks, source_map = _nand_block_map(source)
+    runtime_blocks, runtime_map = _nand_block_map(runtime)
+    if runtime_blocks != source_blocks:
+        raise ValueError(
+            f"runtime NAND block count {runtime_blocks} != source {source_blocks}"
+        )
+
+    page_size = 2048
+    stride = page_size + 64
+    pages_per_block = 64
+    block_size = stride * pages_per_block
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    temporary = checkpoint.with_name(
+        f".{checkpoint.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    try:
+        shutil.copy2(source, temporary)
+        with (
+            source.open("rb") as source_stream,
+            runtime.open("rb") as runtime_stream,
+            temporary.open("r+b") as output_stream,
+        ):
+            for logical, (_source_seq, canonical) in source_map.items():
+                runtime_row = runtime_map.get(logical)
+                if runtime_row is None:
+                    continue
+                _runtime_seq, physical = runtime_row
+                source_stream.seek(canonical * block_size)
+                output_block = bytearray(source_stream.read(block_size))
+                runtime_stream.seek(physical * block_size)
+                runtime_block = runtime_stream.read(block_size)
+                if len(output_block) != block_size or len(runtime_block) != block_size:
+                    raise IOError("short NAND block read while committing checkpoint")
+                for page in range(pages_per_block):
+                    offset = page * stride
+                    output_block[offset : offset + page_size] = (
+                        runtime_block[offset : offset + page_size]
+                    )
+                output_stream.seek(canonical * block_size)
+                output_stream.write(output_block)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
+        os.replace(temporary, checkpoint)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return checkpoint
+
+
+def prepare_runtime_nand_image(path: Path, *, persistent: bool = False) -> Path:
+    """Return an isolated writable NAND work image for QEMU."""
+
+    original = path.resolve()
+    source = qemu_safe_payload_path(original)
+    runs_dir = Path("build") / "qemu_nand_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    if persistent:
+        checkpoint = persistent_runtime_nand_checkpoint_path(original)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        if not checkpoint.exists():
+            temporary = checkpoint.with_name(
+                f".{checkpoint.name}.{os.getpid()}.{time.time_ns()}.tmp"
+            )
+            try:
+                shutil.copy2(source, temporary)
+                os.replace(temporary, checkpoint)
+            finally:
+                temporary.unlink(missing_ok=True)
+        copy_source = checkpoint
+    else:
+        copy_source = source
+
+    target = runs_dir / (
+        f"{source.stem}_{os.getpid()}_{time.time_ns()}{source.suffix}"
+    )
+    temporary = target.with_name(
+        f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    try:
+        shutil.copy2(copy_source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
     return target.resolve()
-
 
 def qemu_patched_payload_path(path: Path, *, base: int, patch_names: tuple[str, ...]) -> Path:
     source = qemu_safe_payload_path(path)
@@ -7275,6 +7661,7 @@ def build_bbk_qemu_config(
     payload: Path | None = None,
     payload_addr: int = DEFAULT_C200_PHYS,
     nand_image: Path | None = None,
+    persist_nand_writes: bool = False,
     load_addr: int | None = None,
     pc: int | None = None,
     machine: str = DEFAULT_QEMU_MACHINE,
@@ -7365,6 +7752,7 @@ def build_bbk_qemu_config(
         boot_load_addr=boot_load_addr,
         boot_pc=boot_pc,
         nand_image=None if nand_image is None else qemu_safe_payload_path(nand_image),
+        persist_nand_writes=bool(persist_nand_writes),
         extra_payloads=extra_payloads,
         plugins=tuple(Path(plugin) for plugin in plugins),
         extra_args=extra_args,

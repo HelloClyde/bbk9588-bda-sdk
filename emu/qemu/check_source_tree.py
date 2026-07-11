@@ -17,9 +17,20 @@ REQUIRED_QEMU_SOURCE_PATHS = (
 )
 
 OVERLAY_QEMU_SOURCE_PATHS = (
+    "hw/audio/jz4740_aic.c",
+    "hw/audio/meson.build",
+    "hw/dma/jz4740_dmac.c",
+    "hw/intc/jz4740_intc.c",
+    "hw/misc/jz4740_cpm.c",
     "hw/mips/bbk9588.c",
     "hw/mips/Kconfig",
     "hw/mips/meson.build",
+    "hw/timer/jz4740_tcu.c",
+    "include/hw/audio/jz4740_aic.h",
+    "include/hw/dma/jz4740_dmac.h",
+    "include/hw/intc/jz4740_intc.h",
+    "include/hw/misc/jz4740_cpm.h",
+    "include/hw/timer/jz4740_tcu.h",
     "target/mips/tcg/op_helper.c",
     "target/mips/tcg/translate.c",
 )

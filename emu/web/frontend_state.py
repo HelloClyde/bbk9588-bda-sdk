@@ -19,6 +19,7 @@ from emu.qemu.system import (
     TOUCH_CALIBRATION_REFERENCE_POINTS,
     build_bbk_qemu_config,
     classify_guest_pc,
+    restore_runtime_nand_checkpoint,
 )
 
 
@@ -58,6 +59,7 @@ FRONTEND_INPUT_CALIBRATION_STAGE_LABELS = {
     11: "dialog-up",
     12: "done",
 }
+FRONTEND_INPUT_CALIBRATION_PC_GRACE_SECONDS = 8.0
 
 LIVE_FRAMEBUFFER_ADDR = 0xA1F82000
 LIVE_FRAMEBUFFER_OFFSET_BYTES = 0
@@ -359,6 +361,34 @@ class FrontendState:
             self._publish_snapshot_locked()
             return self.snapshot()
 
+    def restore_nand_image(self, path: object | None = None) -> dict[str, object]:
+        selected = (
+            self._default_nand_image()
+            if path is None or not str(path).strip()
+            else self._resolve_nand_image_path(path)
+        )
+        if selected is None:
+            raise FileNotFoundError("no NAND base image is selected")
+        backend = self.qemu_backend
+        if backend is not None:
+            self.stop()
+        retained_work: Path | None = None
+        if backend is not None:
+            backend_status = backend.snapshot()
+            runtime = backend_status.get("nand_runtime_image")
+            if backend_status.get("nand_last_commit_error") and runtime:
+                retained_work = Path(str(runtime))
+        checkpoint, existed = restore_runtime_nand_checkpoint(
+            selected,
+            retained_work_path=retained_work,
+        )
+        self.args.nand_image = selected
+        result = self.reset()
+        result["nand_restored"] = True
+        result["nand_checkpoint_removed"] = existed
+        result["nand_checkpoint_path"] = str(checkpoint)
+        return result
+
     def _reset_runtime_fields_locked(self) -> None:
         self.last_error = None
         self.crash_snapshot = None
@@ -452,6 +482,9 @@ class FrontendState:
                 gdb=getattr(self.args, "qemu_gdb", "none"),
                 timeout_seconds=float(getattr(self.args, "qemu_timeout", 5.0)),
                 nand_image=self._default_nand_image(),
+                persist_nand_writes=bool(
+                    getattr(self.args, "qemu_persist_nand", True)
+                ),
                 bbk_machine_options=tuple(getattr(self.args, "qemu_machine_option", []) or ()),
                 extra_args=tuple(getattr(self.args, "qemu_extra_arg", []) or ()),
                 firmware_patches=getattr(self.args, "qemu_firmware_patch", None),
@@ -1022,8 +1055,27 @@ class FrontendState:
         if op in {"set-nand-image", "set_nand_image", "select-nand-image", "select_nand_image"}:
             reset = self._coerce_optional_bool(msg.get("reset"))
             return self.set_nand_image(msg.get("path") or msg.get("image"), reset=reset is not False)
+        if op in {
+            "restore-nand-image",
+            "restore_nand_image",
+            "restore-base-image",
+            "restore_base_image",
+        }:
+            return self.restore_nand_image(msg.get("path") or msg.get("image"))
         if op in {"qemu-storage-service", "qemu_storage_service"}:
             return {"error": "qemu-storage-service is disabled; legacy Python/GDB storage hooks are not part of the bbk9588 default path"}
+        if op in {
+            "qemu-storage-trace",
+            "qemu_storage_trace",
+            "set-qemu-storage-trace",
+            "set_qemu_storage_trace",
+        }:
+            if self.qemu_backend is None:
+                return {"error": "QEMU backend is not initialized"}
+            enabled = self._coerce_optional_bool(msg.get("enabled"))
+            if enabled is None:
+                return {"error": "enabled must be a boolean"}
+            return self.qemu_backend.set_storage_trace(enabled)
         if op in {"qemu-task-trace", "qemu_task_trace", "qemu-fs-trace", "qemu_fs_trace", "qemu-event-loop-trace", "qemu_event_loop_trace", "qemu-resource-trace", "qemu_resource_trace"}:
             return {"error": f"{op} is disabled; use QEMU machine/device instrumentation instead of Python/GDB services"}
         if op in {"qemu-read-memory", "qemu_read_memory"}:
@@ -1400,6 +1452,9 @@ class FrontendState:
                 snapshot["guest_runtime_tables"] = backend.guest_runtime_table_snapshot()
                 snapshot["guest_display_surface"] = backend.guest_display_surface_snapshot()
                 if detail == "traces":
+                    dmac_trace_snapshot = getattr(backend, "dmac_trace_snapshot", None)
+                    if callable(dmac_trace_snapshot):
+                        snapshot["qemu_dmac_trace"] = dmac_trace_snapshot()
                     snapshot["guest_surface_trace"] = backend.guest_surface_trace_snapshot()
                     snapshot["guest_storage_trace"] = backend.guest_storage_trace_snapshot()
                     snapshot["guest_msc_trace"] = backend.guest_msc_trace_snapshot()
@@ -1471,6 +1526,10 @@ class FrontendState:
         in_c200 = 0x80000000 <= pc < 0x80900000 or 0x80000000 <= ra < 0x80900000
 
         if in_uboot or (not pc_unknown and not in_c200 and not in_touch_boot):
+            return
+
+        reset_at = float(getattr(self, "reset_at", now) or now)
+        if pc_unknown and now - reset_at < FRONTEND_INPUT_CALIBRATION_PC_GRACE_SECONDS:
             return
 
         if self.frontend_input_calibration_stage < point_count * 2:

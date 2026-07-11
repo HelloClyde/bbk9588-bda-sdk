@@ -27,6 +27,11 @@
 #include "hw/core/loader.h"
 #include "hw/core/qdev-properties-system.h"
 #include "hw/core/sysbus.h"
+#include "hw/audio/jz4740_aic.h"
+#include "hw/dma/jz4740_dmac.h"
+#include "hw/intc/jz4740_intc.h"
+#include "hw/misc/jz4740_cpm.h"
+#include "hw/timer/jz4740_tcu.h"
 #include "qemu/error-report.h"
 #include "qemu/atomic.h"
 #include "qemu/cutils.h"
@@ -72,33 +77,7 @@
 #define BBK9588_LCD_MIRROR_CONFIG  0x804a6b88u
 #define BBK9588_LCD_STATUS_FRAME_DONE 0x00000001u
 #define BBK9588_LCD_STATUS_READY      0x00000080u
-#define BBK9588_INTC_ICSR_OFF      0x00u
-#define BBK9588_INTC_ICMR_OFF      0x04u
-#define BBK9588_INTC_ICMSR_OFF     0x08u
-#define BBK9588_INTC_ICMCR_OFF     0x0cu
-#define BBK9588_INTC_ICPR_OFF      0x10u
-#define BBK9588_INTC_IRQ_LCD       30u
-#define BBK9588_INTC_IRQ_IPU       29u
-#define BBK9588_INTC_IRQ_GPIO0     28u
-#define BBK9588_INTC_IRQ_GPIO1     27u
-#define BBK9588_INTC_IRQ_GPIO2     26u
-#define BBK9588_INTC_IRQ_GPIO3     25u
-#define BBK9588_INTC_IRQ_UDC       24u
-#define BBK9588_INTC_IRQ_TCU0      23u
-#define BBK9588_INTC_IRQ_TCU1      22u
-#define BBK9588_INTC_IRQ_TCU2      21u
-#define BBK9588_INTC_IRQ_DMA       20u
-#define BBK9588_INTC_IRQ_AIC       18u
-#define BBK9588_INTC_IRQ_CIM       17u
-#define BBK9588_INTC_IRQ_SSI       16u
-#define BBK9588_INTC_IRQ_RTC       15u
-#define BBK9588_INTC_IRQ_MSC       14u
-#define BBK9588_INTC_IRQ_SADC      12u
-#define BBK9588_INTC_IRQ_UART0     9u
-#define BBK9588_INTC_IRQ_UHC       4u
-#define BBK9588_INTC_IRQ_EMC       3u
-#define BBK9588_INTC_IRQ_I2C       2u
-#define BBK9588_JZ_LCD_IRQ         BBK9588_INTC_IRQ_LCD
+#define BBK9588_JZ_LCD_IRQ         JZ4740_INTC_IRQ_LCD
 #define BBK9588_JZ_LCD_CTRL_BST_MASK  0x30000000u
 #define BBK9588_JZ_LCD_CTRL_RGB       0x08000000u
 #define BBK9588_JZ_LCD_CTRL_OFUP      0x04000000u
@@ -170,6 +149,10 @@
 #define BBK9588_FRAME_FORMAT_RGB565 0x00005635u
 #define BBK9588_PERF_FORMAT_GUEST_INSNS 0x00004950u
 #define BBK9588_PERF_PAYLOAD_BYTES 16u
+#define BBK9588_PERF_FORMAT_AIC  0x00434941u
+#define BBK9588_AIC_PERF_WORDS  24u
+#define BBK9588_AIC_PERF_PAYLOAD_BYTES \
+    (BBK9588_AIC_PERF_WORDS * sizeof(uint64_t))
 #define BBK9588_PERF_PERIOD_MS     1000u
 #define BBK9588_SADC_DEFAULT_BATTERY_RAW 0x0e68u
 #define BBK9588_SADC_DEFAULT_SADCIN_RAW  0x0000u
@@ -209,7 +192,7 @@
 #define BBK9588_SADC_TOUCH_Z2_RAW   0x0c00u
 #define BBK9588_SADC_TOUCH_Z3_RAW   0x0400u
 #define BBK9588_SADC_TOUCH_Z4_RAW   0x0c00u
-#define BBK9588_SADC_IRQ            BBK9588_INTC_IRQ_SADC
+#define BBK9588_SADC_IRQ            JZ4740_INTC_IRQ_SADC
 #define BBK9588_GPIO_PORTS          4u
 #define BBK9588_GPIO_PORT_STRIDE    0x100u
 #define BBK9588_GPIO_PIN_OFF        0x00u
@@ -240,12 +223,12 @@
 #define BBK9588_GPIO_PORT_B_OFF     0x100u
 #define BBK9588_GPIO_PORT_C_OFF     0x200u
 #define BBK9588_GPIO_PORT_D_OFF     0x300u
-#define BBK9588_GPIO_IRQ_PORT_B     BBK9588_INTC_IRQ_GPIO1
-#define BBK9588_GPIO_IRQ_PORT_C     BBK9588_INTC_IRQ_GPIO2
-#define BBK9588_GPIO_IRQ_PORT_D     BBK9588_INTC_IRQ_GPIO3
+#define BBK9588_GPIO_IRQ_PORT_B     JZ4740_INTC_IRQ_GPIO1
+#define BBK9588_GPIO_IRQ_PORT_C     JZ4740_INTC_IRQ_GPIO2
+#define BBK9588_GPIO_IRQ_PORT_D     JZ4740_INTC_IRQ_GPIO3
 #define BBK9588_NAND_READY_IRQ      BBK9588_GPIO_IRQ_PORT_C
 #define BBK9588_UART_FIFO_SIZE     16u
-#define BBK9588_UART_IRQ           BBK9588_INTC_IRQ_UART0
+#define BBK9588_UART_IRQ           JZ4740_INTC_IRQ_UART0
 #define BBK9588_UART_RBR_OFF       0x00u
 #define BBK9588_UART_THR_OFF       0x00u
 #define BBK9588_UART_DLL_OFF       0x00u
@@ -305,7 +288,7 @@
 #define BBK9588_UART_ISR_MASK      0x1fu
 #define BBK9588_UART_UMR_MASK      0x3fu
 #define BBK9588_UART_UACR_MASK     0x0fffu
-#define BBK9588_UDC_IRQ            BBK9588_INTC_IRQ_UDC
+#define BBK9588_UDC_IRQ            JZ4740_INTC_IRQ_UDC
 #define BBK9588_UDC_EP_COUNT       16u
 #define BBK9588_UDC_FADDR_OFF      0x00u
 #define BBK9588_UDC_POWER_OFF      0x01u
@@ -342,62 +325,7 @@
 #define BBK9588_UDC_MAXP_MASK      0x07ffu
 #define BBK9588_UDC_INCSR_RW_MASK  0xfc10u
 #define BBK9588_UDC_OUTCSR_RW_MASK 0xf820u
-#define BBK9588_DMAC_IRQ           BBK9588_INTC_IRQ_DMA
-#define BBK9588_DMAC_AUDIO_PARENT_IRQ BBK9588_DMAC_IRQ
-#define BBK9588_DMAC_CHANNELS      6u
-#define BBK9588_DMAC_CHANNEL_STRIDE 0x20u
-#define BBK9588_DMAC_SOURCE_OFF    0x00u
-#define BBK9588_DMAC_TARGET_OFF    0x04u
-#define BBK9588_DMAC_COUNT_OFF     0x08u
-#define BBK9588_DMAC_REQUEST_OFF   0x0cu
-#define BBK9588_DMAC_STATUS_OFF    0x10u
-#define BBK9588_DMAC_CONFIG_OFF    0x14u
-#define BBK9588_DMAC_DESC_OFF      0x18u
-#define BBK9588_DMAC_CTRL_OFF      0x300u
-#define BBK9588_DMAC_IRQP_OFF      0x304u
-#define BBK9588_DMAC_DOORBELL_OFF  0x308u
-#define BBK9588_DMAC_DOORBELL_SET_OFF 0x30cu
-#define BBK9588_DMAC_CTRL_DMAE     0x00000001u
-#define BBK9588_DMAC_CTRL_AR       0x00000004u
-#define BBK9588_DMAC_CTRL_HLT      0x00000008u
-#define BBK9588_DMAC_CTRL_PM_MASK  0x00000300u
-#define BBK9588_DMAC_DRT_AUTO      8u
-#define BBK9588_DMAC_DTC_MASK      0x00ffffffu
-#define BBK9588_DMAC_DCS_NDES      0x80000000u
-#define BBK9588_DMAC_DCS_INV       0x00000040u
-#define BBK9588_DMAC_DCS_AR        0x00000010u
-#define BBK9588_DMAC_DCS_TT        0x00000008u
-#define BBK9588_DMAC_DCS_HLT       0x00000004u
-#define BBK9588_DMAC_DCS_CT        0x00000002u
-#define BBK9588_DMAC_DCS_CTE       0x00000001u
-#define BBK9588_DMAC_DCS_STATUS_MASK \
-    (BBK9588_DMAC_DCS_INV | BBK9588_DMAC_DCS_AR | \
-     BBK9588_DMAC_DCS_TT | BBK9588_DMAC_DCS_HLT | \
-     BBK9588_DMAC_DCS_CT)
-#define BBK9588_DMAC_DCM_SAI       0x00800000u
-#define BBK9588_DMAC_DCM_DAI       0x00400000u
-#define BBK9588_DMAC_DCM_TSZ_SHIFT 8u
-#define BBK9588_DMAC_DCM_TSZ_MASK  0x00000700u
-#define BBK9588_DMAC_DCM_V         0x00000010u
-#define BBK9588_DMAC_DCM_VM        0x00000008u
-#define BBK9588_DMAC_DCM_VIE       0x00000004u
-#define BBK9588_DMAC_DCM_TIE       0x00000002u
-#define BBK9588_DMAC_DCM_LINK      0x00000001u
-#define BBK9588_DMAC_DRT_MASK      0x0000001fu
-#define BBK9588_DMAC_DCS_CDOA_MASK 0x00ff0000u
-#define BBK9588_DMAC_DCS_CDOA_SHIFT 16u
-#define BBK9588_DMAC_DDA_DBA_MASK  0xfffff000u
-#define BBK9588_DMAC_DDA_DOA_MASK  0x00000ff0u
-#define BBK9588_DMAC_DDA_DOA_SHIFT 4u
-#define BBK9588_DMAC_DDA_ALIGN_MASK 0x0000000fu
-#define BBK9588_DMAC_DESC_BYTES    16u
-#define BBK9588_DMAC_DESC_DCM_OFF  0x00u
-#define BBK9588_DMAC_DESC_DSA_OFF  0x04u
-#define BBK9588_DMAC_DESC_DTA_OFF  0x08u
-#define BBK9588_DMAC_DESC_DTC_OFF  0x0cu
-#define BBK9588_DMAC_DESC_DOA_SHIFT 24u
-#define BBK9588_DMAC_DESC_DTC_MASK BBK9588_DMAC_DTC_MASK
-#define BBK9588_DMAC_CHANNEL_MASK  ((1u << BBK9588_DMAC_CHANNELS) - 1u)
+#define BBK9588_AIC_DATA_PHYS      0x10020034u
 #define BBK9588_DIAG_VA            0x89f00000u
 #define BBK9588_EVENT_SCRATCH_VA   (BBK9588_DIAG_VA + 0x0000u)
 #define BBK9588_EVENT_SCRATCH_MAGIC 0x45564b42u
@@ -420,7 +348,6 @@
 #define BBK9588_STORAGE_TRACE_WORDS 4u
 #define BBK9588_STORAGE_TRACE_HEADER_WORDS 4u
 #define BBK9588_STORAGE_TRACE_NAND_READ 0x80000000u
-#define BBK9588_STORAGE_TRACE_LOGICAL_WRITE 0x40000000u
 #define BBK9588_STORAGE_TRACE_NAND_PROGRAM 0x20000000u
 #define BBK9588_STORAGE_TRACE_NAND_ERASE 0x10000000u
 #define BBK9588_STORAGE_TRACE_DMAC_TRANSFER 0x08000000u
@@ -433,15 +360,15 @@
 #define BBK9588_MSC_TRACE_READ     1u
 #define BBK9588_MSC_TRACE_WRITE    2u
 #define BBK9588_MSC_TRACE_CMD      3u
-#define BBK9588_MSC_STRPCL_OFF     0x1000u
-#define BBK9588_MSC_STAT_OFF       0x1004u
-#define BBK9588_MSC_RESTO_OFF      0x1010u
-#define BBK9588_MSC_RDTO_OFF       0x1014u
-#define BBK9588_MSC_IMASK_OFF      0x1024u
-#define BBK9588_MSC_IREG_OFF       0x1028u
-#define BBK9588_MSC_CMD_OFF        0x102cu
-#define BBK9588_MSC_ARG_OFF        0x1030u
-#define BBK9588_MSC_RES_OFF        0x1034u
+#define BBK9588_MSC_STRPCL_OFF     0x0000u
+#define BBK9588_MSC_STAT_OFF       0x0004u
+#define BBK9588_MSC_RESTO_OFF      0x0010u
+#define BBK9588_MSC_RDTO_OFF       0x0014u
+#define BBK9588_MSC_IMASK_OFF      0x0024u
+#define BBK9588_MSC_IREG_OFF       0x0028u
+#define BBK9588_MSC_CMD_OFF        0x002cu
+#define BBK9588_MSC_ARG_OFF        0x0030u
+#define BBK9588_MSC_RES_OFF        0x0034u
 #define BBK9588_MSC_STAT_RESET     0x00000040u
 #define BBK9588_MSC_RESTO_RESET    0x00000040u
 #define BBK9588_MSC_RDTO_RESET     0x0000ffffu
@@ -461,10 +388,8 @@
 #define BBK9588_NAND_TARGET_TRACE_WORDS 6u
 #define BBK9588_NAND_TARGET_BLOCK 0x2540u
 #define BBK9588_NAND_TARGET_PAGE 0x256au
-#define BBK9588_NAND_TARGET_LBA 0x24a9u
 #define BBK9588_NAND_TARGET_EVENT_ERASE 1u
 #define BBK9588_NAND_TARGET_EVENT_PROGRAM 2u
-#define BBK9588_NAND_TARGET_EVENT_LOGICAL_WRITE 3u
 #define BBK9588_RTC_MAGIC          0x87654321u
 #define BBK9588_RTC_RTCCR_RESET    0x00000081u
 #define BBK9588_RTC_RTCCR_WRDY     0x00000080u
@@ -477,7 +402,7 @@
 #define BBK9588_RTC_RTCCR_RW_MASK  \
     (BBK9588_RTC_RTCCR_1HZIE | BBK9588_RTC_RTCCR_AIE | \
      BBK9588_RTC_RTCCR_AE | BBK9588_RTC_RTCCR_RTCE)
-#define BBK9588_RTC_IRQ            BBK9588_INTC_IRQ_RTC
+#define BBK9588_RTC_IRQ            JZ4740_INTC_IRQ_RTC
 #define BBK9588_RTC_RTCGR_RW_MASK  0x83ffffffu
 #define BBK9588_RTC_RTCGR_LOCK     0x80000000u
 #define BBK9588_RTC_HCR_PD         0x00000001u
@@ -504,96 +429,7 @@
 #define BBK9588_BCH_STATUS_DECODE_DONE 0x00000008u
 #define BBK9588_BCH_STATUS_W0C_MASK    0x0000001fu
 #define BBK9588_BCH_CONTROL_ENCODE     BBK9588_NAND_NFECCR_ENCE
-#define BBK9588_TCU_CHANNELS       8u
-#define BBK9588_TCU_MASK           ((1u << BBK9588_TCU_CHANNELS) - 1u)
-#define BBK9588_TCU_TER_OFF        0x10u
-#define BBK9588_TCU_TESR_OFF       0x14u
-#define BBK9588_TCU_TECR_OFF       0x18u
-#define BBK9588_TCU_TSR_OFF        0x1cu
-#define BBK9588_TCU_TFR_OFF        0x20u
-#define BBK9588_TCU_TFSR_OFF       0x24u
-#define BBK9588_TCU_TFCR_OFF       0x28u
-#define BBK9588_TCU_TSSR_OFF       0x2cu
-#define BBK9588_TCU_TMR_OFF        0x30u
-#define BBK9588_TCU_TMSR_OFF       0x34u
-#define BBK9588_TCU_TMCR_OFF       0x38u
-#define BBK9588_TCU_TSCR_OFF       0x3cu
-#define BBK9588_TCU_CHANNEL_BASE   0x40u
-#define BBK9588_TCU_CHANNEL_STRIDE 0x10u
-#define BBK9588_TCU_TDFR_OFF       0x00u
-#define BBK9588_TCU_TDHR_OFF       0x04u
-#define BBK9588_TCU_TCNT_OFF       0x08u
-#define BBK9588_TCU_TCSR_OFF       0x0cu
-#define BBK9588_TCU_HALF_SHIFT     16u
-#define BBK9588_TCU_FLAG_MASK \
-    (BBK9588_TCU_MASK | (BBK9588_TCU_MASK << BBK9588_TCU_HALF_SHIFT))
-#define BBK9588_TCU_TCSR_PCK_EN    0x0001u
-#define BBK9588_TCU_TCSR_RTC_EN    0x0002u
-#define BBK9588_TCU_TCSR_EXT_EN    0x0004u
-#define BBK9588_TCU_TCSR_PRESCALE_SHIFT 3u
-#define BBK9588_TCU_TCSR_PRESCALE_MASK  (0x7u << BBK9588_TCU_TCSR_PRESCALE_SHIFT)
-#define BBK9588_TCU_TCSR_PWM_EN    0x0080u
-#define BBK9588_TCU_TCSR_INITL     0x0100u
-#define BBK9588_TCU_TCSR_SD        0x0200u
-#define BBK9588_TCU_TCSR_RW_MASK   0x03bfu
-#define BBK9588_TCU_PCLK_HZ        84000000u
-#define BBK9588_TCU_EXTAL_HZ       12000000u
-#define BBK9588_TCU_RTCCLK_HZ      32768u
-#define BBK9588_SYSCTRL_CPCCR_OFF  0x00u
-#define BBK9588_SYSCTRL_LCR_OFF    0x04u
-#define BBK9588_SYSCTRL_CPPCR_OFF  0x10u
-#define BBK9588_SYSCTRL_CLKGR_OFF  0x20u
-#define BBK9588_SYSCTRL_SCR_OFF    0x24u
-#define BBK9588_SYSCTRL_I2SCDR_OFF 0x60u
-#define BBK9588_SYSCTRL_LPCDR_OFF  0x64u
-#define BBK9588_SYSCTRL_MSCCDR_OFF 0x68u
-#define BBK9588_SYSCTRL_UHCCDR_OFF 0x6cu
-#define BBK9588_SYSCTRL_SSICDR_OFF 0x74u
-#define BBK9588_SYSCTRL_CPCCR_RESET 0x00000008u
-#define BBK9588_SYSCTRL_LCR_RESET   0x000000f8u
-#define BBK9588_SYSCTRL_LCR_RW_MASK 0x000000ffu
-#define BBK9588_SYSCTRL_CPPCR_RESET 0x28080011u
-#define BBK9588_SYSCTRL_CPPCR_RW_MASK 0xffff03ffu
-#define BBK9588_SYSCTRL_CPPCR_PLLS  0x00000400u
-#define BBK9588_SYSCTRL_CPPCR_PLLEN 0x00000100u
-#define BBK9588_SYSCTRL_CLKGR_RESET 0x00000000u
-#define BBK9588_SYSCTRL_CLKGR_RW_MASK 0x0000ffffu
-#define BBK9588_SYSCTRL_SCR_RESET   0x00001500u
-#define BBK9588_SYSCTRL_SCR_RW_MASK 0x0000ffd0u
-#define BBK9588_SYSCTRL_I2SCDR_RESET 0x00000004u
-#define BBK9588_SYSCTRL_I2SCDR_RW_MASK 0x000001ffu
-#define BBK9588_SYSCTRL_LPCDR_RESET 0x00000004u
-#define BBK9588_SYSCTRL_LPCDR_RW_MASK 0x800007ffu
-#define BBK9588_SYSCTRL_MSCCDR_RESET 0x00000004u
-#define BBK9588_SYSCTRL_MSCCDR_RW_MASK 0x0000001fu
-#define BBK9588_SYSCTRL_UHCCDR_RESET 0x00000004u
-#define BBK9588_SYSCTRL_UHCCDR_RW_MASK 0x0000000fu
-#define BBK9588_SYSCTRL_SSICDR_RESET 0x00000004u
-#define BBK9588_SYSCTRL_SSICDR_RW_MASK 0x8000000fu
-#define BBK9588_SYSCTRL_WAKE_PROXY_IRQ BBK9588_INTC_IRQ_TCU1
-#define BBK9588_INTC_SOURCE_MASK   \
-    ((1u << BBK9588_INTC_IRQ_LCD) | \
-     (1u << BBK9588_INTC_IRQ_IPU) | \
-     (1u << BBK9588_INTC_IRQ_GPIO0) | \
-     (1u << BBK9588_INTC_IRQ_GPIO1) | \
-     (1u << BBK9588_INTC_IRQ_GPIO2) | \
-     (1u << BBK9588_INTC_IRQ_GPIO3) | \
-     (1u << BBK9588_INTC_IRQ_UDC) | \
-     (1u << BBK9588_INTC_IRQ_TCU0) | \
-     (1u << BBK9588_INTC_IRQ_TCU1) | \
-     (1u << BBK9588_INTC_IRQ_TCU2) | \
-     (1u << BBK9588_INTC_IRQ_DMA) | \
-     (1u << BBK9588_INTC_IRQ_AIC) | \
-     (1u << BBK9588_INTC_IRQ_CIM) | \
-     (1u << BBK9588_INTC_IRQ_SSI) | \
-     (1u << BBK9588_INTC_IRQ_RTC) | \
-     (1u << BBK9588_INTC_IRQ_MSC) | \
-     (1u << BBK9588_INTC_IRQ_SADC) | \
-     (1u << BBK9588_INTC_IRQ_UART0) | \
-     (1u << BBK9588_INTC_IRQ_UHC) | \
-     (1u << BBK9588_INTC_IRQ_EMC) | \
-     (1u << BBK9588_INTC_IRQ_I2C))
-#define BBK9588_INTC_RESET_MASK    0xffffffffu
+#define BBK9588_SYSCTRL_WAKE_PROXY_IRQ JZ4740_INTC_IRQ_TCU1
 
 /*
  * C200 firmware accesses SoC devices through KSEG1 uncached addresses such as
@@ -603,12 +439,8 @@
 #define KSEG1_TO_PHYS(addr)        ((addr) & 0x1fffffff)
 
 typedef enum Bbk9588MmioKind {
-    BBK9588_MMIO_SYSCTRL,
-    BBK9588_MMIO_INTC,
-    BBK9588_MMIO_TCU,
     BBK9588_MMIO_GPIO,
     BBK9588_MMIO_EXTGPIO,
-    BBK9588_MMIO_DMAC,
     BBK9588_MMIO_GRAPHICS,
     BBK9588_MMIO_UART,
     BBK9588_MMIO_UDC,
@@ -635,10 +467,9 @@ static void bbk9588_nand_target_trace_record(uint32_t event,
                                              uint32_t a,
                                              uint32_t b,
                                              uint32_t c);
-static void bbk9588_dmac_trace_sample(Bbk9588MmioState *s, uint32_t event,
+static void bbk9588_dmac_trace_sample(void *opaque, uint32_t event,
                                       unsigned channel, hwaddr offset,
                                       uint32_t value);
-static uint16_t bbk9588_lduw_le(const uint8_t *p);
 static uint32_t bbk9588_ldl_le(const uint8_t *p);
 
 typedef struct Bbk9588MmioState {
@@ -646,8 +477,6 @@ typedef struct Bbk9588MmioState {
     const Bbk9588MmioWindow *window;
     Bbk9588MachineState *board;
     uint32_t regs[0x20000 / sizeof(uint32_t)];
-    uint32_t tcu_counter[BBK9588_TCU_CHANNELS];
-    int64_t tcu_counter_anchor_ns[BBK9588_TCU_CHANNELS];
     uint8_t msc_response[16];
     uint32_t msc_response_len;
     uint32_t msc_response_index;
@@ -708,8 +537,11 @@ struct Bbk9588MachineState {
     uint32_t jz_lcd_cmd[2];
     MIPSCPU *cpu;
     qemu_irq cpu_irq;
+    qemu_irq aic_irq;
+    qemu_irq intc_irq;
+    qemu_irq dmac_irq;
+    qemu_irq tcu_irq[JZ4740_TCU_NUM_OUTPUTS];
     QEMUTimer *intc_resample_timer;
-    QEMUTimer *tcu_irq_timer;
     QEMUTimer *rtc_timer;
     QEMUTimer *sadc_timer;
     QEMUTimer *progress_trace_timer;
@@ -730,21 +562,8 @@ struct Bbk9588MachineState {
     bool lcd_dma_frame_valid;
     bool lcd_frame_chardev_sent_valid;
     bool cpu_irq_output_enabled;
-    uint32_t intc_pending_mask;
-    uint32_t intc_mask;
-    uint32_t tcu_enabled_mask;
-    uint32_t tcu_stop_mask;
-    uint32_t tcu_pending_mask;
-    uint32_t tcu_irq_mask;
+    bool intc_output_level;
     uint32_t tcu_period_ms;
-    uint32_t tcu_compare[BBK9588_TCU_CHANNELS];
-    uint32_t tcu_half_compare[BBK9588_TCU_CHANNELS];
-    uint32_t tcu_channel_period_ms[BBK9588_TCU_CHANNELS];
-    uint32_t tcu_half_channel_period_ms[BBK9588_TCU_CHANNELS];
-    uint64_t tcu_channel_period_ns[BBK9588_TCU_CHANNELS];
-    uint64_t tcu_half_channel_period_ns[BBK9588_TCU_CHANNELS];
-    int64_t tcu_deadline_ns[BBK9588_TCU_CHANNELS];
-    int64_t tcu_half_deadline_ns[BBK9588_TCU_CHANNELS];
     uint32_t progress_trace_period_ms;
     uint32_t lcd_refresh_period_ms;
     bool touch_down;
@@ -776,31 +595,18 @@ struct Bbk9588MachineState {
     uint32_t gpio_last_read_value;
     uint32_t gpio_last_flag_offset;
     uint32_t gpio_last_flag_value;
-    uint32_t intc_last_unmasked_pending;
-    uint32_t intc_last_level;
-    uint32_t intc_update_count;
     uint32_t intc_last_cp0_status;
     uint32_t intc_last_cp0_cause;
-    uint32_t intc_last_read_offset;
-    uint32_t intc_last_read_value;
-    uint32_t intc_last_write_offset;
-    uint32_t intc_last_write_value;
-    uint32_t intc_ack_count;
-    uint32_t intc_ack_tcu_count;
-    Bbk9588MmioState *dmac_mmio;
-    Bbk9588MmioState *tcu_mmio;
     Bbk9588MmioState *jz_lcd_mmio;
-    uint32_t sysctrl_wake_enable_20;
-    uint32_t sysctrl_wake_enable_24;
+    JZ4740AICState *aic;
+    JZ4740INTCState *intc;
+    JZ4740CPMState *cpm;
+    JZ4740DMACState *dmac;
+    JZ4740TCUState *tcu;
     uint32_t extgpio_wake_enable_80;
     bool sysctrl_wake_pending;
     bool gpio300_wake_pulse_available;
     uint32_t sysctrl_wake_count;
-    uint32_t tcu_last_read_offset;
-    uint32_t tcu_last_read_value;
-    uint32_t tcu_last_write_offset;
-    uint32_t tcu_last_write_value;
-    uint32_t tcu_irq_raise_count;
     Bbk9588NandState *nand_dev;
     bool storage_trace_enabled;
     bool graphics_trace_enabled;
@@ -840,10 +646,6 @@ struct Bbk9588MachineState {
     uint32_t msc_last_dma_phys;
     uint32_t msc_last_dma_words;
     uint32_t msc_dma_complete_count;
-    bool msc_oob_lba_map_valid;
-    uint32_t msc_oob_lba_map_block_count;
-    uint32_t *msc_oob_lba_logical_to_physical_block;
-    uint16_t *msc_oob_lba_map_block_seq;
     uint32_t nand_ready_raise_count;
     uint32_t nand_page_read_count;
     uint32_t nand_program_count;
@@ -925,14 +727,10 @@ static void bbk9588_nand_detect_geometry(Bbk9588NandState *nand)
 }
 
 static const Bbk9588MmioWindow bbk9588_mmio_windows[] = {
-    { "bbk9588.sysctrl",  0xb0000000, 0x1000, BBK9588_MMIO_SYSCTRL },
-    { "bbk9588.intc",     0xb0001000, 0x1000, BBK9588_MMIO_INTC },
-    { "bbk9588.tcu",      0xb0002000, 0x1000, BBK9588_MMIO_TCU },
     { "bbk9588.rtc",      0xb0003000, 0x1000, BBK9588_MMIO_RTC },
     { "bbk9588.gpio",     0xb0010000, 0x1000, BBK9588_MMIO_GPIO },
     { "bbk9588.extgpio",  0xb3010000, 0x10000, BBK9588_MMIO_EXTGPIO },
-    { "bbk9588.dmac",     0xb3020000, 0x10000, BBK9588_MMIO_DMAC },
-    { "bbk9588.graphics", 0xb0020000, 0x2000, BBK9588_MMIO_GRAPHICS },
+    { "bbk9588.msc",      0xb0021000, 0x1000, BBK9588_MMIO_GRAPHICS },
     { "bbk9588.uart",     0xb0030000, 0x1000, BBK9588_MMIO_UART },
     { "bbk9588.misc7",    0xb0070000, 0x1000, BBK9588_MMIO_MISC },
     { "bbk9588.udc",      0xb3040000, 0x1000, BBK9588_MMIO_UDC },
@@ -1028,51 +826,18 @@ static void bbk9588_wake_cpu(Bbk9588MachineState *board)
     }
 }
 
-static int bbk9588_tcu_channel_irq(unsigned channel)
-{
-    switch (channel) {
-    case 0:
-        return BBK9588_INTC_IRQ_TCU0;
-    case 1:
-        return BBK9588_INTC_IRQ_TCU1;
-    case 2:
-    case 3:
-    case 4:
-    case 5:
-    case 6:
-    case 7:
-        /*
-         * JZ4740 routes TCU0 and TCU1 to dedicated parent interrupts; TCU2-7
-         * share the third parent interrupt.  Its interrupt-controller node
-         * lists those parents as <23 22 21>.
-         */
-        return BBK9588_INTC_IRQ_TCU2;
-    default:
-        return -1;
-    }
-}
-
 static void bbk9588_sync_tcu_irq_sources(Bbk9588MachineState *board)
 {
-    uint32_t tcu_irq_lines = 0;
-    uint32_t tcu_irq_line_mask = 0;
-
-    for (unsigned ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-        uint32_t bit = 1u << ch;
-        uint32_t channel_flags = bit | (bit << BBK9588_TCU_HALF_SHIFT);
-        int irq = bbk9588_tcu_channel_irq(ch);
-
-        if (irq < 0) {
-            continue;
-        }
-        tcu_irq_line_mask |= 1u << irq;
-        if ((board->tcu_pending_mask & channel_flags) &
-            ~(board->tcu_irq_mask & channel_flags)) {
-            tcu_irq_lines |= 1u << irq;
-        }
-    }
-    board->intc_pending_mask &= ~tcu_irq_line_mask;
-    board->intc_pending_mask |= tcu_irq_lines;
+    jz4740_intc_set_irq(
+        board->intc, JZ4740_INTC_IRQ_TCU0,
+        jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU0));
+    jz4740_intc_set_irq(
+        board->intc, JZ4740_INTC_IRQ_TCU1,
+        jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU1) ||
+        board->sysctrl_wake_pending);
+    jz4740_intc_set_irq(
+        board->intc, JZ4740_INTC_IRQ_TCU2,
+        jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU2));
 }
 
 static bool bbk9588_jz_lcd_irq_pending(Bbk9588MachineState *board)
@@ -1192,77 +957,24 @@ static bool bbk9588_udc_irq_pending(Bbk9588MachineState *board)
              BBK9588_UDC_INTRUSBE_MASK) != 0);
 }
 
-static bool bbk9588_dmac_irq_pending(Bbk9588MmioState *s)
-{
-    if (!s) {
-        return false;
-    }
-    for (unsigned ch = 0; ch < BBK9588_DMAC_CHANNELS; ch++) {
-        uint32_t bit = 1u << ch;
-        uint32_t irq_pending =
-            s->regs[BBK9588_DMAC_IRQP_OFF / sizeof(uint32_t)];
-        uint32_t command =
-            s->regs[(ch * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_CONFIG_OFF) / sizeof(uint32_t)];
-        uint32_t status =
-            s->regs[(ch * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t)];
-
-        if (!(irq_pending & bit)) {
-            continue;
-        }
-        if ((status & (BBK9588_DMAC_DCS_AR | BBK9588_DMAC_DCS_HLT)) ||
-            ((status & BBK9588_DMAC_DCS_INV) &&
-             (command & BBK9588_DMAC_DCM_VIE)) ||
-            ((status & (BBK9588_DMAC_DCS_TT | BBK9588_DMAC_DCS_CT)) &&
-             (command & BBK9588_DMAC_DCM_TIE))) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static void bbk9588_sync_level_irq_sources(Bbk9588MachineState *board)
 {
     bbk9588_sync_tcu_irq_sources(board);
-    board->intc_pending_mask &= ~(1u << BBK9588_JZ_LCD_IRQ);
-    if (bbk9588_jz_lcd_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_JZ_LCD_IRQ;
-    }
-    if (bbk9588_dmac_irq_pending(board->dmac_mmio)) {
-        board->intc_pending_mask |= 1u << BBK9588_DMAC_AUDIO_PARENT_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_DMAC_AUDIO_PARENT_IRQ);
-    }
-    if (bbk9588_sadc_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_SADC_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_SADC_IRQ);
-    }
-    if (bbk9588_rtc_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_RTC_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_RTC_IRQ);
-    }
-    if (bbk9588_uart_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_UART_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_UART_IRQ);
-    }
-    if (bbk9588_udc_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_UDC_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_UDC_IRQ);
-    }
-    if (board->sysctrl_wake_pending) {
-        board->intc_pending_mask |= 1u << BBK9588_SYSCTRL_WAKE_PROXY_IRQ;
-    }
+    jz4740_intc_set_irq(board->intc, BBK9588_JZ_LCD_IRQ,
+                        bbk9588_jz_lcd_irq_pending(board));
+    jz4740_intc_set_irq(board->intc, BBK9588_SADC_IRQ,
+                        bbk9588_sadc_irq_pending(board));
+    jz4740_intc_set_irq(board->intc, BBK9588_RTC_IRQ,
+                        bbk9588_rtc_irq_pending(board));
+    jz4740_intc_set_irq(board->intc, BBK9588_UART_IRQ,
+                        bbk9588_uart_irq_pending(board));
+    jz4740_intc_set_irq(board->intc, BBK9588_UDC_IRQ,
+                        bbk9588_udc_irq_pending(board));
 }
 
 static bool bbk9588_sysctrl_wake_enabled(Bbk9588MachineState *board)
 {
-    return board->sysctrl_wake_enable_20 != 0 ||
-           board->sysctrl_wake_enable_24 != 0 ||
+    return jz4740_cpm_wake_enabled(board->cpm) ||
            board->extgpio_wake_enable_80 != 0;
 }
 
@@ -1273,113 +985,23 @@ static void bbk9588_sysctrl_sync_wake(Bbk9588MachineState *board)
     }
 }
 
-static bool bbk9588_sysctrl_word_access(hwaddr offset, unsigned size)
+static void bbk9588_drive_cpu_irq(Bbk9588MachineState *board)
 {
-    return (offset & 3u) == 0 && size == sizeof(uint32_t);
-}
+    bool level = board->intc_output_level || board->sysctrl_wake_pending;
+    bool ip2_level;
 
-static bool bbk9588_sysctrl_word_only_reg(hwaddr offset)
-{
-    switch (offset) {
-    case BBK9588_SYSCTRL_CPCCR_OFF:
-    case BBK9588_SYSCTRL_CPPCR_OFF:
-    case BBK9588_SYSCTRL_I2SCDR_OFF:
-    case BBK9588_SYSCTRL_LPCDR_OFF:
-    case BBK9588_SYSCTRL_MSCCDR_OFF:
-    case BBK9588_SYSCTRL_UHCCDR_OFF:
-    case BBK9588_SYSCTRL_SSICDR_OFF:
-        return true;
-    default:
-        return false;
-    }
-}
-
-static uint32_t bbk9588_sysctrl_cppcr_value(uint32_t value)
-{
-    value &= BBK9588_SYSCTRL_CPPCR_RW_MASK;
-    if (value & BBK9588_SYSCTRL_CPPCR_PLLEN) {
-        value |= BBK9588_SYSCTRL_CPPCR_PLLS;
-    }
-    return value;
-}
-
-static uint32_t bbk9588_sysctrl_write_value(Bbk9588MmioState *s,
-                                            hwaddr offset,
-                                            uint32_t value)
-{
-    if (s->window->kseg1_base != 0xb0000000) {
-        return value;
-    }
-
-    switch (offset) {
-    case BBK9588_SYSCTRL_CPCCR_OFF: /* CPCCR */
-        return value;
-    case BBK9588_SYSCTRL_LCR_OFF: /* LCR */
-        return value & BBK9588_SYSCTRL_LCR_RW_MASK;
-    case BBK9588_SYSCTRL_CPPCR_OFF: /* CPPCR */
-        return bbk9588_sysctrl_cppcr_value(value);
-    case BBK9588_SYSCTRL_CLKGR_OFF: /* CLKGR */
-        return value & BBK9588_SYSCTRL_CLKGR_RW_MASK;
-    case BBK9588_SYSCTRL_SCR_OFF: /* SCR */
-        return value & BBK9588_SYSCTRL_SCR_RW_MASK;
-    case BBK9588_SYSCTRL_I2SCDR_OFF: /* I2SCDR */
-        return value & BBK9588_SYSCTRL_I2SCDR_RW_MASK;
-    case BBK9588_SYSCTRL_LPCDR_OFF: /* LPCDR */
-        return value & BBK9588_SYSCTRL_LPCDR_RW_MASK;
-    case BBK9588_SYSCTRL_MSCCDR_OFF: /* MSCCDR */
-        return value & BBK9588_SYSCTRL_MSCCDR_RW_MASK;
-    case BBK9588_SYSCTRL_UHCCDR_OFF: /* UHCCDR */
-        return value & BBK9588_SYSCTRL_UHCCDR_RW_MASK;
-    case BBK9588_SYSCTRL_SSICDR_OFF: /* SSICDR */
-        return value & BBK9588_SYSCTRL_SSICDR_RW_MASK;
-    default:
-        return value;
-    }
-}
-
-static void bbk9588_update_irq(Bbk9588MachineState *board)
-{
-    uint32_t unmasked_pending;
-    bool level;
-
-    bbk9588_sync_level_irq_sources(board);
-    unmasked_pending = (board->intc_pending_mask & BBK9588_INTC_SOURCE_MASK) &
-                       ~board->intc_mask;
-    bbk9588_sysctrl_sync_wake(board);
-    level = unmasked_pending != 0 || board->sysctrl_wake_pending;
-    board->intc_last_unmasked_pending = unmasked_pending;
-    board->intc_last_level = level ? 1u : 0u;
-    board->intc_update_count++;
+    ip2_level = level && board->cpu_irq_output_enabled;
 
     /* Expose the BBK INTC output as the MIPS CPU IP2 level interrupt. */
-    if (board->cpu_irq && board->cpu_irq_output_enabled) {
-        qemu_set_irq(board->cpu_irq, level);
-    }
     if (board->cpu) {
-        CPUState *cs = CPU(board->cpu);
-        uint32_t ip2 = 1u << (2 + CP0Ca_IP);
-        bool ip2_level = level && board->cpu_irq_output_enabled;
-        bool ip2_deliverable;
-
         BQL_LOCK_GUARD();
         board->cpu->env.bbk9588_irq_ip2_level = ip2_level;
-        ip2_deliverable =
-            ip2_level &&
-            (board->cpu->env.CP0_Status & (1u << CP0St_IE)) &&
-            !(board->cpu->env.CP0_Status & (1u << CP0St_EXL)) &&
-            !(board->cpu->env.CP0_Status & (1u << CP0St_ERL)) &&
-            (board->cpu->env.CP0_Status & ip2);
-        if (ip2_level) {
-            board->cpu->env.CP0_Cause |= ip2;
-        } else {
-            board->cpu->env.CP0_Cause &= ~ip2;
-        }
-        if (ip2_deliverable) {
-            cs->halted = 0;
-            cpu_interrupt(cs, CPU_INTERRUPT_HARD | CPU_INTERRUPT_WAKE);
-        } else {
-            cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD | CPU_INTERRUPT_WAKE);
-        }
+    }
+    if (board->cpu_irq) {
+        qemu_set_irq(board->cpu_irq, ip2_level);
+    }
+    if (board->cpu) {
+        BQL_LOCK_GUARD();
         board->intc_last_cp0_status = board->cpu->env.CP0_Status;
         board->intc_last_cp0_cause = board->cpu->env.CP0_Cause;
     }
@@ -1394,6 +1016,34 @@ static void bbk9588_update_irq(Bbk9588MachineState *board)
     }
 }
 
+static void bbk9588_intc_output_handler(void *opaque, int n, int level)
+{
+    Bbk9588MachineState *board = opaque;
+
+    board->intc_output_level = level != 0;
+    bbk9588_drive_cpu_irq(board);
+}
+
+static void bbk9588_intc_refresh(void *opaque)
+{
+    Bbk9588MachineState *board = opaque;
+
+    bbk9588_sysctrl_sync_wake(board);
+    bbk9588_sync_level_irq_sources(board);
+}
+
+static void bbk9588_update_irq(Bbk9588MachineState *board)
+{
+    bbk9588_intc_refresh(board);
+    board->intc_output_level = jz4740_intc_output_level(board->intc);
+    bbk9588_drive_cpu_irq(board);
+}
+
+static void bbk9588_cpm_update(void *opaque)
+{
+    bbk9588_update_irq(opaque);
+}
+
 static void bbk9588_intc_resample_timer_cb(void *opaque)
 {
     Bbk9588MachineState *board = opaque;
@@ -1403,11 +1053,8 @@ static void bbk9588_intc_resample_timer_cb(void *opaque)
 
 static void bbk9588_uart_sync_irq(Bbk9588MachineState *board)
 {
-    if (bbk9588_uart_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_UART_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_UART_IRQ);
-    }
+    jz4740_intc_set_irq(board->intc, BBK9588_UART_IRQ,
+                        bbk9588_uart_irq_pending(board));
     bbk9588_update_irq(board);
 }
 
@@ -1418,366 +1065,9 @@ static void bbk9588_nand_raise_ready(Bbk9588MachineState *board)
     }
     board->nand_ready_raise_count++;
     board->gpio_flag_200 |= 0x40000000u;
-    board->intc_pending_mask |= 1u << BBK9588_NAND_READY_IRQ;
+    jz4740_intc_set_irq(board->intc, BBK9588_NAND_READY_IRQ, true);
     bbk9588_update_irq(board);
     bbk9588_touch_trace_update(board, 0x52);
-}
-
-static uint32_t bbk9588_tcu_channel_reg_index(unsigned channel, hwaddr reg)
-{
-    return (BBK9588_TCU_CHANNEL_BASE +
-            channel * BBK9588_TCU_CHANNEL_STRIDE + reg) / sizeof(uint32_t);
-}
-
-static uint32_t bbk9588_tcu_channel_tcsr(Bbk9588MmioState *s,
-                                         unsigned channel)
-{
-    return s->regs[bbk9588_tcu_channel_reg_index(
-        channel, BBK9588_TCU_TCSR_OFF)] & BBK9588_TCU_TCSR_RW_MASK;
-}
-
-static uint32_t bbk9588_tcu_prescale_divisor(uint32_t tcsr)
-{
-    switch ((tcsr & BBK9588_TCU_TCSR_PRESCALE_MASK) >>
-            BBK9588_TCU_TCSR_PRESCALE_SHIFT) {
-    case 0:
-        return 1;
-    case 1:
-        return 4;
-    case 2:
-        return 16;
-    case 3:
-        return 64;
-    case 4:
-        return 256;
-    case 5:
-        return 1024;
-    default:
-        return 0;
-    }
-}
-
-static uint32_t bbk9588_tcu_input_hz(uint32_t tcsr)
-{
-    switch (tcsr & (BBK9588_TCU_TCSR_PCK_EN |
-                    BBK9588_TCU_TCSR_RTC_EN |
-                    BBK9588_TCU_TCSR_EXT_EN)) {
-    case BBK9588_TCU_TCSR_PCK_EN:
-        return BBK9588_TCU_PCLK_HZ;
-    case BBK9588_TCU_TCSR_RTC_EN:
-        return BBK9588_TCU_RTCCLK_HZ;
-    case BBK9588_TCU_TCSR_EXT_EN:
-        return BBK9588_TCU_EXTAL_HZ;
-    default:
-        return 0;
-    }
-}
-
-static uint32_t bbk9588_tcu_tick_hz_for_tcsr(uint32_t tcsr)
-{
-    uint32_t hz = bbk9588_tcu_input_hz(tcsr);
-    uint32_t divisor = bbk9588_tcu_prescale_divisor(tcsr);
-
-    if (hz == 0 || divisor == 0) {
-        return 0;
-    }
-    return hz / divisor;
-}
-
-static uint32_t bbk9588_tcu_tick_hz(Bbk9588MmioState *s, unsigned channel)
-{
-    return bbk9588_tcu_tick_hz_for_tcsr(
-        bbk9588_tcu_channel_tcsr(s, channel));
-}
-
-static uint64_t bbk9588_tcu_ticks_to_ns(uint64_t ticks, uint32_t hz)
-{
-    uint64_t ns;
-
-    if (ticks == 0 || hz == 0) {
-        return 0;
-    }
-    ns = muldiv64_round_up(ticks, NANOSECONDS_PER_SECOND, hz);
-    return MAX(ns, 1);
-}
-
-static uint32_t bbk9588_tcu_ticks_to_ms(uint32_t ticks, uint32_t hz)
-{
-    uint64_t ms;
-
-    if (ticks == 0 || hz == 0) {
-        return 0;
-    }
-    ms = muldiv64_round_up(ticks, 1000, hz);
-    return (uint32_t)MIN(ms, (uint64_t)UINT32_MAX);
-}
-
-static bool bbk9588_tcu_counter_running(Bbk9588MmioState *s,
-                                        unsigned channel)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t bit = 1u << channel;
-
-    return channel < BBK9588_TCU_CHANNELS &&
-           (board->tcu_enabled_mask & bit) &&
-           !(board->tcu_stop_mask & bit) &&
-           bbk9588_tcu_tick_hz(s, channel) != 0;
-}
-
-static uint32_t bbk9588_tcu_current_counter(Bbk9588MmioState *s,
-                                            unsigned channel, int64_t now_ns)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t base;
-    uint32_t full;
-    uint32_t hz;
-    uint64_t elapsed_ticks;
-
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        channel = 0;
-    }
-    base = s->tcu_counter[channel] & 0xffffu;
-    if (!bbk9588_tcu_counter_running(s, channel) ||
-        now_ns <= s->tcu_counter_anchor_ns[channel]) {
-        return base;
-    }
-
-    hz = bbk9588_tcu_tick_hz(s, channel);
-    elapsed_ticks = muldiv64(now_ns - s->tcu_counter_anchor_ns[channel],
-                             hz, NANOSECONDS_PER_SECOND);
-    full = board->tcu_compare[channel] & 0xffffu;
-    if (full == 0) {
-        return (base + elapsed_ticks) & 0xffffu;
-    }
-    return (base + elapsed_ticks) % full;
-}
-
-static void bbk9588_tcu_latch_counter(Bbk9588MmioState *s, unsigned channel,
-                                      int64_t now_ns)
-{
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        return;
-    }
-    s->tcu_counter[channel] =
-        bbk9588_tcu_current_counter(s, channel, now_ns) & 0xffffu;
-    s->tcu_counter_anchor_ns[channel] = now_ns;
-}
-
-static void bbk9588_tcu_update_period_cache(Bbk9588MmioState *s,
-                                            unsigned channel)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t hz;
-    uint32_t full_ticks;
-    uint32_t half_ticks;
-
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        return;
-    }
-    hz = bbk9588_tcu_tick_hz(s, channel);
-    full_ticks = board->tcu_compare[channel] & 0xffffu;
-    half_ticks = board->tcu_half_compare[channel] & 0xffffu;
-
-    board->tcu_channel_period_ns[channel] =
-        bbk9588_tcu_ticks_to_ns(full_ticks, hz);
-    board->tcu_channel_period_ms[channel] =
-        bbk9588_tcu_ticks_to_ms(full_ticks, hz);
-
-    if (full_ticks != 0 && half_ticks <= full_ticks) {
-        board->tcu_half_channel_period_ns[channel] =
-            bbk9588_tcu_ticks_to_ns(half_ticks, hz);
-        board->tcu_half_channel_period_ms[channel] =
-            bbk9588_tcu_ticks_to_ms(half_ticks, hz);
-    } else {
-        board->tcu_half_channel_period_ns[channel] = 0;
-        board->tcu_half_channel_period_ms[channel] = 0;
-    }
-}
-
-static uint64_t bbk9588_tcu_ticks_until_match(Bbk9588MmioState *s,
-                                              unsigned channel,
-                                              uint32_t target,
-                                              int64_t now_ns)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t current;
-    uint32_t full = board->tcu_compare[channel] & 0xffffu;
-
-    if (full == 0 || target > full) {
-        return 0;
-    }
-
-    current = bbk9588_tcu_current_counter(s, channel, now_ns);
-    if (target == full) {
-        return current < full ? full - current : full;
-    }
-    if (current < target) {
-        return target - current;
-    }
-    return (uint64_t)full - current + target;
-}
-
-static int64_t bbk9588_tcu_next_deadline_ns(Bbk9588MmioState *s,
-                                            unsigned channel, bool half,
-                                            int64_t now_ns)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t bit = 1u << channel;
-    uint32_t flag = half ? (bit << BBK9588_TCU_HALF_SHIFT) : bit;
-    uint32_t target = half ? (board->tcu_half_compare[channel] & 0xffffu) :
-                      (board->tcu_compare[channel] & 0xffffu);
-    uint32_t hz;
-    uint64_t ticks;
-    uint64_t ns;
-
-    if (!bbk9588_tcu_counter_running(s, channel) ||
-        (board->tcu_pending_mask & flag)) {
-        return 0;
-    }
-
-    hz = bbk9588_tcu_tick_hz(s, channel);
-    ticks = bbk9588_tcu_ticks_until_match(s, channel, target, now_ns);
-    ns = bbk9588_tcu_ticks_to_ns(ticks, hz);
-    if (ns == 0) {
-        return 0;
-    }
-    return now_ns + ns;
-}
-
-static void bbk9588_tcu_schedule(Bbk9588MachineState *board)
-{
-    Bbk9588MmioState *s = board->tcu_mmio;
-    int64_t now_ns;
-    int64_t next_deadline = 0;
-    unsigned ch;
-
-    if (!board->tcu_irq_timer || !s) {
-        return;
-    }
-
-    now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-        int64_t full_deadline =
-            bbk9588_tcu_next_deadline_ns(s, ch, false, now_ns);
-        int64_t half_deadline =
-            bbk9588_tcu_next_deadline_ns(s, ch, true, now_ns);
-
-        board->tcu_deadline_ns[ch] = full_deadline;
-        board->tcu_half_deadline_ns[ch] = half_deadline;
-
-        if (full_deadline != 0 &&
-            (next_deadline == 0 || full_deadline < next_deadline)) {
-            next_deadline = full_deadline;
-        }
-        if (half_deadline != 0 &&
-            (next_deadline == 0 || half_deadline < next_deadline)) {
-            next_deadline = half_deadline;
-        }
-    }
-
-    if (next_deadline == 0) {
-        timer_del(board->tcu_irq_timer);
-    } else {
-        timer_mod(board->tcu_irq_timer, next_deadline);
-    }
-}
-
-static void bbk9588_tcu_raise_pending(Bbk9588MachineState *board)
-{
-    Bbk9588MmioState *s = board->tcu_mmio;
-    int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    uint32_t newly_pending = 0;
-    unsigned ch;
-
-    if (!s) {
-        return;
-    }
-
-    for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-        uint32_t bit = 1u << ch;
-        uint32_t half_bit = bit << BBK9588_TCU_HALF_SHIFT;
-
-        if (!(board->tcu_pending_mask & bit) &&
-            board->tcu_deadline_ns[ch] != 0 &&
-            now_ns >= board->tcu_deadline_ns[ch]) {
-            newly_pending |= bit;
-        }
-        if (!(board->tcu_pending_mask & half_bit) &&
-            board->tcu_half_deadline_ns[ch] != 0 &&
-            now_ns >= board->tcu_half_deadline_ns[ch]) {
-            newly_pending |= half_bit;
-        }
-    }
-    if (newly_pending) {
-        board->tcu_pending_mask |= newly_pending;
-        board->tcu_irq_raise_count++;
-        if (board->cpu_irq_output_enabled) {
-            bbk9588_wake_cpu(board);
-        }
-    }
-    bbk9588_update_irq(board);
-}
-
-static void bbk9588_tcu_timer_cb(void *opaque)
-{
-    Bbk9588MachineState *board = opaque;
-
-    bbk9588_tcu_raise_pending(board);
-    bbk9588_tcu_schedule(board);
-}
-
-static void bbk9588_tcu_update_compare(Bbk9588MmioState *s,
-                                       unsigned channel, hwaddr reg,
-                                       uint32_t compare)
-{
-    Bbk9588MachineState *board = s->board;
-    int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        return;
-    }
-    bbk9588_tcu_latch_counter(s, channel, now_ns);
-    compare &= 0xffffu;
-    s->regs[bbk9588_tcu_channel_reg_index(channel, reg)] = compare;
-    if (reg == BBK9588_TCU_TDHR_OFF) {
-        board->tcu_half_compare[channel] = compare;
-        board->tcu_half_deadline_ns[channel] = 0;
-    } else {
-        board->tcu_compare[channel] = compare;
-        if (compare != 0 && s->tcu_counter[channel] >= compare) {
-            s->tcu_counter[channel] %= compare;
-        }
-        board->tcu_deadline_ns[channel] = 0;
-    }
-    bbk9588_tcu_update_period_cache(s, channel);
-}
-
-static void bbk9588_tcu_write_counter(Bbk9588MmioState *s, unsigned channel,
-                                      uint32_t value)
-{
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        channel = 0;
-    }
-
-    value &= 0xffffu;
-    s->tcu_counter[channel] = value;
-    s->tcu_counter_anchor_ns[channel] =
-        qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    s->regs[bbk9588_tcu_channel_reg_index(
-        channel, BBK9588_TCU_TCNT_OFF)] = value;
-}
-
-static uint32_t bbk9588_tcu_read_counter(Bbk9588MmioState *s,
-                                         unsigned channel)
-{
-    uint32_t value;
-
-    if (channel >= BBK9588_TCU_CHANNELS) {
-        channel = 0;
-    }
-    value = bbk9588_tcu_current_counter(
-        s, channel, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
-    return value & 0xffffu;
 }
 
 static void bbk9588_progress_trace_schedule(Bbk9588MachineState *board)
@@ -1803,6 +1093,7 @@ static bool bbk9588_guest_ram_va_valid(uint32_t va, uint32_t size)
 static void bbk9588_progress_trace_sample(Bbk9588MachineState *board,
                                           uint32_t reason)
 {
+    JZ4740TCUDiagnostics tcu_diag;
     uint32_t base = BBK9588_PROGRESS_TRACE_VA;
     uint32_t total_size = (BBK9588_PROGRESS_TRACE_HEADER_WORDS +
                            BBK9588_PROGRESS_TRACE_SLOTS *
@@ -1826,6 +1117,7 @@ static void bbk9588_progress_trace_sample(Bbk9588MachineState *board,
         cause = env->CP0_Cause;
         status = env->CP0_Status;
     }
+    jz4740_tcu_get_diagnostics(board->tcu, &tcu_diag);
 
     seq = ++board->progress_trace_seq;
     slot = (seq - 1) % BBK9588_PROGRESS_TRACE_SLOTS;
@@ -1840,9 +1132,11 @@ static void bbk9588_progress_trace_sample(Bbk9588MachineState *board,
     bbk9588_phys_write_le32(entry + 0x00, seq);
     bbk9588_phys_write_le32(entry + 0x04, reason);
     bbk9588_phys_write_le32(entry + 0x08, pc);
-    bbk9588_phys_write_le32(entry + 0x0c, board->intc_pending_mask);
-    bbk9588_phys_write_le32(entry + 0x10, board->intc_mask);
-    bbk9588_phys_write_le32(entry + 0x14, board->tcu_pending_mask);
+    bbk9588_phys_write_le32(entry + 0x0c,
+                            jz4740_intc_pending(board->intc));
+    bbk9588_phys_write_le32(entry + 0x10,
+                            jz4740_intc_mask(board->intc));
+    bbk9588_phys_write_le32(entry + 0x14, tcu_diag.pending_mask);
     bbk9588_phys_write_le32(entry + 0x18, bbk9588_phys_read_le32(0x804bf440));
     bbk9588_phys_write_le32(entry + 0x1c, bbk9588_phys_read_le32(0x804bf444));
     bbk9588_phys_write_le32(entry + 0x20, bbk9588_phys_read_le32(0x80473f08));
@@ -1979,7 +1273,7 @@ static bool bbk9588_is_jz_lcd_window(Bbk9588MmioState *s)
 static bool bbk9588_is_msc_window(Bbk9588MmioState *s)
 {
     return s->window->kind == BBK9588_MMIO_GRAPHICS &&
-           s->window->kseg1_base == 0xb0020000;
+           s->window->kseg1_base == 0xb0021000;
 }
 
 static bool bbk9588_jz_lcd_fetch_descriptor(Bbk9588MmioState *s,
@@ -2210,6 +1504,56 @@ static bool bbk9588_perf_send_metrics(Bbk9588MachineState *board,
     if (qemu_chr_fe_write_all(&board->frame_chr, (const uint8_t *)payload,
                               sizeof(payload)) < 0) {
         return false;
+    }
+
+    if (board->aic) {
+        JZ4740AICDiagnostics diagnostics;
+        JZ4740DMACDiagnostics dmac_diagnostics;
+        uint64_t audio_payload[BBK9588_AIC_PERF_WORDS];
+
+        jz4740_aic_get_diagnostics(board->aic, &diagnostics);
+        jz4740_dmac_get_diagnostics(board->dmac, &dmac_diagnostics);
+        board->perf_seq++;
+        header[0] = cpu_to_le32(BBK9588_PERF_MAGIC);
+        header[1] = cpu_to_le32(board->perf_seq);
+        header[2] = cpu_to_le32(1);
+        header[3] = cpu_to_le32(0);
+        header[4] = cpu_to_le32(0);
+        header[5] = cpu_to_le32(BBK9588_PERF_FORMAT_AIC);
+        header[6] = cpu_to_le32(BBK9588_AIC_PERF_PAYLOAD_BYTES);
+        audio_payload[0] = cpu_to_le64(diagnostics.sample_rate);
+        audio_payload[1] = cpu_to_le64(diagnostics.tx_fifo_level);
+        audio_payload[2] = cpu_to_le64(diagnostics.rx_fifo_level);
+        audio_payload[3] = cpu_to_le64(diagnostics.flags);
+        audio_payload[4] = cpu_to_le64(diagnostics.aicfr);
+        audio_payload[5] = cpu_to_le64(diagnostics.aiccr);
+        audio_payload[6] = cpu_to_le64(diagnostics.cdccr1);
+        audio_payload[7] = cpu_to_le64(diagnostics.cdccr2);
+        audio_payload[8] = cpu_to_le64(diagnostics.tx_dma_samples);
+        audio_payload[9] = cpu_to_le64(diagnostics.rx_dma_samples);
+        audio_payload[10] = cpu_to_le64(diagnostics.output_frames);
+        audio_payload[11] = cpu_to_le64(diagnostics.input_frames);
+        audio_payload[12] = cpu_to_le64(diagnostics.underruns);
+        audio_payload[13] = cpu_to_le64(diagnostics.overruns);
+        audio_payload[14] = cpu_to_le64(dmac_diagnostics.audio_completion_count);
+        audio_payload[15] = cpu_to_le64(dmac_diagnostics.audio_rearm_count);
+        audio_payload[16] = cpu_to_le64(dmac_diagnostics.audio_last_rearm_gap_ns);
+        audio_payload[17] = cpu_to_le64(dmac_diagnostics.audio_max_rearm_gap_ns);
+        audio_payload[18] = cpu_to_le64(dmac_diagnostics.audio_total_rearm_gap_ns);
+        audio_payload[19] = cpu_to_le64(dmac_diagnostics.audio_last_gap_underruns);
+        audio_payload[20] = cpu_to_le64(dmac_diagnostics.audio_total_gap_underruns);
+        audio_payload[21] = cpu_to_le64(dmac_diagnostics.audio_last_units);
+        audio_payload[22] = cpu_to_le64(dmac_diagnostics.audio_completion_fifo);
+        audio_payload[23] = cpu_to_le64(dmac_diagnostics.audio_rearm_fifo);
+
+        if (qemu_chr_fe_write_all(&board->frame_chr,
+                                  (const uint8_t *)header,
+                                  sizeof(header)) < 0 ||
+            qemu_chr_fe_write_all(&board->frame_chr,
+                                  (const uint8_t *)audio_payload,
+                                  sizeof(audio_payload)) < 0) {
+            return false;
+        }
     }
     return true;
 }
@@ -2462,7 +1806,7 @@ static bool bbk9588_key_gpio_set_state(Bbk9588MachineState *board,
     if (was_down != down) {
         *flag |= mask;
         if (main_irq >= 0) {
-            board->intc_pending_mask |= 1u << main_irq;
+            jz4740_intc_set_irq(board->intc, main_irq, true);
             bbk9588_update_irq(board);
         }
         return true;
@@ -2486,192 +1830,6 @@ static void bbk9588_progress_trace_timer_cb(void *opaque)
     bbk9588_progress_trace_sample(board, 2);
 
     bbk9588_progress_trace_schedule(board);
-}
-
-static uint32_t bbk9588_intc_read(Bbk9588MachineState *board, hwaddr offset)
-{
-    uint32_t value;
-
-    bbk9588_update_irq(board);
-
-    switch (offset) {
-    case BBK9588_INTC_ICSR_OFF: /* ICSR: raw source status before masking */
-        value = board->intc_pending_mask & BBK9588_INTC_SOURCE_MASK;
-        break;
-    case BBK9588_INTC_ICMR_OFF: /* ICMR */
-        value = board->intc_mask;
-        break;
-    case BBK9588_INTC_ICPR_OFF: /* ICPR: active sources after masking */
-        value = (board->intc_pending_mask & ~board->intc_mask) &
-                BBK9588_INTC_SOURCE_MASK;
-        break;
-    default:
-        value = 0;
-        break;
-    }
-    board->intc_last_read_offset = (uint32_t)offset;
-    board->intc_last_read_value = value;
-    return value;
-}
-
-static void bbk9588_intc_write(Bbk9588MachineState *board, hwaddr offset,
-                               uint32_t value)
-{
-    uint32_t ack = value & 0xffffffffu;
-
-    board->intc_last_write_offset = (uint32_t)offset;
-    board->intc_last_write_value = (uint32_t)value;
-    switch (offset) {
-    case BBK9588_INTC_ICMR_OFF: /* ICMR is read/write; ICMSR/ICMCR are convenience aliases. */
-        board->intc_mask = value;
-        bbk9588_update_irq(board);
-        break;
-    case BBK9588_INTC_ICMSR_OFF:
-        board->intc_mask |= value;
-        bbk9588_update_irq(board);
-        break;
-    case BBK9588_INTC_ICMCR_OFF:
-        board->intc_mask &= ~value;
-        bbk9588_update_irq(board);
-        break;
-    case BBK9588_INTC_ICPR_OFF:
-        /* ICPR is read-only on JZ4740; sources are cleared at devices. */
-        (void)ack;
-        break;
-    default:
-        break;
-    }
-}
-
-static void bbk9588_tcu_write(Bbk9588MmioState *s, hwaddr offset,
-                              uint32_t value)
-{
-    Bbk9588MachineState *board = s->board;
-    int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    unsigned ch;
-
-    board->tcu_last_write_offset = (uint32_t)offset;
-    board->tcu_last_write_value = (uint32_t)value;
-    switch (offset) {
-    case BBK9588_TCU_TESR_OFF:
-        value &= BBK9588_TCU_MASK;
-        value &= ~board->tcu_enabled_mask;
-        for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-            uint32_t bit = 1u << ch;
-
-            if (value & bit) {
-                bbk9588_tcu_latch_counter(s, ch, now_ns);
-            }
-        }
-        board->tcu_enabled_mask |= value;
-        bbk9588_tcu_schedule(board);
-        break;
-    case BBK9588_TCU_TECR_OFF:
-        value &= BBK9588_TCU_MASK;
-        for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-            if (value & (1u << ch)) {
-                bbk9588_tcu_latch_counter(s, ch, now_ns);
-                board->tcu_deadline_ns[ch] = 0;
-                board->tcu_half_deadline_ns[ch] = 0;
-            }
-        }
-        board->tcu_enabled_mask &= ~value;
-        bbk9588_update_irq(board);
-        bbk9588_tcu_schedule(board);
-        break;
-    case BBK9588_TCU_TFSR_OFF:
-        board->tcu_pending_mask |= value & BBK9588_TCU_FLAG_MASK;
-        bbk9588_update_irq(board);
-        break;
-    case BBK9588_TCU_TFCR_OFF:
-        value &= BBK9588_TCU_FLAG_MASK;
-        board->tcu_pending_mask &= ~value;
-        bbk9588_update_irq(board);
-        bbk9588_tcu_schedule(board);
-        break;
-    case BBK9588_TCU_TSSR_OFF:
-        value &= BBK9588_TCU_MASK;
-        for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-            if (value & (1u << ch)) {
-                bbk9588_tcu_latch_counter(s, ch, now_ns);
-                board->tcu_deadline_ns[ch] = 0;
-                board->tcu_half_deadline_ns[ch] = 0;
-            }
-        }
-        board->tcu_stop_mask |= value;
-        bbk9588_tcu_schedule(board);
-        break;
-    case BBK9588_TCU_TMSR_OFF:
-        board->tcu_irq_mask |= value & BBK9588_TCU_FLAG_MASK;
-        bbk9588_update_irq(board);
-        break;
-    case BBK9588_TCU_TMCR_OFF:
-        board->tcu_irq_mask &= ~(value & BBK9588_TCU_FLAG_MASK);
-        bbk9588_update_irq(board);
-        bbk9588_tcu_schedule(board);
-        break;
-    case BBK9588_TCU_TSCR_OFF:
-        value &= BBK9588_TCU_MASK;
-        board->tcu_stop_mask &= ~value;
-        for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-            uint32_t bit = 1u << ch;
-
-            if ((value & bit) && (board->tcu_enabled_mask & bit)) {
-                bbk9588_tcu_latch_counter(s, ch, now_ns);
-            }
-        }
-        bbk9588_tcu_schedule(board);
-        break;
-    default:
-        if (offset >= BBK9588_TCU_CHANNEL_BASE &&
-            offset < BBK9588_TCU_CHANNEL_BASE +
-                     BBK9588_TCU_CHANNELS * BBK9588_TCU_CHANNEL_STRIDE &&
-            (((offset - BBK9588_TCU_CHANNEL_BASE) &
-              (BBK9588_TCU_CHANNEL_STRIDE - 1u)) == BBK9588_TCU_TDFR_OFF ||
-             ((offset - BBK9588_TCU_CHANNEL_BASE) &
-              (BBK9588_TCU_CHANNEL_STRIDE - 1u)) == BBK9588_TCU_TDHR_OFF ||
-             ((offset - BBK9588_TCU_CHANNEL_BASE) &
-              (BBK9588_TCU_CHANNEL_STRIDE - 1u)) == BBK9588_TCU_TCNT_OFF ||
-             ((offset - BBK9588_TCU_CHANNEL_BASE) &
-              (BBK9588_TCU_CHANNEL_STRIDE - 1u)) == BBK9588_TCU_TCSR_OFF)) {
-            unsigned channel =
-                (offset - BBK9588_TCU_CHANNEL_BASE) /
-                BBK9588_TCU_CHANNEL_STRIDE;
-            hwaddr reg = (offset - BBK9588_TCU_CHANNEL_BASE) &
-                         (BBK9588_TCU_CHANNEL_STRIDE - 1u);
-
-            if (reg == BBK9588_TCU_TCNT_OFF) {
-                bbk9588_tcu_write_counter(s, channel, value);
-                bbk9588_tcu_schedule(board);
-            } else if (reg == BBK9588_TCU_TCSR_OFF) {
-                bbk9588_tcu_latch_counter(s, channel, now_ns);
-                s->regs[bbk9588_tcu_channel_reg_index(channel, reg)] =
-                    value & BBK9588_TCU_TCSR_RW_MASK;
-                bbk9588_tcu_update_period_cache(s, channel);
-                bbk9588_tcu_schedule(board);
-            } else {
-                bbk9588_tcu_update_compare(s, channel, reg, value);
-                bbk9588_tcu_schedule(board);
-            }
-        }
-        break;
-    }
-}
-
-static bool bbk9588_tcu_write_uses_full_reg(hwaddr offset)
-{
-    if (offset >= BBK9588_TCU_CHANNEL_BASE &&
-        offset < BBK9588_TCU_CHANNEL_BASE +
-                 BBK9588_TCU_CHANNELS * BBK9588_TCU_CHANNEL_STRIDE) {
-        hwaddr reg = (offset - BBK9588_TCU_CHANNEL_BASE) &
-                     (BBK9588_TCU_CHANNEL_STRIDE - 1u);
-
-        return reg == BBK9588_TCU_TDFR_OFF ||
-               reg == BBK9588_TCU_TDHR_OFF ||
-               reg == BBK9588_TCU_TCNT_OFF ||
-               reg == BBK9588_TCU_TCSR_OFF;
-    }
-    return false;
 }
 
 static void bbk9588_lcd_write(Bbk9588MachineState *board, hwaddr offset,
@@ -2758,113 +1916,6 @@ static bool bbk9588_nand_page_region_is_blank(Bbk9588NandState *nand,
         nand ? nand->size : 0,
         nand ? bbk9588_nand_page_stride(nand) : BBK9588_NAND_STRIDE,
         page, column, len);
-}
-
-/*
- * Temporary MSC backend: expose block-device LBAs through the same raw OOB
- * tags that the firmware scans, without teaching the NAND controller about FAT
- * directories or resource files.  The long-term target is a fuller MSC/DMAC
- * model where firmware-owned FTL state drives these requests.
- */
-static void bbk9588_msc_oob_lba_map_clear(Bbk9588MachineState *board)
-{
-    if (!board) {
-        return;
-    }
-    g_free(board->msc_oob_lba_logical_to_physical_block);
-    g_free(board->msc_oob_lba_map_block_seq);
-    board->msc_oob_lba_logical_to_physical_block = NULL;
-    board->msc_oob_lba_map_block_seq = NULL;
-    board->msc_oob_lba_map_block_count = 0;
-    board->msc_oob_lba_map_valid = false;
-}
-
-static void bbk9588_msc_build_oob_lba_map(Bbk9588MachineState *board)
-{
-    Bbk9588NandState *nand = board ? board->nand_dev : NULL;
-    uint32_t stride = bbk9588_nand_page_stride(nand);
-    uint64_t page_count;
-    uint32_t block_count;
-
-    if (!board || !nand || !nand->data || board->msc_oob_lba_map_valid ||
-        stride < BBK9588_NAND_STRIDE) {
-        return;
-    }
-
-    page_count = nand->size / stride;
-    block_count = page_count / BBK9588_NAND_PAGES_PER_BLOCK;
-    if (block_count == 0 || block_count > BBK9588_NAND_BLOCKS) {
-        board->msc_oob_lba_map_valid = true;
-        return;
-    }
-
-    board->msc_oob_lba_logical_to_physical_block =
-        g_new(uint32_t, block_count);
-    board->msc_oob_lba_map_block_seq = g_new0(uint16_t, block_count);
-    board->msc_oob_lba_map_block_count = block_count;
-    for (uint32_t i = 0; i < block_count; i++) {
-        board->msc_oob_lba_logical_to_physical_block[i] = UINT32_MAX;
-    }
-
-    for (uint32_t physical = 0; physical < block_count; physical++) {
-        uint64_t oob = (uint64_t)physical *
-                       BBK9588_NAND_PAGES_PER_BLOCK * stride +
-                       BBK9588_NAND_PAGE_SIZE;
-        uint16_t seq;
-        uint32_t logical;
-
-        if (oob + BBK9588_NAND_SPARE_SIZE > nand->size) {
-            break;
-        }
-
-        seq = bbk9588_lduw_le(nand->data + oob +
-                              BBK9588_NAND_SPARE_SIZE - 6);
-        logical = bbk9588_ldl_le(nand->data + oob +
-                                 BBK9588_NAND_SPARE_SIZE - 4) & 0xffffu;
-        if (seq == 0xffffu || logical >= block_count) {
-            continue;
-        }
-        if (board->msc_oob_lba_logical_to_physical_block[logical] == UINT32_MAX ||
-            seq >= board->msc_oob_lba_map_block_seq[logical]) {
-            board->msc_oob_lba_logical_to_physical_block[logical] = physical;
-            board->msc_oob_lba_map_block_seq[logical] = seq;
-        }
-    }
-
-    board->msc_oob_lba_map_valid = true;
-}
-
-static uint32_t bbk9588_msc_oob_lba_to_physical_page(Bbk9588MachineState *board,
-                                                     uint32_t page,
-                                                     bool *translated)
-{
-    uint32_t logical_block = page / BBK9588_NAND_PAGES_PER_BLOCK;
-    uint32_t page_in_block = page % BBK9588_NAND_PAGES_PER_BLOCK;
-    uint32_t physical_block;
-
-    if (translated) {
-        *translated = false;
-    }
-    if (!board) {
-        return page;
-    }
-    bbk9588_msc_build_oob_lba_map(board);
-    if (!board->msc_oob_lba_map_valid ||
-        logical_block >= board->msc_oob_lba_map_block_count ||
-        !board->msc_oob_lba_logical_to_physical_block) {
-        return page;
-    }
-
-    physical_block =
-        board->msc_oob_lba_logical_to_physical_block[logical_block];
-    if (physical_block == UINT32_MAX ||
-        physical_block >= board->msc_oob_lba_map_block_count) {
-        return page;
-    }
-    if (translated && physical_block != logical_block) {
-        *translated = true;
-    }
-    return physical_block * BBK9588_NAND_PAGES_PER_BLOCK + page_in_block;
 }
 
 static void bbk9588_nand_prepare_page_read(Bbk9588NandState *nand)
@@ -3232,7 +2283,6 @@ static void bbk9588_nand_commit_program(Bbk9588NandState *nand)
             BBK9588_NAND_TARGET_EVENT_PROGRAM, page, column, first_word);
     }
     if (bbk9588_active_board) {
-        bbk9588_msc_oob_lba_map_clear(bbk9588_active_board);
         bbk9588_nand_raise_ready(bbk9588_active_board);
     }
     nand->program_page = page;
@@ -3279,7 +2329,6 @@ static void bbk9588_nand_commit_erase(Bbk9588NandState *nand)
             BBK9588_NAND_PAGES_PER_BLOCK);
     }
     if (bbk9588_active_board) {
-        bbk9588_msc_oob_lba_map_clear(bbk9588_active_board);
         bbk9588_active_board->nand_erase_count++;
         bbk9588_active_board->nand_last_page = row;
         bbk9588_active_board->nand_last_block = block_start;
@@ -3823,11 +2872,6 @@ static bool bbk9588_bootrom_load_from_nand(Bbk9588MachineState *board)
     exit(1);
 }
 
-static uint16_t bbk9588_lduw_le(const uint8_t *p)
-{
-    return p[0] | (p[1] << 8);
-}
-
 static uint32_t bbk9588_ldl_le(const uint8_t *p)
 {
     return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
@@ -3920,245 +2964,6 @@ static void bbk9588_msc_trace_record(uint32_t event,
     bbk9588_phys_write_le32(base + 32, pc);
 }
 
-static bool bbk9588_dmac_channel_offset(hwaddr offset, unsigned *channel,
-                                        hwaddr *reg_offset)
-{
-    unsigned ch = offset / BBK9588_DMAC_CHANNEL_STRIDE;
-    hwaddr reg = (offset % BBK9588_DMAC_CHANNEL_STRIDE) & ~3u;
-
-    if (ch >= BBK9588_DMAC_CHANNELS || reg > BBK9588_DMAC_DESC_OFF) {
-        return false;
-    }
-    if (channel) {
-        *channel = ch;
-    }
-    if (reg_offset) {
-        *reg_offset = reg;
-    }
-    return true;
-}
-
-static void bbk9588_dmac_sync_irq_sources(Bbk9588MmioState *s)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t irqp = 0;
-    uint32_t global_status = 0;
-    uint32_t ctrl_index = BBK9588_DMAC_CTRL_OFF / sizeof(uint32_t);
-
-    for (unsigned ch = 0; ch < BBK9588_DMAC_CHANNELS; ch++) {
-        uint32_t status =
-            s->regs[(ch * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t)];
-
-        if (status & BBK9588_DMAC_DCS_STATUS_MASK) {
-            irqp |= 1u << ch;
-        }
-        if (status & BBK9588_DMAC_DCS_AR) {
-            global_status |= BBK9588_DMAC_CTRL_AR;
-        }
-        if (status & BBK9588_DMAC_DCS_HLT) {
-            global_status |= BBK9588_DMAC_CTRL_HLT;
-        }
-    }
-    s->regs[BBK9588_DMAC_IRQP_OFF / sizeof(uint32_t)] =
-        irqp & BBK9588_DMAC_CHANNEL_MASK;
-    s->regs[ctrl_index] =
-        (s->regs[ctrl_index] &
-         ~(BBK9588_DMAC_CTRL_AR | BBK9588_DMAC_CTRL_HLT)) |
-        global_status;
-    if (bbk9588_dmac_irq_pending(s)) {
-        board->intc_pending_mask |= 1u << BBK9588_DMAC_AUDIO_PARENT_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_DMAC_AUDIO_PARENT_IRQ);
-    }
-    bbk9588_update_irq(board);
-}
-
-static void bbk9588_dmac_refresh_channel_irq(Bbk9588MmioState *s,
-                                             unsigned channel)
-{
-    if (channel >= BBK9588_DMAC_CHANNELS) {
-        return;
-    }
-    bbk9588_dmac_sync_irq_sources(s);
-}
-
-static void bbk9588_dmac_set_address_error(Bbk9588MmioState *s,
-                                           unsigned channel);
-static bool bbk9588_dmac_ram_range_valid(uint32_t addr, uint32_t bytes);
-
-static void bbk9588_dmac_set_terminal_count(Bbk9588MmioState *s,
-                                            unsigned channel)
-{
-    uint32_t count_index;
-    uint32_t status_index;
-
-    if (channel >= BBK9588_DMAC_CHANNELS) {
-        return;
-    }
-
-    count_index = (channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                   BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t);
-    status_index = (channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                    BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t);
-    s->regs[count_index] = 0;
-    s->regs[status_index] =
-        (s->regs[status_index] & ~BBK9588_DMAC_DCS_CTE) |
-        BBK9588_DMAC_DCS_TT;
-    bbk9588_dmac_refresh_channel_irq(s, channel);
-}
-
-static bool bbk9588_dmac_descriptor_address_valid(uint32_t desc_addr)
-{
-    return (desc_addr & BBK9588_DMAC_DDA_ALIGN_MASK) == 0 &&
-           bbk9588_dmac_ram_range_valid(desc_addr, BBK9588_DMAC_DESC_BYTES);
-}
-
-static uint32_t bbk9588_dmac_descriptor_next(uint32_t desc_addr,
-                                             uint32_t desc_dtc)
-{
-    uint32_t next_doa =
-        ((desc_dtc >> BBK9588_DMAC_DESC_DOA_SHIFT) & 0xffu) <<
-        BBK9588_DMAC_DDA_DOA_SHIFT;
-
-    return (desc_addr & BBK9588_DMAC_DDA_DBA_MASK) | next_doa;
-}
-
-static void bbk9588_dmac_fetch_descriptor(Bbk9588MmioState *s,
-                                          unsigned channel)
-{
-    uint32_t base = channel * BBK9588_DMAC_CHANNEL_STRIDE;
-    uint32_t bit = 1u << channel;
-    uint32_t desc_index = (base + BBK9588_DMAC_DESC_OFF) / sizeof(uint32_t);
-    uint32_t status_index =
-        (base + BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t);
-    uint32_t command_index =
-        (base + BBK9588_DMAC_CONFIG_OFF) / sizeof(uint32_t);
-    uint32_t count_index =
-        (base + BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t);
-    uint32_t desc_addr = s->regs[desc_index] & ~BBK9588_DMAC_DDA_ALIGN_MASK;
-    uint32_t command;
-    uint32_t desc_dtc;
-
-    if (channel >= BBK9588_DMAC_CHANNELS ||
-        (s->regs[status_index] & BBK9588_DMAC_DCS_NDES) ||
-        !(s->regs[status_index] & BBK9588_DMAC_DCS_CTE) ||
-        !(s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] & bit)) {
-        return;
-    }
-
-    s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] &= ~bit;
-    if (!bbk9588_dmac_descriptor_address_valid(desc_addr)) {
-        bbk9588_dmac_set_address_error(s, channel);
-        return;
-    }
-
-    command = bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DCM_OFF);
-    if ((command & BBK9588_DMAC_DCM_VM) &&
-        !(command & BBK9588_DMAC_DCM_V)) {
-        s->regs[status_index] =
-            (s->regs[status_index] & ~BBK9588_DMAC_DCS_CTE) |
-            BBK9588_DMAC_DCS_INV;
-        s->regs[command_index] = command;
-        bbk9588_dmac_refresh_channel_irq(s, channel);
-        return;
-    }
-
-    desc_dtc = bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DTC_OFF);
-    s->regs[command_index] = command;
-    s->regs[(base + BBK9588_DMAC_SOURCE_OFF) / sizeof(uint32_t)] =
-        bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DSA_OFF);
-    s->regs[(base + BBK9588_DMAC_TARGET_OFF) / sizeof(uint32_t)] =
-        bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DTA_OFF);
-    s->regs[count_index] = desc_dtc & BBK9588_DMAC_DESC_DTC_MASK;
-    bbk9588_dmac_trace_sample(s, 5, channel, desc_addr, command);
-}
-
-static void bbk9588_dmac_finish_transfer(Bbk9588MmioState *s,
-                                         unsigned channel,
-                                         uint32_t command)
-{
-    uint32_t base = channel * BBK9588_DMAC_CHANNEL_STRIDE;
-    uint32_t status_index =
-        (base + BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t);
-    uint32_t count_index =
-        (base + BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t);
-    uint32_t desc_index = (base + BBK9588_DMAC_DESC_OFF) / sizeof(uint32_t);
-    uint32_t status;
-    uint32_t desc_addr;
-    uint32_t desc_dtc;
-    uint32_t cdoa;
-
-    if (channel >= BBK9588_DMAC_CHANNELS) {
-        return;
-    }
-    if (s->regs[status_index] & BBK9588_DMAC_DCS_NDES) {
-        bbk9588_dmac_set_terminal_count(s, channel);
-        return;
-    }
-
-    desc_addr = s->regs[desc_index] & ~BBK9588_DMAC_DDA_ALIGN_MASK;
-    desc_dtc = bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DTC_OFF);
-    cdoa = ((desc_addr & BBK9588_DMAC_DDA_DOA_MASK) >>
-            BBK9588_DMAC_DDA_DOA_SHIFT) << BBK9588_DMAC_DCS_CDOA_SHIFT;
-
-    s->regs[count_index] = 0;
-    if (command & BBK9588_DMAC_DCM_VM) {
-        bbk9588_phys_write_le32(desc_addr + BBK9588_DMAC_DESC_DCM_OFF,
-                                command & ~BBK9588_DMAC_DCM_V);
-    }
-
-    status = (s->regs[status_index] &
-              ~(BBK9588_DMAC_DCS_CDOA_MASK |
-                BBK9588_DMAC_DCS_CT |
-                BBK9588_DMAC_DCS_TT)) | cdoa;
-    if (command & BBK9588_DMAC_DCM_LINK) {
-        s->regs[desc_index] =
-            bbk9588_dmac_descriptor_next(desc_addr, desc_dtc);
-        status |= BBK9588_DMAC_DCS_CT;
-    } else {
-        status = (status & ~BBK9588_DMAC_DCS_CTE) |
-                 BBK9588_DMAC_DCS_TT;
-    }
-    s->regs[status_index] = status;
-    bbk9588_dmac_refresh_channel_irq(s, channel);
-}
-
-static bool bbk9588_dmac_channel_enabled(Bbk9588MmioState *s,
-                                         unsigned channel)
-{
-    uint32_t status;
-
-    if (channel >= BBK9588_DMAC_CHANNELS ||
-        !(s->regs[BBK9588_DMAC_CTRL_OFF / sizeof(uint32_t)] &
-          BBK9588_DMAC_CTRL_DMAE)) {
-        return false;
-    }
-
-    status = s->regs[(channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                      BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t)];
-    return (status & BBK9588_DMAC_DCS_CTE) != 0;
-}
-
-static bool bbk9588_dmac_msc_channel_ready(Bbk9588MmioState *s,
-                                           unsigned channel)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t count;
-
-    bbk9588_dmac_fetch_descriptor(s, channel);
-    if (!bbk9588_dmac_channel_enabled(s, channel)) {
-        return false;
-    }
-    if ((channel == 0 && !board->msc_read_pending) ||
-        (channel == 1 && !board->msc_write_pending)) {
-        return false;
-    }
-    count = s->regs[(channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t)];
-    return count != 0;
-}
-
 static void bbk9588_nand_target_trace_record(uint32_t event,
                                              uint32_t a,
                                              uint32_t b,
@@ -4196,136 +3001,23 @@ static void bbk9588_nand_target_trace_record(uint32_t event,
     bbk9588_phys_write_le32(base + 20, pc);
 }
 
-static bool bbk9588_msc_read_oob_lba_sector(Bbk9588MachineState *board,
-                                            uint32_t lba,
-                                            uint8_t *sector)
+static bool bbk9588_msc_dma_transfer(Bbk9588MachineState *board,
+                                     unsigned channel, uint32_t source,
+                                     uint32_t target, uint32_t words)
 {
-    Bbk9588NandState *nand = board ? board->nand_dev : NULL;
-    const uint32_t sectors_per_page = BBK9588_NAND_PAGE_SIZE / 512;
-    uint64_t page;
-    uint32_t physical_page;
-    uint32_t stride;
-    uint32_t sector_in_page;
-    uint64_t offset;
-
-    if (!nand || !nand->data || !sector) {
-        return false;
-    }
-
-    stride = bbk9588_nand_page_stride(nand);
-    page = lba / sectors_per_page;
-    sector_in_page = lba % sectors_per_page;
-    if (page > UINT32_MAX) {
-        return false;
-    }
-    physical_page = bbk9588_msc_oob_lba_to_physical_page(
-        board, (uint32_t)page, NULL);
-    offset = (uint64_t)physical_page * stride + sector_in_page * 512u;
-    if (offset + 512u > nand->size) {
-        return false;
-    }
-    memcpy(sector, nand->data + offset, 512);
-    bbk9588_storage_trace_record(
-        lba, physical_page * sectors_per_page + sector_in_page,
-        bbk9588_ldl_le(sector));
-    return true;
-}
-
-static bool bbk9588_msc_write_oob_lba_sector(Bbk9588MachineState *board,
-                                             uint32_t lba,
-                                             const uint8_t *sector)
-{
-    Bbk9588NandState *nand = board ? board->nand_dev : NULL;
-    const uint32_t sectors_per_page = BBK9588_NAND_PAGE_SIZE / 512;
-    uint64_t page;
-    uint32_t physical_page;
-    uint32_t stride;
-    uint32_t sector_in_page;
-    uint64_t offset;
-
-    if (!nand || !nand->data || !sector) {
-        return false;
-    }
-
-    stride = bbk9588_nand_page_stride(nand);
-    page = lba / sectors_per_page;
-    sector_in_page = lba % sectors_per_page;
-    if (page > UINT32_MAX) {
-        return false;
-    }
-    physical_page = bbk9588_msc_oob_lba_to_physical_page(
-        board, (uint32_t)page, NULL);
-    offset = (uint64_t)physical_page * stride + sector_in_page * 512u;
-    if (offset + 512u > nand->size) {
-        return false;
-    }
-
-    memcpy(nand->data + offset, sector, 512);
-    bbk9588_nand_backend_update(nand, offset, 512);
-    bbk9588_storage_trace_record(
-        BBK9588_STORAGE_TRACE_LOGICAL_WRITE | lba,
-        physical_page * sectors_per_page + sector_in_page,
-        bbk9588_ldl_le(sector));
-    if (lba == BBK9588_NAND_TARGET_LBA) {
-        bbk9588_nand_target_trace_record(
-            BBK9588_NAND_TARGET_EVENT_LOGICAL_WRITE, lba,
-            physical_page * sectors_per_page + sector_in_page,
-            bbk9588_ldl_le(sector));
-    }
-    return true;
-}
-
-static void bbk9588_msc_complete_dma(Bbk9588MmioState *s)
-{
-    Bbk9588MachineState *board = s->board;
     bool read_pending = board->msc_read_pending;
     bool write_pending = board->msc_write_pending;
-    unsigned channel = read_pending ? 0 : 1;
     uint32_t dma_phys;
-    uint32_t words;
     uint32_t bytes;
     uint32_t sectors;
     uint8_t *buf;
     bool ok = true;
 
-    if (!read_pending && !write_pending) {
-        if (s->window->kind == BBK9588_MMIO_DMAC &&
-            s->window->kseg1_base == 0xb3020000) {
-            s->regs[(0 * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t)] = 0;
-            s->regs[(1 * BBK9588_DMAC_CHANNEL_STRIDE +
-                     BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t)] = 0;
-        } else {
-            s->regs[0x10008 / sizeof(uint32_t)] = 0;
-            s->regs[0x10028 / sizeof(uint32_t)] = 0;
-        }
-        return;
+    if ((!read_pending && !write_pending) ||
+        (read_pending && channel != 0) || (write_pending && channel != 1)) {
+        return false;
     }
-
-    if (s->window->kind == BBK9588_MMIO_DMAC &&
-        s->window->kseg1_base == 0xb3020000) {
-        if (read_pending) {
-            dma_phys = s->regs[(0 * BBK9588_DMAC_CHANNEL_STRIDE +
-                                BBK9588_DMAC_TARGET_OFF) /
-                               sizeof(uint32_t)] & 0x1fffffff;
-            words = s->regs[(0 * BBK9588_DMAC_CHANNEL_STRIDE +
-                             BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t)];
-        } else {
-            dma_phys = s->regs[(1 * BBK9588_DMAC_CHANNEL_STRIDE +
-                                BBK9588_DMAC_SOURCE_OFF) /
-                               sizeof(uint32_t)] & 0x1fffffff;
-            words = s->regs[(1 * BBK9588_DMAC_CHANNEL_STRIDE +
-                             BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t)];
-        }
-    } else {
-        if (read_pending) {
-            dma_phys = s->regs[0x10004 / sizeof(uint32_t)] & 0x1fffffff;
-            words = s->regs[0x10008 / sizeof(uint32_t)];
-        } else {
-            dma_phys = s->regs[0x10020 / sizeof(uint32_t)] & 0x1fffffff;
-            words = s->regs[0x10028 / sizeof(uint32_t)];
-        }
-    }
+    dma_phys = (read_pending ? target : source) & 0x1fffffff;
     bbk9588_storage_trace_record(
         BBK9588_STORAGE_TRACE_DMAC_TRANSFER |
         (read_pending ? 1u : 2u),
@@ -4337,26 +3029,16 @@ static void bbk9588_msc_complete_dma(Bbk9588MmioState *s)
     if (bytes == 0) {
         board->msc_read_pending = false;
         board->msc_write_pending = false;
-        if (s->window->kind == BBK9588_MMIO_DMAC &&
-            s->window->kseg1_base == 0xb3020000) {
-            bbk9588_dmac_set_terminal_count(s, channel);
-        }
-        return;
+        return true;
     }
     sectors = (bytes + 511u) / 512u;
     if (sectors == 0 || sectors > 128) {
-        return;
+        return false;
     }
 
     buf = g_malloc0(sectors * 512u);
     if (read_pending) {
-        for (uint32_t i = 0; i < sectors; i++) {
-            if (!bbk9588_msc_read_oob_lba_sector(
-                    board, board->msc_read_lba + i, buf + i * 512u)) {
-                ok = false;
-                break;
-            }
-        }
+        /* No removable MSC medium is attached by default. */
         bbk9588_msc_trace_record(BBK9588_MSC_TRACE_READ,
                                  board->msc_read_lba, dma_phys, bytes,
                                  board->msc_last_cmd, board->msc_last_arg,
@@ -4370,29 +3052,6 @@ static void bbk9588_msc_complete_dma(Bbk9588MmioState *s)
                                  board->msc_write_lba, dma_phys, bytes,
                                  board->msc_last_cmd, board->msc_last_arg,
                                  bbk9588_ldl_le(buf));
-        for (uint32_t i = 0; i < sectors; i++) {
-            if (!bbk9588_msc_write_oob_lba_sector(
-                    board, board->msc_write_lba + i, buf + i * 512u)) {
-                ok = false;
-                break;
-            }
-        }
-    }
-    if (s->window->kind == BBK9588_MMIO_DMAC &&
-        s->window->kseg1_base == 0xb3020000) {
-        bbk9588_dmac_set_terminal_count(s, channel);
-    } else {
-        if (read_pending) {
-            s->regs[0x10008 / sizeof(uint32_t)] = 0;
-            s->regs[0x10010 / sizeof(uint32_t)] =
-                (s->regs[0x10010 / sizeof(uint32_t)] & ~0x00000001u) |
-                0x00000008u;
-        } else {
-            s->regs[0x10028 / sizeof(uint32_t)] = 0;
-            s->regs[0x10030 / sizeof(uint32_t)] =
-                (s->regs[0x10030 / sizeof(uint32_t)] & ~0x00000001u) |
-                0x00000008u;
-        }
     }
     board->msc_read_pending = false;
     board->msc_write_pending = false;
@@ -4400,30 +3059,54 @@ static void bbk9588_msc_complete_dma(Bbk9588MmioState *s)
         board->msc_data_ready = true;
     }
     g_free(buf);
+    return true;
 }
 
-static void bbk9588_dmac_try_msc_transfer(Bbk9588MmioState *s,
-                                          unsigned channel)
-{
-    if (s->window->kind != BBK9588_MMIO_DMAC ||
-        s->window->kseg1_base != 0xb3020000 ||
-        channel > 1 ||
-        !bbk9588_dmac_msc_channel_ready(s, channel)) {
-        return;
-    }
-    bbk9588_msc_complete_dma(s);
-}
-
-static void bbk9588_dmac_trace_sample(Bbk9588MmioState *s, uint32_t event,
-                                       unsigned channel, hwaddr offset,
-                                       uint32_t value)
+static void bbk9588_msc_complete_dma(Bbk9588MmioState *s)
 {
     Bbk9588MachineState *board = s->board;
+    bool read_pending = board->msc_read_pending;
+    bool write_pending = board->msc_write_pending;
+    unsigned channel = read_pending ? 0 : 1;
+    uint32_t source;
+    uint32_t target;
+    uint32_t words;
+
+    if (!read_pending && !write_pending) {
+        s->regs[0x10008 / sizeof(uint32_t)] = 0;
+        s->regs[0x10028 / sizeof(uint32_t)] = 0;
+        return;
+    }
+    source = write_pending ? s->regs[0x10020 / sizeof(uint32_t)] : 0;
+    target = read_pending ? s->regs[0x10004 / sizeof(uint32_t)] : 0;
+    words = s->regs[(read_pending ? 0x10008 : 0x10028) /
+                    sizeof(uint32_t)];
+    if (!bbk9588_msc_dma_transfer(board, channel, source, target, words)) {
+        return;
+    }
+    if (read_pending) {
+        s->regs[0x10008 / sizeof(uint32_t)] = 0;
+        s->regs[0x10010 / sizeof(uint32_t)] =
+            (s->regs[0x10010 / sizeof(uint32_t)] & ~0x00000001u) |
+            0x00000008u;
+    } else {
+        s->regs[0x10028 / sizeof(uint32_t)] = 0;
+        s->regs[0x10030 / sizeof(uint32_t)] =
+            (s->regs[0x10030 / sizeof(uint32_t)] & ~0x00000001u) |
+            0x00000008u;
+    }
+}
+
+static void bbk9588_dmac_trace_sample(void *opaque, uint32_t event,
+                                      unsigned channel, hwaddr offset,
+                                      uint32_t value)
+{
+    Bbk9588MachineState *board = opaque;
     uint32_t base = BBK9588_DMAC_TRACE_VA;
     uint32_t pc = 0;
 
-    if (!board || !bbk9588_guest_ram_va_valid(base,
-                                              BBK9588_DMAC_TRACE_WORDS * 4)) {
+    if (!board || !board->storage_trace_enabled ||
+        !bbk9588_guest_ram_va_valid(base, BBK9588_DMAC_TRACE_WORDS * 4)) {
         return;
     }
 
@@ -4444,179 +3127,136 @@ static void bbk9588_dmac_trace_sample(Bbk9588MmioState *s, uint32_t event,
     bbk9588_phys_write_le32(base + 0x10, offset);
     bbk9588_phys_write_le32(base + 0x14, value);
     bbk9588_phys_write_le32(base + 0x18, pc);
-    bbk9588_phys_write_le32(base + 0x1c, board->intc_pending_mask);
-    bbk9588_phys_write_le32(base + 0x20, board->intc_mask);
-    bbk9588_phys_write_le32(base + 0x24, s->regs[0x304 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x28, s->regs[0x50 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x2c, s->regs[0x54 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x30, s->regs[0x48 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x34, s->regs[0x70 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x38, s->regs[0x74 / sizeof(uint32_t)]);
-    bbk9588_phys_write_le32(base + 0x3c, s->regs[0x68 / sizeof(uint32_t)]);
+    bbk9588_phys_write_le32(base + 0x1c,
+                            jz4740_intc_pending(board->intc));
+    bbk9588_phys_write_le32(base + 0x20,
+                            jz4740_intc_mask(board->intc));
+    bbk9588_phys_write_le32(base + 0x24,
+                            jz4740_dmac_get_reg(board->dmac, 0x304));
+    bbk9588_phys_write_le32(base + 0x28,
+                            jz4740_dmac_get_reg(board->dmac, 0x50));
+    bbk9588_phys_write_le32(base + 0x2c,
+                            jz4740_dmac_get_reg(board->dmac, 0x54));
+    bbk9588_phys_write_le32(base + 0x30,
+                            jz4740_dmac_get_reg(board->dmac, 0x48));
+    bbk9588_phys_write_le32(base + 0x34,
+                            jz4740_dmac_get_reg(board->dmac, 0x70));
+    bbk9588_phys_write_le32(base + 0x38,
+                            jz4740_dmac_get_reg(board->dmac, 0x74));
+    bbk9588_phys_write_le32(base + 0x3c,
+                            jz4740_dmac_get_reg(board->dmac, 0x68));
 }
 
-static uint32_t bbk9588_dmac_unit_bytes(uint32_t command)
+static bool bbk9588_dmac_bulk_transfer(void *opaque, unsigned channel,
+                                       uint32_t request, uint32_t source,
+                                       uint32_t target, uint32_t count,
+                                       uint32_t command)
 {
-    switch ((command & BBK9588_DMAC_DCM_TSZ_MASK) >>
-            BBK9588_DMAC_DCM_TSZ_SHIFT) {
-    case 0:
-        return 4;
-    case 1:
-        return 1;
-    case 2:
-        return 2;
-    case 3:
-        return 16;
-    case 4:
-        return 32;
-    default:
+    return bbk9588_msc_dma_transfer(opaque, channel, source, target, count);
+}
+
+static bool bbk9588_dmac_endpoint_address_valid(void *opaque,
+                                                unsigned request,
+                                                uint32_t address)
+{
+    return (request == JZ4740_DMAC_REQUEST_AIC_TX ||
+            request == JZ4740_DMAC_REQUEST_AIC_RX) &&
+           BBK9588_KSEG_TO_PHYS(address) == BBK9588_AIC_DATA_PHYS;
+}
+
+static size_t bbk9588_dmac_endpoint_write(void *opaque, unsigned request,
+                                          const uint8_t *buf, size_t bytes,
+                                          unsigned width)
+{
+    Bbk9588MachineState *board = opaque;
+
+    if (!board->aic || request != JZ4740_DMAC_REQUEST_AIC_TX) {
         return 0;
     }
+    return jz4740_aic_dma_write_tx(board->aic, buf, bytes, width);
 }
 
-static bool bbk9588_dmac_ram_range_valid(uint32_t addr, uint32_t bytes)
+static size_t bbk9588_dmac_endpoint_read(void *opaque, unsigned request,
+                                         uint8_t *buf, size_t bytes,
+                                         unsigned width)
 {
-    uint32_t phys = BBK9588_KSEG_TO_PHYS(addr);
+    Bbk9588MachineState *board = opaque;
 
-    return bytes <= BBK9588_RAM_SIZE && phys <= BBK9588_RAM_SIZE - bytes;
+    if (!board->aic || request != JZ4740_DMAC_REQUEST_AIC_RX) {
+        return 0;
+    }
+    return jz4740_aic_dma_read_rx(board->aic, buf, bytes, width);
 }
 
-static void bbk9588_dmac_set_address_error(Bbk9588MmioState *s,
-                                           unsigned channel)
+static void bbk9588_dmac_endpoint_complete(void *opaque, unsigned request)
 {
-    uint32_t status_index;
+    Bbk9588MachineState *board = opaque;
 
-    if (channel >= BBK9588_DMAC_CHANNELS) {
-        return;
+    if (board->aic && request == JZ4740_DMAC_REQUEST_AIC_TX) {
+        jz4740_aic_notify_tx_dma_boundary(board->aic);
     }
-    status_index = (channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                    BBK9588_DMAC_STATUS_OFF) / sizeof(uint32_t);
-    s->regs[status_index] |= BBK9588_DMAC_DCS_AR;
-    s->regs[BBK9588_DMAC_CTRL_OFF / sizeof(uint32_t)] |=
-        BBK9588_DMAC_CTRL_AR;
-    bbk9588_dmac_refresh_channel_irq(s, channel);
 }
 
-static void bbk9588_dmac_try_auto_ram_transfer(Bbk9588MmioState *s,
-                                               unsigned channel)
+static void bbk9588_dmac_endpoint_diagnostics(
+    void *opaque, unsigned request,
+    JZ4740DMACEndpointDiagnostics *diagnostics)
 {
-    uint32_t base;
-    uint32_t source_index;
-    uint32_t target_index;
-    uint32_t count_index;
-    uint32_t request_index;
-    uint32_t command_index;
-    uint32_t source;
-    uint32_t target;
-    uint32_t count;
-    uint32_t request;
-    uint32_t command;
-    uint32_t unit_bytes;
-    uint64_t bytes64;
-    uint32_t bytes;
-    uint32_t done = 0;
+    Bbk9588MachineState *board = opaque;
+    JZ4740AICDiagnostics aic;
 
-    if (s->window->kind != BBK9588_MMIO_DMAC ||
-        s->window->kseg1_base != 0xb3020000 ||
-        channel >= BBK9588_DMAC_CHANNELS ||
-        !bbk9588_dmac_channel_enabled(s, channel)) {
+    if (!board->aic) {
         return;
     }
-
-    base = channel * BBK9588_DMAC_CHANNEL_STRIDE;
-    source_index = (base + BBK9588_DMAC_SOURCE_OFF) / sizeof(uint32_t);
-    target_index = (base + BBK9588_DMAC_TARGET_OFF) / sizeof(uint32_t);
-    count_index = (base + BBK9588_DMAC_COUNT_OFF) / sizeof(uint32_t);
-    request_index = (base + BBK9588_DMAC_REQUEST_OFF) / sizeof(uint32_t);
-    command_index = (base + BBK9588_DMAC_CONFIG_OFF) / sizeof(uint32_t);
-
-    bbk9588_dmac_fetch_descriptor(s, channel);
-    if (!bbk9588_dmac_channel_enabled(s, channel)) {
-        return;
-    }
-
-    count = s->regs[count_index] & BBK9588_DMAC_DTC_MASK;
-    if (count == 0) {
-        return;
-    }
-    request = s->regs[request_index] & BBK9588_DMAC_DRT_MASK;
-    if (request != BBK9588_DMAC_DRT_AUTO) {
-        return;
-    }
-    command = s->regs[command_index];
-    unit_bytes = bbk9588_dmac_unit_bytes(command);
-    if (unit_bytes == 0) {
-        bbk9588_dmac_set_address_error(s, channel);
-        return;
-    }
-    bytes64 = (uint64_t)count * unit_bytes;
-    if (bytes64 == 0 || bytes64 > UINT32_MAX) {
-        bbk9588_dmac_set_address_error(s, channel);
-        return;
-    }
-    bytes = (uint32_t)bytes64;
-    source = s->regs[source_index];
-    target = s->regs[target_index];
-    if (!bbk9588_dmac_ram_range_valid(source, bytes) ||
-        !bbk9588_dmac_ram_range_valid(target, bytes)) {
-        bbk9588_dmac_set_address_error(s, channel);
-        return;
-    }
-
-    if ((command & (BBK9588_DMAC_DCM_SAI | BBK9588_DMAC_DCM_DAI)) ==
-        (BBK9588_DMAC_DCM_SAI | BBK9588_DMAC_DCM_DAI)) {
-        uint8_t chunk[4096];
-
-        while (done < bytes) {
-            uint32_t n = MIN((uint32_t)sizeof(chunk), bytes - done);
-
-            bbk9588_phys_read(source + done, chunk, n);
-            bbk9588_phys_write(target + done, chunk, n);
-            done += n;
-        }
-    } else {
-        uint8_t unit[32];
-
-        while (done < bytes) {
-            uint32_t source_addr = source +
-                ((command & BBK9588_DMAC_DCM_SAI) ? done : 0);
-            uint32_t target_addr = target +
-                ((command & BBK9588_DMAC_DCM_DAI) ? done : 0);
-
-            bbk9588_phys_read(source_addr, unit, unit_bytes);
-            bbk9588_phys_write(target_addr, unit, unit_bytes);
-            done += unit_bytes;
-        }
-    }
-    if (command & BBK9588_DMAC_DCM_SAI) {
-        s->regs[source_index] = source + bytes;
-    }
-    if (command & BBK9588_DMAC_DCM_DAI) {
-        s->regs[target_index] = target + bytes;
-    }
-    s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] &=
-        ~(1u << channel);
-    bbk9588_dmac_finish_transfer(s, channel, command);
-    bbk9588_dmac_trace_sample(s, 4, channel, base, bytes);
+    jz4740_aic_get_diagnostics(board->aic, &aic);
+    diagnostics->underruns = aic.underruns;
+    diagnostics->fifo_level = request == JZ4740_DMAC_REQUEST_AIC_RX ?
+                              aic.rx_fifo_level : aic.tx_fifo_level;
 }
 
-static void bbk9588_dmac_complete_audio_channel(Bbk9588MmioState *s,
-                                                unsigned channel)
-{
-    if (s->window->kind != BBK9588_MMIO_DMAC ||
-        s->window->kseg1_base != 0xb3020000 ||
-        (channel != 2 && channel != 3)) {
-        return;
-    }
+static const JZ4740DMACPeripheralOps bbk9588_dmac_peripheral_ops = {
+    .bulk_transfer = bbk9588_dmac_bulk_transfer,
+    .address_valid = bbk9588_dmac_endpoint_address_valid,
+    .write = bbk9588_dmac_endpoint_write,
+    .read = bbk9588_dmac_endpoint_read,
+    .complete = bbk9588_dmac_endpoint_complete,
+    .get_diagnostics = bbk9588_dmac_endpoint_diagnostics,
+    .trace = bbk9588_dmac_trace_sample,
+};
 
-    bbk9588_dmac_set_terminal_count(s, channel);
-    bbk9588_dmac_trace_sample(s, 3, channel,
-                              channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                              BBK9588_DMAC_STATUS_OFF,
-                              s->regs[(channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                                       BBK9588_DMAC_STATUS_OFF) /
-                                      sizeof(uint32_t)]);
-    bbk9588_dmac_sync_irq_sources(s);
+static void bbk9588_dmac_irq_handler(void *opaque, int n, int level)
+{
+    Bbk9588MachineState *board = opaque;
+
+    jz4740_intc_set_irq(board->intc, JZ4740_INTC_IRQ_DMA, level != 0);
+    bbk9588_update_irq(board);
+}
+
+static void bbk9588_tcu_irq_handler(void *opaque, int n, int level)
+{
+    Bbk9588MachineState *board = opaque;
+
+    (void)n;
+    (void)level;
+    bbk9588_sync_tcu_irq_sources(board);
+    bbk9588_update_irq(board);
+}
+
+static void bbk9588_tcu_event_handler(void *opaque, int n, int level)
+{
+    Bbk9588MachineState *board = opaque;
+
+    (void)n;
+    if (level && board->cpu_irq_output_enabled) {
+        bbk9588_wake_cpu(board);
+    }
+}
+
+static void bbk9588_aic_irq_handler(void *opaque, int n, int level)
+{
+    Bbk9588MachineState *board = opaque;
+
+    jz4740_intc_set_irq(board->intc, JZ4740_INTC_IRQ_AIC, level != 0);
+    bbk9588_update_irq(board);
 }
 
 static void bbk9588_touch_sync_latch(Bbk9588MachineState *board)
@@ -4627,12 +3267,18 @@ static void bbk9588_touch_sync_latch(Bbk9588MachineState *board)
 static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
                                         uint32_t reason)
 {
+    JZ4740INTCDiagnostics intc_diag;
+    JZ4740TCUDiagnostics tcu_diag;
+
     if (!board || !board->touch_trace_enabled ||
         !bbk9588_guest_ram_va_valid(BBK9588_TOUCH_TRACE_VA, 0x154)) {
         return;
     }
 
     uint32_t pc = board->cpu ? board->cpu->env.active_tc.PC : 0;
+
+    jz4740_intc_get_diagnostics(board->intc, &intc_diag);
+    jz4740_tcu_get_diagnostics(board->tcu, &tcu_diag);
 
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x00,
                             BBK9588_TOUCH_TRACE_MAGIC);
@@ -4650,7 +3296,7 @@ static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x20,
                             board->sadc_next_axis);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x24,
-                            board->intc_pending_mask);
+                            intc_diag.pending);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x28, pc);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x2c, reason);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x30,
@@ -4674,29 +3320,29 @@ static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x54,
                             board->gpio_last_flag_value);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x58,
-                            board->intc_mask);
+                            intc_diag.mask);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x5c,
-                            board->tcu_enabled_mask);
+                            tcu_diag.enabled_mask);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x60,
-                            board->tcu_pending_mask);
+                            tcu_diag.pending_mask);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x64,
-                            board->tcu_compare[0]);
+                            tcu_diag.compare[0]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x68,
-                            board->tcu_compare[1]);
+                            tcu_diag.compare[1]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x6c,
-                            board->tcu_channel_period_ms[0]);
+                            tcu_diag.period_ms[0]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x70,
-                            board->tcu_channel_period_ms[1]);
+                            tcu_diag.period_ms[1]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x74,
-                            (uint32_t)(board->tcu_deadline_ns[0] / SCALE_MS));
+                            (uint32_t)(tcu_diag.deadline_ns[0] / SCALE_MS));
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x78,
-                            (uint32_t)(board->tcu_deadline_ns[1] / SCALE_MS));
+                            (uint32_t)(tcu_diag.deadline_ns[1] / SCALE_MS));
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x7c,
-                            board->intc_last_unmasked_pending);
+                            intc_diag.unmasked_pending);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x80,
-                            board->intc_last_level);
+                            intc_diag.output_level);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x84,
-                            board->intc_update_count);
+                            intc_diag.update_count);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x88,
                             board->intc_last_cp0_status);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x8c,
@@ -4712,39 +3358,35 @@ static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
             (uint32_t)cs->interrupt_request);
     }
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x98,
-                            board->intc_last_read_offset);
+                            intc_diag.last_read_offset);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x9c,
-                            board->intc_last_read_value);
-    if (board->dmac_mmio) {
-        Bbk9588MmioState *dmac = board->dmac_mmio;
-
+                            intc_diag.last_read_value);
+    if (board->dmac) {
         bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x144,
-                                dmac->regs[0x304 / sizeof(uint32_t)]);
+                                jz4740_dmac_get_reg(board->dmac, 0x304));
         bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x148,
-                                dmac->regs[0x70 / sizeof(uint32_t)]);
+                                jz4740_dmac_get_reg(board->dmac, 0x70));
         bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x14c,
-                                dmac->regs[0x74 / sizeof(uint32_t)]);
+                                jz4740_dmac_get_reg(board->dmac, 0x74));
         bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x150,
-                                dmac->regs[0x68 / sizeof(uint32_t)]);
+                                jz4740_dmac_get_reg(board->dmac, 0x68));
     }
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xa0,
-                            board->intc_last_write_offset);
+                            intc_diag.last_write_offset);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xa4,
-                            board->intc_last_write_value);
-    bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xa8,
-                            board->intc_ack_count);
-    bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xac,
-                            board->intc_ack_tcu_count);
+                            intc_diag.last_write_value);
+    bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xa8, 0);
+    bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xac, 0);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xb0,
-                            board->tcu_last_read_offset);
+                            tcu_diag.last_read_offset);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xb4,
-                            board->tcu_last_read_value);
+                            tcu_diag.last_read_value);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xb8,
-                            board->tcu_last_write_offset);
+                            tcu_diag.last_write_offset);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xbc,
-                            board->tcu_last_write_value);
+                            tcu_diag.last_write_value);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xc0,
-                            board->tcu_irq_raise_count);
+                            tcu_diag.irq_raise_count);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xc4, 0);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0xc8,
                             board->msc_read_pending ? 1u : 0u);
@@ -4793,9 +3435,9 @@ static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
                                 board->gpio_flag_200);
     }
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x120,
-                            board->sysctrl_wake_enable_20);
+                            jz4740_cpm_clkgr_wake_mask(board->cpm));
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x124,
-                            board->sysctrl_wake_enable_24);
+                            jz4740_cpm_scr_wake_mask(board->cpm));
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x128,
                             board->extgpio_wake_enable_80);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x12c,
@@ -4803,13 +3445,13 @@ static void bbk9588_touch_trace_update(Bbk9588MachineState *board,
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x130,
                             board->sysctrl_wake_count);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x134,
-                            board->tcu_irq_mask);
+                            tcu_diag.irq_mask);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x138,
-                            board->tcu_compare[4]);
+                            tcu_diag.compare[4]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x13c,
-                            board->tcu_channel_period_ms[4]);
+                            tcu_diag.period_ms[4]);
     bbk9588_phys_write_le32(BBK9588_TOUCH_TRACE_VA + 0x140,
-                            (uint32_t)(board->tcu_deadline_ns[4] / SCALE_MS));
+                            (uint32_t)(tcu_diag.deadline_ns[4] / SCALE_MS));
 }
 
 static void bbk9588_sadc_touch_fifo_clear(Bbk9588MachineState *board)
@@ -4953,11 +3595,8 @@ static bool bbk9588_sadc_queue_next_touch_sample(Bbk9588MachineState *board)
 
 static void bbk9588_sadc_sync_irq(Bbk9588MachineState *board)
 {
-    if (bbk9588_sadc_irq_pending(board)) {
-        board->intc_pending_mask |= 1u << BBK9588_SADC_IRQ;
-    } else {
-        board->intc_pending_mask &= ~(1u << BBK9588_SADC_IRQ);
-    }
+    jz4740_intc_set_irq(board->intc, BBK9588_SADC_IRQ,
+                        bbk9588_sadc_irq_pending(board));
     if (!bbk9588_try_wait_irq_service(board)) {
         bbk9588_update_irq(board);
     }
@@ -5127,7 +3766,7 @@ static uint32_t bbk9588_gpio_level(Bbk9588MachineState *board, hwaddr offset,
             level |= 0x20000000u;
             board->gpio300_wake_pulse_available = false;
             board->sysctrl_wake_pending = false;
-            board->intc_pending_mask &= ~(1u << BBK9588_SYSCTRL_WAKE_PROXY_IRQ);
+            bbk9588_update_irq(board);
         } else {
             level &= ~0x20000000u;
         }
@@ -5174,11 +3813,7 @@ static void bbk9588_gpio_sync_irq(Bbk9588MachineState *board, uint32_t flag,
     if (irq < 0) {
         return;
     }
-    if (flag) {
-        board->intc_pending_mask |= 1u << irq;
-    } else {
-        board->intc_pending_mask &= ~(1u << irq);
-    }
+    jz4740_intc_set_irq(board->intc, irq, flag != 0);
     bbk9588_update_irq(board);
 }
 
@@ -5825,17 +4460,13 @@ static void bbk9588_msc_prepare_response(Bbk9588MmioState *s)
         board->msc_read_lba = arg >> 9;
         board->msc_read_pending = true;
         board->msc_write_pending = false;
-        if (board->dmac_mmio) {
-            bbk9588_dmac_try_msc_transfer(board->dmac_mmio, 0);
-        }
+        jz4740_dmac_kick(board->dmac);
     } else if (bbk9588_is_msc_window(s) &&
                (cmd == 0x18 || cmd == 0x19)) {
         board->msc_write_lba = arg >> 9;
         board->msc_write_pending = true;
         board->msc_read_pending = false;
-        if (board->dmac_mmio) {
-            bbk9588_dmac_try_msc_transfer(board->dmac_mmio, 1);
-        }
+        jz4740_dmac_kick(board->dmac);
     }
 }
 
@@ -5892,10 +4523,6 @@ static void bbk9588_graphics_trace_write(Bbk9588MmioState *s, hwaddr offset,
         " r0020=0x%08x r0024=0x%08x r0028=0x%08x r002c=0x%08x"
         " r0030=0x%08x r0034=0x%08x r0038=0x%08x r003c=0x%08x"
         " r0040=0x%08x r0044=0x%08x r0048=0x%08x r004c=0x%08x"
-        " r1000=0x%08x r1004=0x%08x r1008=0x%08x r100c=0x%08x"
-        " r1010=0x%08x r1014=0x%08x r1018=0x%08x r101c=0x%08x"
-        " r1020=0x%08x r1024=0x%08x r1028=0x%08x r102c=0x%08x"
-        " r1030=0x%08x r1034=0x%08x r1038=0x%08x r103c=0x%08x"
         " lcd_desc=0x%08x lcd_fb=0x%08x",
         board->graphics_trace_count - 1,
         s->window->kseg1_base,
@@ -5923,22 +4550,6 @@ static void bbk9588_graphics_trace_write(Bbk9588MmioState *s, hwaddr offset,
         s->regs[0x0044 / sizeof(uint32_t)],
         s->regs[0x0048 / sizeof(uint32_t)],
         s->regs[0x004c / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_STRPCL_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_STAT_OFF / sizeof(uint32_t)],
-        s->regs[0x1008 / sizeof(uint32_t)],
-        s->regs[0x100c / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_RESTO_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_RDTO_OFF / sizeof(uint32_t)],
-        s->regs[0x1018 / sizeof(uint32_t)],
-        s->regs[0x101c / sizeof(uint32_t)],
-        s->regs[0x1020 / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_IMASK_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_IREG_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_CMD_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_ARG_OFF / sizeof(uint32_t)],
-        s->regs[BBK9588_MSC_RES_OFF / sizeof(uint32_t)],
-        s->regs[0x1038 / sizeof(uint32_t)],
-        s->regs[0x103c / sizeof(uint32_t)],
         board->lcd_dma_desc_va,
         board->lcd_dma_frame_va);
 }
@@ -6290,102 +4901,6 @@ static void bbk9588_rtc_write(Bbk9588MachineState *board, hwaddr offset,
     bbk9588_rtc_schedule(board);
 }
 
-static uint32_t bbk9588_tcu_read(Bbk9588MmioState *s, hwaddr offset)
-{
-    Bbk9588MachineState *board = s->board;
-    uint32_t index = offset / sizeof(uint32_t);
-    uint32_t value;
-
-    /*
-     * TESR/TECR/TFSR/TFCR/TMSR/TMCR are write-command registers.
-     * Returning zero keeps byte read/modify/write sequences from replaying
-     * stale command bits.
-     */
-    if (offset == BBK9588_TCU_TESR_OFF ||
-        offset == BBK9588_TCU_TECR_OFF ||
-        offset == BBK9588_TCU_TFSR_OFF ||
-        offset == BBK9588_TCU_TFCR_OFF ||
-        offset == BBK9588_TCU_TSSR_OFF ||
-        offset == BBK9588_TCU_TMSR_OFF ||
-        offset == BBK9588_TCU_TMCR_OFF ||
-        offset == BBK9588_TCU_TSCR_OFF) {
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = 0;
-        return 0;
-    }
-    if (offset == 0x08) {
-        value = bbk9588_tcu_read_counter(s, 0);
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    if (offset == BBK9588_TCU_TER_OFF) {
-        value = board->tcu_enabled_mask;
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    if (offset == BBK9588_TCU_TSR_OFF) {
-        value = board->tcu_stop_mask;
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    if (offset == BBK9588_TCU_TFR_OFF) {
-        value = board->tcu_pending_mask;
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    if (offset == BBK9588_TCU_TMR_OFF) {
-        value = board->tcu_irq_mask;
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    if (offset >= BBK9588_TCU_CHANNEL_BASE &&
-        offset < BBK9588_TCU_CHANNEL_BASE +
-                 BBK9588_TCU_CHANNELS * BBK9588_TCU_CHANNEL_STRIDE) {
-        unsigned ch =
-            (offset - BBK9588_TCU_CHANNEL_BASE) /
-            BBK9588_TCU_CHANNEL_STRIDE;
-        hwaddr reg = (offset - BBK9588_TCU_CHANNEL_BASE) &
-                     (BBK9588_TCU_CHANNEL_STRIDE - 1u);
-
-        if (reg == BBK9588_TCU_TDFR_OFF) {
-            value = board->tcu_compare[ch];
-            board->tcu_last_read_offset = (uint32_t)offset;
-            board->tcu_last_read_value = value;
-            return value;
-        }
-        if (reg == BBK9588_TCU_TDHR_OFF) {
-            value = board->tcu_half_compare[ch];
-            board->tcu_last_read_offset = (uint32_t)offset;
-            board->tcu_last_read_value = value;
-            return value;
-        }
-        if (reg == BBK9588_TCU_TCNT_OFF) {
-            value = bbk9588_tcu_read_counter(s, ch);
-            board->tcu_last_read_offset = (uint32_t)offset;
-            board->tcu_last_read_value = value;
-            return value;
-        }
-        if (reg == BBK9588_TCU_TCSR_OFF) {
-            value = s->regs[index] & BBK9588_TCU_TCSR_RW_MASK;
-            board->tcu_last_read_offset = (uint32_t)offset;
-            board->tcu_last_read_value = value;
-            return value;
-        }
-    }
-    if (offset == 0x04 || offset == 0x0c) {
-        value = s->regs[index] | 0x00000001;
-        board->tcu_last_read_offset = (uint32_t)offset;
-        board->tcu_last_read_value = value;
-        return value;
-    }
-    return s->regs[index];
-}
-
 static uint32_t bbk9588_jz_lcd_read(Bbk9588MmioState *s, hwaddr offset)
 {
     Bbk9588MachineState *board = s->board;
@@ -6508,8 +5023,6 @@ static uint64_t bbk9588_mmio_read(void *opaque, hwaddr offset, unsigned size)
     uint32_t value;
 
     switch (s->window->kind) {
-    case BBK9588_MMIO_SYSCTRL:
-        break;
     case BBK9588_MMIO_EXTGPIO:
         if (s->window->kseg1_base == 0xb3010000 && offset == 0x10008) {
             bbk9588_msc_complete_dma(s);
@@ -6532,8 +5045,6 @@ static uint64_t bbk9588_mmio_read(void *opaque, hwaddr offset, unsigned size)
             }
         }
         break;
-    case BBK9588_MMIO_DMAC:
-        break;
     case BBK9588_MMIO_MISC:
         if (s->window->kseg1_base == 0xb0070000) {
             return bbk9588_sadc_read(board, offset);
@@ -6542,10 +5053,6 @@ static uint64_t bbk9588_mmio_read(void *opaque, hwaddr offset, unsigned size)
     case BBK9588_MMIO_RTC:
         return bbk9588_mmio_extract32(bbk9588_rtc_read(board, offset & ~3),
                                       offset, size);
-    case BBK9588_MMIO_INTC:
-        return bbk9588_mmio_extract32(bbk9588_intc_read(board, offset & ~3),
-                                      offset, size);
-        break;
     case BBK9588_MMIO_GPIO:
         if ((offset & (BBK9588_GPIO_PORT_STRIDE - 1u)) ==
             BBK9588_GPIO_PIN_OFF) {
@@ -6569,7 +5076,8 @@ static uint64_t bbk9588_mmio_read(void *opaque, hwaddr offset, unsigned size)
             offset == BBK9588_MSC_IREG_OFF) {
             return s->regs[index] | (board->msc_data_ready ? 0x00000003 : 0);
         }
-        if (offset == 0x04 || offset == BBK9588_MSC_STAT_OFF) {
+        if (bbk9588_is_msc_window(s) &&
+            offset == BBK9588_MSC_STAT_OFF) {
             return s->regs[index];
         }
         break;
@@ -6582,9 +5090,6 @@ static uint64_t bbk9588_mmio_read(void *opaque, hwaddr offset, unsigned size)
             return board->lcd_status | board->lcd_irq_status;
         }
         break;
-    case BBK9588_MMIO_TCU:
-        return bbk9588_mmio_extract32(bbk9588_tcu_read(s, offset & ~3),
-                                      offset, size);
     }
 
     value = s->regs[index] >> shift;
@@ -6643,26 +5148,6 @@ static void bbk9588_mmio_write(void *opaque, hwaddr offset,
             break;
         }
     }
-    if (s->window->kind == BBK9588_MMIO_SYSCTRL) {
-        if (bbk9588_sysctrl_word_only_reg(aligned_offset) &&
-            !bbk9588_sysctrl_word_access(offset, size)) {
-            s->regs[index] = old_reg;
-            return;
-        }
-        reg = bbk9588_sysctrl_write_value(s, aligned_offset, reg);
-        s->regs[index] = reg;
-        if (aligned_offset == BBK9588_SYSCTRL_CLKGR_OFF) {
-            board->sysctrl_wake_enable_20 =
-                reg & (0x00000080u | 0x00000200u |
-                       0x00000800u | 0x00004000u);
-            bbk9588_sysctrl_sync_wake(board);
-            bbk9588_update_irq(board);
-        } else if (aligned_offset == BBK9588_SYSCTRL_SCR_OFF) {
-            board->sysctrl_wake_enable_24 = reg & 0x00000080u;
-            bbk9588_sysctrl_sync_wake(board);
-            bbk9588_update_irq(board);
-        }
-    }
     if (s->window->kind == BBK9588_MMIO_EXTGPIO &&
         s->window->kseg1_base == 0xb3010000 &&
         offset == 0x80) {
@@ -6678,18 +5163,6 @@ static void bbk9588_mmio_write(void *opaque, hwaddr offset,
     if (s->window->kind == BBK9588_MMIO_MISC &&
         s->window->kseg1_base == 0xb0070000) {
         bbk9588_sadc_write(board, offset, value);
-    }
-    if (s->window->kind == BBK9588_MMIO_INTC) {
-        uint32_t intc_value = aligned_offset == 0x04 ? reg : lane_value;
-
-        bbk9588_intc_write(board, aligned_offset, intc_value);
-    }
-    if (s->window->kind == BBK9588_MMIO_TCU) {
-        uint32_t tcu_value =
-            bbk9588_tcu_write_uses_full_reg(aligned_offset) ?
-            reg : lane_value;
-
-        bbk9588_tcu_write(s, aligned_offset, tcu_value);
     }
     if (bbk9588_is_jz_lcd_window(s)) {
         bbk9588_jz_lcd_write(s, aligned_offset, old_reg, reg);
@@ -6722,74 +5195,6 @@ static void bbk9588_mmio_write(void *opaque, hwaddr offset,
         (offset == 0x10010 || offset == 0x10030) &&
         (reg & 0x80000001u)) {
         bbk9588_msc_complete_dma(s);
-    }
-    if (s->window->kind == BBK9588_MMIO_DMAC &&
-        s->window->kseg1_base == 0xb3020000) {
-        unsigned channel;
-        hwaddr reg_offset;
-
-        if (aligned_offset == BBK9588_DMAC_CTRL_OFF) {
-            s->regs[index] = reg & (BBK9588_DMAC_CTRL_DMAE |
-                                    BBK9588_DMAC_CTRL_PM_MASK);
-            for (channel = 0; channel < BBK9588_DMAC_CHANNELS; channel++) {
-                bbk9588_dmac_try_msc_transfer(s, channel);
-                bbk9588_dmac_try_auto_ram_transfer(s, channel);
-                if ((channel == 2 || channel == 3) &&
-                    bbk9588_dmac_channel_enabled(s, channel) &&
-                    s->regs[(channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                             BBK9588_DMAC_COUNT_OFF) /
-                            sizeof(uint32_t)] != 0) {
-                    bbk9588_dmac_complete_audio_channel(s, channel);
-                }
-            }
-            bbk9588_dmac_sync_irq_sources(s);
-        } else if (aligned_offset == BBK9588_DMAC_IRQP_OFF) {
-            /*
-             * DIRQP is a pending-status register.  JZ4740 clears CIRQn when
-             * software clears the corresponding DCSn status bit, so writes to
-             * DIRQP itself do not directly create or clear pending channels.
-             */
-            s->regs[index] &= BBK9588_DMAC_CHANNEL_MASK;
-            bbk9588_dmac_sync_irq_sources(s);
-        } else if (aligned_offset == BBK9588_DMAC_DOORBELL_OFF) {
-            s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] =
-                reg & BBK9588_DMAC_CHANNEL_MASK;
-            for (channel = 0; channel < BBK9588_DMAC_CHANNELS; channel++) {
-                bbk9588_dmac_try_auto_ram_transfer(s, channel);
-            }
-        } else if (aligned_offset == BBK9588_DMAC_DOORBELL_SET_OFF) {
-            s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] |=
-                reg & BBK9588_DMAC_CHANNEL_MASK;
-            for (channel = 0; channel < BBK9588_DMAC_CHANNELS; channel++) {
-                bbk9588_dmac_try_auto_ram_transfer(s, channel);
-            }
-        } else if (bbk9588_dmac_channel_offset(aligned_offset, &channel,
-                                               &reg_offset)) {
-            if (reg_offset == BBK9588_DMAC_STATUS_OFF) {
-                s->regs[index] = reg & (BBK9588_DMAC_DCS_NDES |
-                                        BBK9588_DMAC_DCS_CDOA_MASK |
-                                        BBK9588_DMAC_DCS_STATUS_MASK |
-                                        BBK9588_DMAC_DCS_CTE);
-            } else if (reg_offset == BBK9588_DMAC_COUNT_OFF) {
-                s->regs[index] = reg & BBK9588_DMAC_DTC_MASK;
-            } else if (reg_offset == BBK9588_DMAC_REQUEST_OFF) {
-                s->regs[index] = reg & BBK9588_DMAC_DRT_MASK;
-            } else if (reg_offset == BBK9588_DMAC_DESC_OFF) {
-                s->regs[index] = reg & ~BBK9588_DMAC_DDA_ALIGN_MASK;
-            }
-            bbk9588_dmac_trace_sample(s, 1, channel, aligned_offset,
-                                      s->regs[index]);
-            bbk9588_dmac_refresh_channel_irq(s, channel);
-            bbk9588_dmac_try_msc_transfer(s, channel);
-            bbk9588_dmac_try_auto_ram_transfer(s, channel);
-            if ((channel == 2 || channel == 3) &&
-                bbk9588_dmac_channel_enabled(s, channel) &&
-                s->regs[(channel * BBK9588_DMAC_CHANNEL_STRIDE +
-                         BBK9588_DMAC_COUNT_OFF) /
-                        sizeof(uint32_t)] != 0) {
-                bbk9588_dmac_complete_audio_channel(s, channel);
-            }
-        }
     }
     if (bbk9588_is_msc_window(s) &&
         offset == BBK9588_MSC_STRPCL_OFF && (value & 0xffffu) == 6) {
@@ -6877,6 +5282,92 @@ static void bbk9588_input_read(void *opaque, const uint8_t *buf, int size)
     }
 }
 
+static void bbk9588_create_aic_device(MachineState *machine,
+                                      Bbk9588MachineState *board)
+{
+    DeviceState *dev = qdev_new(TYPE_JZ4740_AIC);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    if (machine->audiodev) {
+        qdev_prop_set_string(dev, "audiodev", machine->audiodev);
+    }
+    board->aic_irq = qemu_allocate_irq(bbk9588_aic_irq_handler, board,
+                                       JZ4740_AIC_IRQ);
+    sysbus_realize(sbd, &error_fatal);
+    sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0020000u));
+    sysbus_connect_irq(sbd, JZ4740_AIC_IRQ, board->aic_irq);
+    sysbus_connect_irq(sbd, JZ4740_AIC_TX_DMA_REQUEST,
+                       qdev_get_gpio_in(DEVICE(board->dmac),
+                                        JZ4740_DMAC_REQUEST_AIC_TX));
+    sysbus_connect_irq(sbd, JZ4740_AIC_RX_DMA_REQUEST,
+                       qdev_get_gpio_in(DEVICE(board->dmac),
+                                        JZ4740_DMAC_REQUEST_AIC_RX));
+    board->aic = JZ4740_AIC(dev);
+}
+
+static void bbk9588_create_intc_device(Bbk9588MachineState *board)
+{
+    DeviceState *dev = qdev_new(TYPE_JZ4740_INTC);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    board->intc_irq = qemu_allocate_irq(bbk9588_intc_output_handler, board,
+                                        0);
+    sysbus_realize(sbd, &error_fatal);
+    sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0001000u));
+    sysbus_connect_irq(sbd, 0, board->intc_irq);
+    board->intc = JZ4740_INTC(dev);
+    jz4740_intc_set_refresh(board->intc, bbk9588_intc_refresh, board);
+    board->intc_output_level = jz4740_intc_output_level(board->intc);
+}
+
+static void bbk9588_create_cpm_device(Bbk9588MachineState *board)
+{
+    DeviceState *dev = qdev_new(TYPE_JZ4740_CPM);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    sysbus_realize(sbd, &error_fatal);
+    sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0000000u));
+    board->cpm = JZ4740_CPM(dev);
+    jz4740_cpm_set_update(board->cpm, bbk9588_cpm_update, board);
+}
+
+static void bbk9588_create_tcu_device(Bbk9588MachineState *board)
+{
+    DeviceState *dev = qdev_new(TYPE_JZ4740_TCU);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    qdev_prop_set_uint32(dev, "period-ms", board->tcu_period_ms);
+    for (unsigned output = 0; output < JZ4740_TCU_NUM_OUTPUTS; output++) {
+        board->tcu_irq[output] = qemu_allocate_irq(
+            output == JZ4740_TCU_EVENT ? bbk9588_tcu_event_handler :
+                                        bbk9588_tcu_irq_handler,
+            board, output);
+    }
+    sysbus_realize(sbd, &error_fatal);
+    sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0002000u));
+    board->tcu = JZ4740_TCU(dev);
+    for (unsigned output = 0; output < JZ4740_TCU_NUM_OUTPUTS; output++) {
+        sysbus_connect_irq(sbd, output, board->tcu_irq[output]);
+    }
+    bbk9588_sync_tcu_irq_sources(board);
+}
+
+static void bbk9588_create_dmac_device(MachineState *machine,
+                                       Bbk9588MachineState *board)
+{
+    DeviceState *dev = qdev_new(TYPE_JZ4740_DMAC);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    qdev_prop_set_uint64(dev, "ram-size", machine->ram_size);
+    board->dmac_irq = qemu_allocate_irq(bbk9588_dmac_irq_handler, board, 0);
+    sysbus_realize(sbd, &error_fatal);
+    sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb3020000u));
+    sysbus_connect_irq(sbd, 0, board->dmac_irq);
+    board->dmac = JZ4740_DMAC(dev);
+    jz4740_dmac_set_peripheral_ops(board->dmac,
+                                   &bbk9588_dmac_peripheral_ops, board);
+}
+
 static void bbk9588_map_mmio_window(MachineState *machine,
                                     Bbk9588MachineState *board,
                                     const Bbk9588MmioWindow *window)
@@ -6885,18 +5376,6 @@ static void bbk9588_map_mmio_window(MachineState *machine,
 
     s->window = window;
     s->board = board;
-    if (window->kind == BBK9588_MMIO_DMAC &&
-        window->kseg1_base == 0xb3020000) {
-        board->dmac_mmio = s;
-    }
-    if (window->kind == BBK9588_MMIO_TCU) {
-        int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-
-        board->tcu_mmio = s;
-        for (unsigned ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-            s->tcu_counter_anchor_ns[ch] = now_ns;
-        }
-    }
     if (window->kind == BBK9588_MMIO_GRAPHICS &&
         window->kseg1_base == 0xb3050000) {
         board->jz_lcd_mmio = s;
@@ -6919,29 +5398,6 @@ static void bbk9588_map_mmio_window(MachineState *machine,
             s->regs[(base + BBK9588_GPIO_IM_OFF) / sizeof(uint32_t)] =
                 BBK9588_GPIO_IM_RESET;
         }
-    }
-    if (window->kind == BBK9588_MMIO_SYSCTRL &&
-        window->kseg1_base == 0xb0000000) {
-        s->regs[BBK9588_SYSCTRL_CPCCR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_CPCCR_RESET;
-        s->regs[BBK9588_SYSCTRL_LCR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_LCR_RESET;
-        s->regs[BBK9588_SYSCTRL_CPPCR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_CPPCR_RESET;
-        s->regs[BBK9588_SYSCTRL_CLKGR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_CLKGR_RESET;
-        s->regs[BBK9588_SYSCTRL_SCR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_SCR_RESET;
-        s->regs[BBK9588_SYSCTRL_I2SCDR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_I2SCDR_RESET;
-        s->regs[BBK9588_SYSCTRL_LPCDR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_LPCDR_RESET;
-        s->regs[BBK9588_SYSCTRL_MSCCDR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_MSCCDR_RESET;
-        s->regs[BBK9588_SYSCTRL_UHCCDR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_UHCCDR_RESET;
-        s->regs[BBK9588_SYSCTRL_SSICDR_OFF / sizeof(uint32_t)] =
-            BBK9588_SYSCTRL_SSICDR_RESET;
     }
     memory_region_init_io(&s->mr, OBJECT(machine), &bbk9588_mmio_ops, s,
                           window->name, window->size);
@@ -7061,6 +5517,9 @@ static void bbk9588_set_cpu_irq_output(Object *obj, bool value, Error **errp)
     Bbk9588MachineState *board = BBK9588_MACHINE(obj);
 
     board->cpu_irq_output_enabled = value;
+    if (board->cpu) {
+        bbk9588_drive_cpu_irq(board);
+    }
 }
 
 static bool bbk9588_get_storage_trace(Object *obj, Error **errp)
@@ -7221,10 +5680,38 @@ static void bbk9588_instance_finalize(Object *obj)
 {
     Bbk9588MachineState *board = BBK9588_MACHINE(obj);
 
+    if (board->aic) {
+        object_unref(OBJECT(board->aic));
+    }
+    if (board->aic_irq) {
+        qemu_free_irq(board->aic_irq);
+    }
+    if (board->intc) {
+        object_unref(OBJECT(board->intc));
+    }
+    if (board->intc_irq) {
+        qemu_free_irq(board->intc_irq);
+    }
+    if (board->cpm) {
+        object_unref(OBJECT(board->cpm));
+    }
+    if (board->dmac) {
+        object_unref(OBJECT(board->dmac));
+    }
+    if (board->dmac_irq) {
+        qemu_free_irq(board->dmac_irq);
+    }
+    if (board->tcu) {
+        object_unref(OBJECT(board->tcu));
+    }
+    for (unsigned output = 0; output < JZ4740_TCU_NUM_OUTPUTS; output++) {
+        if (board->tcu_irq[output]) {
+            qemu_free_irq(board->tcu_irq[output]);
+        }
+    }
     if (board->nand_dev) {
         object_unref(OBJECT(board->nand_dev));
     }
-    bbk9588_msc_oob_lba_map_clear(board);
     g_free(board->input_chardev);
     g_free(board->frame_chardev);
     g_free(board->nand_image);
@@ -7276,10 +5763,6 @@ static void bbk9588_instance_init(Object *obj)
     board->msc_last_dma_phys = 0;
     board->msc_last_dma_words = 0;
     board->msc_dma_complete_count = 0;
-    board->msc_oob_lba_map_valid = false;
-    board->msc_oob_lba_map_block_count = 0;
-    board->msc_oob_lba_logical_to_physical_block = NULL;
-    board->msc_oob_lba_map_block_seq = NULL;
     board->rtc_control = BBK9588_RTC_RTCCR_RESET & ~BBK9588_RTC_RTCCR_WRDY;
     board->rtc_base_seconds = bbk9588_rtc_host_seconds();
     board->rtc_base_ns = qemu_clock_get_ns(rtc_clock);
@@ -7303,7 +5786,7 @@ static void bbk9588_instance_init(Object *obj)
     board->perf_seq = 0;
     board->perf_last_send_ms = 0;
     board->cpu_irq_output_enabled = true;
-    board->intc_mask = BBK9588_INTC_RESET_MASK;
+    board->intc_output_level = false;
     board->storage_trace_enabled = false;
     board->graphics_trace_enabled = false;
     board->touch_trace_enabled = false;
@@ -7323,21 +5806,7 @@ static void bbk9588_instance_init(Object *obj)
     board->lcd_scanout_not_before_ms = 0;
     board->lcd_frame_stable_not_before_ms = 0;
     board->lcd_frame_chardev_sent_valid = false;
-    board->tcu_enabled_mask = 0;
-    board->tcu_stop_mask = 0;
-    board->tcu_pending_mask = 0;
-    board->tcu_irq_mask = 0;
     board->tcu_period_ms = 10;
-    for (unsigned ch = 0; ch < BBK9588_TCU_CHANNELS; ch++) {
-        board->tcu_compare[ch] = board->tcu_period_ms * 1000u;
-        board->tcu_half_compare[ch] = board->tcu_period_ms * 1000u;
-        board->tcu_channel_period_ms[ch] = board->tcu_period_ms;
-        board->tcu_half_channel_period_ms[ch] = board->tcu_period_ms;
-        board->tcu_channel_period_ns[ch] = 0;
-        board->tcu_half_channel_period_ns[ch] = 0;
-        board->tcu_deadline_ns[ch] = 0;
-        board->tcu_half_deadline_ns[ch] = 0;
-    }
     board->progress_trace_period_ms = 0;
     board->lcd_refresh_period_ms = BBK9588_LCD_VBLANK_PERIOD_MS;
 }
@@ -7388,8 +5857,6 @@ static void bbk9588_init(MachineState *machine)
     board->intc_resample_timer = timer_new_ms(QEMU_CLOCK_REALTIME,
                                               bbk9588_intc_resample_timer_cb,
                                               board);
-    board->tcu_irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
-                                        bbk9588_tcu_timer_cb, board);
     board->rtc_timer = timer_new_ns(rtc_clock, bbk9588_rtc_timer_cb, board);
     bbk9588_rtc_schedule(board);
     board->sadc_timer = timer_new_ms(QEMU_CLOCK_REALTIME,
@@ -7446,27 +5913,18 @@ static void bbk9588_init(MachineState *machine)
     board->sadc_last_read_value = 0;
     board->sadc_last_write_offset = 0;
     board->sadc_last_write_value = 0;
-    board->intc_last_read_offset = 0;
-    board->intc_last_read_value = 0;
-    board->intc_last_write_offset = 0;
-    board->intc_last_write_value = 0;
-    board->intc_ack_count = 0;
-    board->intc_ack_tcu_count = 0;
-    board->sysctrl_wake_enable_20 = 0;
-    board->sysctrl_wake_enable_24 = 0;
     board->extgpio_wake_enable_80 = 0;
     board->sysctrl_wake_pending = false;
     board->gpio300_wake_pulse_available = false;
     board->sysctrl_wake_count = 0;
-    board->tcu_last_read_offset = 0;
-    board->tcu_last_read_value = 0;
-    board->tcu_last_write_offset = 0;
-    board->tcu_last_write_value = 0;
-    board->tcu_irq_raise_count = 0;
     board->gpio_last_read_offset = 0;
     board->gpio_last_read_value = 0;
     board->gpio_last_flag_offset = 0;
     board->gpio_last_flag_value = 0;
+    bbk9588_create_intc_device(board);
+    bbk9588_create_tcu_device(board);
+    bbk9588_create_cpm_device(board);
+    bbk9588_create_dmac_device(machine, board);
     bbk9588_create_nand_device(board);
     bbk9588_load_nand_image(board);
     bbk9588_touch_sync_latch(board);
@@ -7474,6 +5932,7 @@ static void bbk9588_init(MachineState *machine)
     for (size_t i = 0; i < ARRAY_SIZE(bbk9588_mmio_windows); i++) {
         bbk9588_map_mmio_window(machine, board, &bbk9588_mmio_windows[i]);
     }
+    bbk9588_create_aic_device(machine, board);
 
     bbk9588_load_firmware(machine);
     bbk9588_progress_trace_schedule(board);
@@ -7583,6 +6042,7 @@ static void bbk9588_machine_class_init(ObjectClass *oc, const void *data)
     mc->no_parallel = true;
     mc->no_floppy = true;
     mc->no_cdrom = true;
+    machine_add_audiodev_property(mc);
 }
 
 static const TypeInfo bbk9588_machine_typeinfo = {

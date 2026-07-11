@@ -120,6 +120,7 @@ HTML = r"""<!doctype html>
         <div class="row" style="margin-top:10px">
           <input id="nandImagePath" class="path-input" placeholder="NAND 镜像路径">
           <button id="applyNandImage">切换并重启</button>
+          <button id="restoreNandImage" class="warn" title="恢复基础 NAND 镜像">↺ 恢复</button>
         </div>
         <div id="imageStatus" class="muted image-status" style="margin-top:8px"></div>
       </section>
@@ -450,6 +451,19 @@ function formatGuestIps(perf) {
   if (ips >= 1000) return `${(ips / 1000).toFixed(1)} Kips`;
   return `${ips.toFixed(0)} ips`;
 }
+function formatCounter(value) {
+  const count = Number(value || 0);
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+  return `${Math.max(0, Math.floor(count))}`;
+}
+function formatAudioMode(audio) {
+  if (!audio || !audio.packet_count) return 'waiting';
+  const mode = audio.playing && audio.recording ? 'play+rec' :
+    audio.playing ? 'play' : audio.recording ? 'record' : 'idle';
+  const rate = audio.sample_rate_hz ? ` ${audio.sample_rate_hz} Hz` : '';
+  return `${mode}${rate}${audio.muted ? ' muted' : ''}`;
+}
 async function refreshImages() {
   const catalog = await api('/api/images');
   const images = Array.isArray(catalog.images) ? catalog.images : [];
@@ -491,6 +505,30 @@ async function applyNandImage() {
     renderStatus(status);
     await refreshImages();
     connectWs().catch(console.error);
+  } catch (err) {
+    imageStatusEl.textContent = String(err.message || err);
+  }
+}
+async function restoreNandImage() {
+  const path = (nandImagePath.value || nandImageSelect.value || '').trim();
+  if (!path) {
+    imageStatusEl.textContent = '没有可用镜像';
+    return;
+  }
+  if (!window.confirm('恢复基础镜像会删除这个镜像的全部持久化写入。继续？')) return;
+  imageStatusEl.textContent = '正在恢复基础镜像...';
+  setContinuousActive(false);
+  stopPolling();
+  try {
+    const status = await api('/api/command', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({op:'restore-nand-image', path})
+    });
+    renderStatus(status);
+    await refreshImages();
+    connectWs().catch(console.error);
+    imageStatusEl.textContent = `已恢复 ${basename(path)}`;
   } catch (err) {
     imageStatusEl.textContent = String(err.message || err);
   }
@@ -572,6 +610,7 @@ function renderStatus(s) {
   applyFrontendOrientation(s.orientation || currentOrientation);
   frontendInputCalibrationEl.checked = Boolean(s.frontend_input_calibration);
   const qemuPerf = s.qemu?.performance || {};
+  const qemuAudio = qemuPerf.audio || {};
   const frontendPerf = s.frontend_performance || {};
   const rows = [
     ['running', s.running],
@@ -584,8 +623,16 @@ function renderStatus(s) {
     ['png fps', formatRate(frontendPerf.screen_png_fps, 'fps')],
     ['qemu cpu', formatPercent(firstNumber(qemuPerf.qemu_cpu_one_core_percent, qemuPerf.qemu_cpu_host_percent))],
     ['guest ips', formatGuestIps(qemuPerf)],
+    ['audio', formatAudioMode(qemuAudio)],
+    ['audio fifo', `tx ${qemuAudio.tx_fifo_level ?? 0} / rx ${qemuAudio.rx_fifo_level ?? 0}`],
+    ['audio dma', `tx ${formatCounter(qemuAudio.tx_dma_samples)} / rx ${formatCounter(qemuAudio.rx_dma_samples)}`],
+    ['audio frames', `out ${formatCounter(qemuAudio.output_frames)} / in ${formatCounter(qemuAudio.input_frames)}`],
+    ['audio xrun', `${formatCounter(qemuAudio.underruns)} / ${formatCounter(qemuAudio.overruns)}`],
     ['boot', s.boot_mode || ''],
     ['nand', basename(s.nand_image || '')],
+    ['nand writes', s.qemu?.nand_writes_persistent ? 'persistent' : 'disposable'],
+    ['nand checkpoint', basename(s.qemu?.nand_checkpoint_image || '')],
+    ['nand runtime', basename(s.qemu?.nand_runtime_image || '')],
     ['orientation', s.orientation || ''],
     ['input calib', `${s.frontend_input_calibration ? 'on' : 'off'}:${s.frontend_input_calibration_stage_label || s.frontend_input_calibration_stage || 0}`],
     ['touch queue', s.pending_touches ?? 0],
@@ -875,6 +922,7 @@ document.getElementById('reloadImages').onclick = () => refreshImages().catch(er
   imageStatusEl.textContent = String(err.message || err);
 });
 document.getElementById('applyNandImage').onclick = applyNandImage;
+document.getElementById('restoreNandImage').onclick = restoreNandImage;
 rotateLeftEl.onclick = () => requestRotation(-1);
 rotateRightEl.onclick = () => requestRotation(1);
 
@@ -1175,6 +1223,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional legacy C200 RAM preload for uboot mode.",
     )
     ap.add_argument("--nand-image", type=Path, help="Raw NAND image backing the frontend emulator.")
+    ap.add_argument(
+        "--qemu-persist-nand",
+        dest="qemu_persist_nand",
+        action="store_true",
+        default=True,
+        help="Reuse a persistent writable NAND copy across QEMU and Web restarts.",
+    )
+    ap.add_argument(
+        "--no-qemu-persist-nand",
+        dest="qemu_persist_nand",
+        action="store_false",
+        help="Use and delete a disposable writable NAND copy.",
+    )
     ap.add_argument(
         "--frontend-input-calibration",
         dest="frontend_input_calibration",

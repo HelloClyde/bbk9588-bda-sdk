@@ -25,19 +25,30 @@ from emu.qemu.system import (
     QEMU_BBK_FRAME_FORMAT_RGB565,
     QEMU_BBK_FRAME_HEADER,
     QEMU_BBK_FRAME_MAGIC,
+    QEMU_BBK_PERF_MAGIC,
+    QEMU_BBK_PERF_FORMAT_AIC,
+    QEMU_BBK_AIC_PERF_PAYLOAD,
     QemuPayload,
     QemuProcessBackend,
     QemuSystemConfig,
     build_bbk_qemu_config,
     build_qemu_command,
     classify_guest_pc,
+    commit_runtime_nand_checkpoint,
     decode_cp0,
     find_qemu,
     find_workspace_file,
     prepare_runtime_nand_image,
+    persistent_runtime_nand_checkpoint_path,
+    restore_runtime_nand_checkpoint,
     qemu_subprocess_env,
 )
 from emu.qemu.check_source_tree import inspect_qemu_source
+from emu.test.qemu_audio_wav import (
+    analyze_pcm_wav,
+    finalize_qemu_wav_header,
+    validate_audio_regression,
+)
 from emu.web.frontend_state import (
     FRONTEND_INPUT_CALIBRATION_TARGETS,
     FrontendState,
@@ -193,6 +204,11 @@ class QemuSystemCommandTests(unittest.TestCase):
         method = self._testMethodName
         if any(fragment in method for fragment in self.LEGACY_PYTHON_GDB_HOOK_TEST_FRAGMENTS):
             self.skipTest("legacy Python/GDB hook or fastpath test; current default path is QEMU C machine modeling")
+
+    @staticmethod
+    def _frontend_state_without_qemu(args: argparse.Namespace) -> FrontendState:
+        with mock.patch.object(FrontendState, "reset", return_value={}):
+            return FrontendState(args)
 
     def test_decode_cp0_interrupt_state(self) -> None:
         decoded = decode_cp0(status=0x10000403, cause=0x00800400, epc=0x800043CC)
@@ -377,6 +393,14 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertFalse(any("C200.bin" in arg for arg in command), command)
         self.assertFalse(any("u_boot_9588_4740.bin" in arg for arg in command), command)
         self.assertFalse(any(arg.startswith("loader,file=") for arg in command), command)
+        self.assertFalse(config.persist_nand_writes)
+
+        persistent = build_bbk_qemu_config(
+            nand_image=nand,
+            machine="bbk9588",
+            persist_nand_writes=True,
+        )
+        self.assertTrue(persistent.persist_nand_writes)
 
     def test_bbk9588_bootrom_source_does_not_load_fat_kernel(self) -> None:
         source = (
@@ -388,7 +412,7 @@ class QemuSystemCommandTests(unittest.TestCase):
             / "bbk9588.c"
         ).read_text(encoding="utf-8")
         start = source.index("static bool bbk9588_bootrom_load_from_nand")
-        end = source.index("static uint16_t bbk9588_lduw_le", start)
+        end = source.index("static uint32_t bbk9588_ldl_le", start)
         bootrom_load = source[start:end]
         helper_start = source.index("static bool bbk9588_bootrom_nand_page_valid")
         helper_end = source.index("static bool bbk9588_bootrom_load_raw_payload", helper_start)
@@ -519,8 +543,12 @@ class QemuSystemCommandTests(unittest.TestCase):
             / "bbk9588.c"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("static bool bbk9588_msc_read_oob_lba_sector", source)
-        self.assertIn("static bool bbk9588_msc_write_oob_lba_sector", source)
+        self.assertNotIn("msc_oob_lba", source)
+        msc_start = source.index("static bool bbk9588_msc_dma_transfer")
+        msc_end = source.index("static void bbk9588_msc_complete_dma", msc_start)
+        msc_dma = source[msc_start:msc_end]
+        self.assertNotIn("nand_dev", msc_dma)
+        self.assertNotIn("Bbk9588NandState", msc_dma)
         self.assertNotIn("bbk9588_read_ftl_logical_sector", source)
         self.assertNotIn("bbk9588_write_ftl_logical_sector", source)
         self.assertNotIn("legacy-storage-bridge", source)
@@ -944,6 +972,8 @@ class QemuSystemCommandTests(unittest.TestCase):
 
         self.assertIn("#define BBK9588_PERF_MAGIC         0x504b4242u", board)
         self.assertIn("#define BBK9588_PERF_FORMAT_GUEST_INSNS 0x00004950u", board)
+        self.assertIn("#define BBK9588_PERF_FORMAT_AIC  0x00434941u", board)
+        self.assertIn("jz4740_aic_get_diagnostics(board->aic, &diagnostics);", board)
         self.assertIn("bbk9588_perf_maybe_send_metrics(board, now);", board)
         self.assertIn("bbk9588_guest_insn_count_enabled", cpu_h)
         self.assertIn("uint64_t bbk9588_guest_insn_count;", cpu_h)
@@ -951,6 +981,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("tcg_gen_addi_i64(count, count, ctx->base.num_insns);", translate)
         self.assertIn("QEMU_BBK_PERF_MAGIC = 0x504B4242", system)
         self.assertIn("QEMU_BBK_PERF_PAYLOAD = struct.Struct(\"<QQ\")", system)
+        self.assertIn("QEMU_BBK_AIC_PERF_PAYLOAD = struct.Struct(\"<24Q\")", system)
 
     def test_qemu_source_tree_check_rejects_binary_install_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1019,171 +1050,140 @@ class QemuSystemCommandTests(unittest.TestCase):
             self.assertEqual(dst.read_text(encoding="utf-8"), "overlay content\n")
             self.assertGreater(dst.stat().st_mtime, src.stat().st_mtime + 1.0)
 
+    def test_qemu_windows_build_runs_multiline_bash_from_script_file(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "qemu"
+            / "scripts"
+            / "build_qemu_windows.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('[System.IO.File]::WriteAllText(', script)
+        self.assertIn('& $MsysBash $buildScriptPosix', script)
+        self.assertIn('Remove-Item -LiteralPath $buildScript', script)
+        self.assertNotIn('& $MsysBash -lc $configure', script)
+
     def test_bbk9588_intc_tcu_source_follows_jz4740_register_semantics(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1]
-            / "qemu"
-            / "source-overlay"
-            / "hw"
-            / "mips"
-            / "bbk9588.c"
+        overlay = Path(__file__).resolve().parents[1] / "qemu" / "source-overlay"
+        board = (overlay / "hw" / "mips" / "bbk9588.c").read_text(
+            encoding="utf-8"
+        )
+        intc_source = (overlay / "hw" / "intc" / "jz4740_intc.c").read_text(
+            encoding="utf-8"
+        )
+        intc_header = (
+            overlay / "include" / "hw" / "intc" / "jz4740_intc.h"
         ).read_text(encoding="utf-8")
-        tcu_write_start = source.index("static void bbk9588_tcu_write")
-        tcu_write_end = source.index("static bool bbk9588_tcu_write_uses_full_reg", tcu_write_start)
-        tcu_write = source[tcu_write_start:tcu_write_end]
-        tcu_read_start = source.index("static uint32_t bbk9588_tcu_read")
-        tcu_read_end = source.index("static uint32_t bbk9588_jz_lcd_read", tcu_read_start)
-        tcu_read = source[tcu_read_start:tcu_read_end]
-        sync_start = source.index("static void bbk9588_sync_tcu_irq_sources")
-        sync_end = source.index("static bool bbk9588_jz_lcd_irq_pending", sync_start)
-        sync_tcu = source[sync_start:sync_end]
-        schedule_start = source.index("static void bbk9588_tcu_schedule")
-        schedule_end = source.index("static void bbk9588_tcu_timer_cb", schedule_start)
-        schedule_tcu = source[schedule_start:schedule_end]
-
-        self.assertIn("#define BBK9588_TCU_CHANNELS       8u", source)
-        self.assertIn("#define BBK9588_TCU_TSR_OFF        0x1cu", source)
-        self.assertIn("#define BBK9588_TCU_TSSR_OFF       0x2cu", source)
-        self.assertIn("#define BBK9588_TCU_TSCR_OFF       0x3cu", source)
-        self.assertIn("#define BBK9588_TCU_HALF_SHIFT     16u", source)
-        self.assertIn("#define BBK9588_TCU_FLAG_MASK", source)
-        self.assertIn("#define BBK9588_INTC_ICSR_OFF      0x00u", source)
-        self.assertIn("#define BBK9588_INTC_ICMR_OFF      0x04u", source)
-        self.assertIn("#define BBK9588_INTC_ICMSR_OFF     0x08u", source)
-        self.assertIn("#define BBK9588_INTC_ICMCR_OFF     0x0cu", source)
-        self.assertIn("#define BBK9588_INTC_ICPR_OFF      0x10u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_LCD       30u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_GPIO3     25u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_UDC       24u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_TCU0      23u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_TCU1      22u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_TCU2      21u", source)
-        self.assertIn("#define BBK9588_INTC_IRQ_DMA       20u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_WAKE_PROXY_IRQ BBK9588_INTC_IRQ_TCU1", source)
-        self.assertIn("#define BBK9588_DMAC_AUDIO_PARENT_IRQ BBK9588_DMAC_IRQ", source)
-        self.assertIn("#define BBK9588_INTC_SOURCE_MASK", source)
-        self.assertIn("#define BBK9588_INTC_RESET_MASK    0xffffffffu", source)
-        self.assertIn("static uint32_t bbk9588_mmio_extract32", source)
-        self.assertIn("case BBK9588_INTC_ICSR_OFF: /* ICSR: raw source status before masking */", source)
-        self.assertIn("case BBK9588_INTC_ICMR_OFF: /* ICMR is read/write; ICMSR/ICMCR are convenience aliases. */", source)
-        self.assertIn("case BBK9588_INTC_ICMSR_OFF:", source)
-        self.assertIn("case BBK9588_INTC_ICMCR_OFF:", source)
-        self.assertIn("case BBK9588_INTC_ICPR_OFF: /* ICPR: active sources after masking */", source)
-        self.assertIn("return BBK9588_INTC_IRQ_TCU0;", source)
-        self.assertIn("return BBK9588_INTC_IRQ_TCU1;", source)
-        self.assertIn("return BBK9588_INTC_IRQ_TCU2;", source)
-        self.assertIn("unmasked_pending = (board->intc_pending_mask & BBK9588_INTC_SOURCE_MASK) &", source)
-        self.assertIn("/* ICPR is read-only on JZ4740; sources are cleared at devices. */", source)
-        self.assertIn("board->intc_mask = BBK9588_INTC_RESET_MASK;", source)
-        self.assertIn("board->tcu_irq_mask = 0;", source)
-        self.assertIn("uint32_t tcu_stop_mask;", source)
-        self.assertIn("board->tcu_stop_mask = 0;", source)
-        self.assertIn("uint32_t tcu_half_compare[BBK9588_TCU_CHANNELS];", source)
-        self.assertIn("uint32_t tcu_half_channel_period_ms[BBK9588_TCU_CHANNELS];", source)
-        self.assertIn("int64_t tcu_half_deadline_ms[BBK9588_TCU_CHANNELS];", source)
-        self.assertNotIn("if (!board->cpu_irq_output_enabled) {\n        timer_del(board->tcu_irq_timer);", source)
-        self.assertNotIn("if (!board->cpu_irq_output_enabled) {\n        return;\n    }\n    for (ch = 0; ch < BBK9588_TCU_CHANNELS; ch++)", source)
-        self.assertIn("if (board->cpu_irq_output_enabled) {\n            bbk9588_wake_cpu(board);", source)
-        self.assertIn("bbk9588_intc_read(board, offset & ~3)", source)
-        self.assertIn("bbk9588_tcu_read(s, offset & ~3)", source)
-        self.assertIn("bbk9588_intc_write(board, aligned_offset, intc_value);", source)
-        self.assertIn("bbk9588_tcu_write_uses_full_reg(aligned_offset)", source)
-        self.assertIn("bbk9588_tcu_write(s, aligned_offset, tcu_value);", source)
-        self.assertIn("uint32_t tcu_counter_anchor[BBK9588_TCU_CHANNELS];", source)
-        self.assertIn("bool tcu_counter_latched[BBK9588_TCU_CHANNELS];", source)
-        self.assertIn("static void bbk9588_tcu_write_counter(Bbk9588MmioState *s", source)
-        self.assertIn("s->tcu_counter[channel] = value;", source)
-        self.assertIn("s->tcu_counter_anchor[channel] = bbk9588_tcu_virtual_ticks();", source)
-        self.assertIn("s->tcu_counter_latched[channel] = true;", source)
-        self.assertIn("s->tcu_counter_latched[channel] = false;", source)
-        self.assertIn("static uint32_t bbk9588_tcu_compare_period_ms(uint32_t compare)", source)
-        self.assertIn("static void bbk9588_tcu_update_compare(Bbk9588MachineState *board", source)
-        self.assertIn("board->tcu_half_compare[channel] = compare;", source)
-        self.assertIn("board->tcu_half_channel_period_ms[channel] = period_ms;", source)
-        self.assertIn("board->tcu_half_deadline_ms[channel] = 0;", source)
-        self.assertIn("channel_flags = bit | (bit << BBK9588_TCU_HALF_SHIFT)", sync_tcu)
-        self.assertIn("~(board->tcu_irq_mask & channel_flags)", sync_tcu)
-        self.assertIn("(board->tcu_stop_mask & bit)", schedule_tcu)
-        self.assertIn("uint32_t half_bit = bit << BBK9588_TCU_HALF_SHIFT;", schedule_tcu)
-        self.assertIn("newly_pending |= half_bit;", schedule_tcu)
-        self.assertIn("board->tcu_half_deadline_ms[ch]", schedule_tcu)
-        self.assertIn("case BBK9588_TCU_TSSR_OFF:", tcu_write)
-        self.assertIn("board->tcu_stop_mask |= value;", tcu_write)
-        self.assertIn("case BBK9588_TCU_TSCR_OFF:", tcu_write)
-        self.assertIn("board->tcu_stop_mask &= ~value;", tcu_write)
-        self.assertIn("board->tcu_pending_mask |= value & BBK9588_TCU_FLAG_MASK;", tcu_write)
-        self.assertIn("board->tcu_irq_mask |= value & BBK9588_TCU_FLAG_MASK;", tcu_write)
-        self.assertIn("bbk9588_tcu_write_counter(s, channel, value);", tcu_write)
-        self.assertIn("bbk9588_tcu_update_compare(board, channel, reg, value);", tcu_write)
-        self.assertIn("offset == BBK9588_TCU_TSR_OFF", tcu_read)
-        self.assertIn("value = board->tcu_stop_mask;", tcu_read)
-        self.assertIn("if (reg == BBK9588_TCU_TDFR_OFF)", tcu_read)
-        self.assertIn("if (reg == BBK9588_TCU_TDHR_OFF)", tcu_read)
-        self.assertIn("value = board->tcu_half_compare[ch];", tcu_read)
-        self.assertNotIn("if (reg == BBK9588_TCU_TDFR_OFF || reg == BBK9588_TCU_TDHR_OFF)", tcu_read)
-
-    def test_bbk9588_sysctrl_source_uses_register_reset_state(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1]
-            / "qemu"
-            / "source-overlay"
-            / "hw"
-            / "mips"
-            / "bbk9588.c"
+        tcu_source = (overlay / "hw" / "timer" / "jz4740_tcu.c").read_text(
+            encoding="utf-8"
+        )
+        tcu_header = (
+            overlay / "include" / "hw" / "timer" / "jz4740_tcu.h"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("#define BBK9588_SYSCTRL_CPCCR_OFF  0x00u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_LCR_OFF    0x04u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPPCR_OFF  0x10u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CLKGR_OFF  0x20u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_SCR_OFF    0x24u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_I2SCDR_OFF 0x60u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_LPCDR_OFF  0x64u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_MSCCDR_OFF 0x68u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_UHCCDR_OFF 0x6cu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_SSICDR_OFF 0x74u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPCCR_RESET 0x00000008u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_LCR_RESET   0x000000f8u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_LCR_RW_MASK 0x000000ffu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPPCR_RESET 0x28080011u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPPCR_RW_MASK 0xffff03ffu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPPCR_PLLS  0x00000400u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CPPCR_PLLEN 0x00000100u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CLKGR_RESET 0x00000000u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_CLKGR_RW_MASK 0x0000ffffu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_SCR_RESET   0x00001500u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_SCR_RW_MASK 0x0000ffd0u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_I2SCDR_RESET 0x00000004u", source)
-        self.assertIn("#define BBK9588_SYSCTRL_I2SCDR_RW_MASK 0x000001ffu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_LPCDR_RW_MASK 0x800007ffu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_MSCCDR_RW_MASK 0x0000001fu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_UHCCDR_RW_MASK 0x0000000fu", source)
-        self.assertIn("#define BBK9588_SYSCTRL_SSICDR_RW_MASK 0x8000000fu", source)
-        self.assertIn("static bool bbk9588_sysctrl_word_access", source)
-        self.assertIn("static bool bbk9588_sysctrl_word_only_reg", source)
-        self.assertIn("static uint32_t bbk9588_sysctrl_cppcr_value", source)
-        self.assertIn("static uint32_t bbk9588_sysctrl_write_value", source)
-        self.assertIn("case BBK9588_SYSCTRL_CPCCR_OFF: /* CPCCR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_LCR_OFF: /* LCR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_CPPCR_OFF: /* CPPCR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_CLKGR_OFF: /* CLKGR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_SCR_OFF: /* SCR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_I2SCDR_OFF: /* I2SCDR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_LPCDR_OFF: /* LPCDR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_MSCCDR_OFF: /* MSCCDR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_UHCCDR_OFF: /* UHCCDR */", source)
-        self.assertIn("case BBK9588_SYSCTRL_SSICDR_OFF: /* SSICDR */", source)
-        self.assertIn("value |= BBK9588_SYSCTRL_CPPCR_PLLS;", source)
-        self.assertIn("bbk9588_sysctrl_word_only_reg(aligned_offset) &&", source)
-        self.assertIn("!bbk9588_sysctrl_word_access(offset, size)", source)
-        self.assertIn("s->regs[index] = old_reg;\n            return;", source)
-        self.assertIn("reg = bbk9588_sysctrl_write_value(s, aligned_offset, reg);", source)
-        self.assertIn("s->regs[BBK9588_SYSCTRL_CPCCR_OFF / sizeof(uint32_t)]", source)
-        self.assertIn("s->regs[BBK9588_SYSCTRL_CPPCR_OFF / sizeof(uint32_t)]", source)
-        self.assertIn("s->regs[BBK9588_SYSCTRL_I2SCDR_OFF / sizeof(uint32_t)]", source)
-        self.assertIn("s->regs[BBK9588_SYSCTRL_SSICDR_OFF / sizeof(uint32_t)]", source)
-        self.assertNotIn("return 0x00000008;", source)
-        self.assertNotIn("post-boot divider", source)
+        self.assertIn("#define JZ4740_INTC_ICSR      0x00u", intc_source)
+        self.assertIn("#define JZ4740_INTC_ICMR      0x04u", intc_source)
+        self.assertIn("#define JZ4740_INTC_ICMSR     0x08u", intc_source)
+        self.assertIn("#define JZ4740_INTC_ICMCR     0x0cu", intc_source)
+        self.assertIn("#define JZ4740_INTC_ICPR      0x10u", intc_source)
+        self.assertIn("JZ4740_INTC_IRQ_TCU0 = 23", intc_header)
+        self.assertIn("JZ4740_INTC_IRQ_TCU1 = 22", intc_header)
+        self.assertIn("JZ4740_INTC_IRQ_TCU2 = 21", intc_header)
+        self.assertIn("s->unmasked_pending = s->pending & ~s->mask;", intc_source)
+        self.assertIn("case JZ4740_INTC_ICPR:\n    default:\n        break;", intc_source)
+        self.assertIn("s->mask = JZ4740_INTC_MASK_RESET;", intc_source)
+
+        self.assertIn('#define TYPE_JZ4740_TCU "jz4740-tcu"', tcu_header)
+        self.assertIn("#define JZ4740_TCU_CHANNELS 8u", tcu_header)
+        self.assertIn("JZ4740_TCU_IRQ_TCU0", tcu_header)
+        self.assertIn("JZ4740_TCU_IRQ_TCU1", tcu_header)
+        self.assertIn("JZ4740_TCU_IRQ_TCU2", tcu_header)
+        self.assertIn("JZ4740_TCU_EVENT", tcu_header)
+        self.assertIn("#define TCU_TSR             0x1cu", tcu_source)
+        self.assertIn("#define TCU_TSSR            0x2cu", tcu_source)
+        self.assertIn("#define TCU_TSCR            0x3cu", tcu_source)
+        self.assertIn("#define TCU_HALF_SHIFT      16u", tcu_source)
+        self.assertIn("#define TCU_FLAG_MASK", tcu_source)
+        self.assertIn("uint32_t counter[JZ4740_TCU_CHANNELS];", tcu_source)
+        self.assertIn("int64_t counter_anchor_ns[JZ4740_TCU_CHANNELS];", tcu_source)
+        self.assertIn("static uint32_t tcu_current_counter", tcu_source)
+        self.assertIn("static void tcu_write_counter", tcu_source)
+        self.assertIn("static void tcu_update_compare", tcu_source)
+        self.assertIn("static uint64_t tcu_ticks_to_ns", tcu_source)
+        self.assertIn("!(s->stop_mask & bit)", tcu_source)
+        self.assertIn("uint32_t half_bit = bit << TCU_HALF_SHIFT;", tcu_source)
+        self.assertIn("newly_pending |= half_bit;", tcu_source)
+        self.assertIn("case TCU_TSSR:", tcu_source)
+        self.assertIn("s->stop_mask |= value;", tcu_source)
+        self.assertIn("case TCU_TSCR:", tcu_source)
+        self.assertIn("s->stop_mask &= ~value;", tcu_source)
+        self.assertIn("s->pending_mask |= value & TCU_FLAG_MASK;", tcu_source)
+        self.assertIn("s->irq_mask |= value & TCU_FLAG_MASK;", tcu_source)
+        self.assertIn("tcu_write_counter(s, channel, value);", tcu_source)
+        self.assertIn("tcu_update_compare(s, channel, reg, value);", tcu_source)
+        self.assertIn("offset == TCU_TSR", tcu_source)
+        self.assertIn("value = s->stop_mask;", tcu_source)
+        self.assertIn("value = s->half_compare[channel];", tcu_source)
+        self.assertIn("timer_new_ns(QEMU_CLOCK_VIRTUAL, tcu_timer_cb, s)", tcu_source)
+        self.assertIn("VMSTATE_UINT32_ARRAY(counter,", tcu_source)
+        self.assertIn("rc->phases.hold = tcu_reset_hold;", tcu_source)
+
+        self.assertIn('#include "hw/timer/jz4740_tcu.h"', board)
+        self.assertIn("qdev_new(TYPE_JZ4740_TCU)", board)
+        self.assertIn('qdev_prop_set_uint32(dev, "period-ms", board->tcu_period_ms);', board)
+        self.assertIn("BBK9588_KSEG_TO_PHYS(0xb0002000u)", board)
+        self.assertIn("jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU0)", board)
+        self.assertIn("jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU1) ||", board)
+        self.assertIn("board->sysctrl_wake_pending", board)
+        self.assertIn("jz4740_tcu_irq_level(board->tcu, JZ4740_TCU_IRQ_TCU2)", board)
+        self.assertIn("output == JZ4740_TCU_EVENT ? bbk9588_tcu_event_handler", board)
+        self.assertIn("jz4740_tcu_get_diagnostics(board->tcu, &tcu_diag);", board)
+        self.assertIn("if (level && board->cpu_irq_output_enabled)", board)
+        self.assertNotIn("BBK9588_MMIO_TCU", board)
+        self.assertNotIn("static void bbk9588_tcu_write(", board)
+        self.assertNotIn("static uint32_t bbk9588_tcu_read(", board)
+        self.assertNotIn("QEMUTimer *tcu_irq_timer;", board)
+    def test_jz4740_cpm_source_uses_register_reset_state(self) -> None:
+        overlay = Path(__file__).resolve().parents[1] / "qemu" / "source-overlay"
+        source = (overlay / "hw" / "misc" / "jz4740_cpm.c").read_text(
+            encoding="utf-8"
+        )
+        board = (overlay / "hw" / "mips" / "bbk9588.c").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("#define JZ4740_CPM_CPCCR     0x00u", source)
+        self.assertIn("#define JZ4740_CPM_LCR       0x04u", source)
+        self.assertIn("#define JZ4740_CPM_CPPCR     0x10u", source)
+        self.assertIn("#define JZ4740_CPM_CLKGR     0x20u", source)
+        self.assertIn("#define JZ4740_CPM_SCR       0x24u", source)
+        self.assertIn("#define JZ4740_CPM_I2SCDR    0x60u", source)
+        self.assertIn("#define JZ4740_CPM_LPCDR     0x64u", source)
+        self.assertIn("#define JZ4740_CPM_MSCCDR    0x68u", source)
+        self.assertIn("#define JZ4740_CPM_UHCCDR    0x6cu", source)
+        self.assertIn("#define JZ4740_CPM_SSICDR    0x74u", source)
+        self.assertIn("#define JZ4740_CPM_CPCCR_RESET  0x00000008u", source)
+        self.assertIn("#define JZ4740_CPM_LCR_RESET    0x000000f8u", source)
+        self.assertIn("#define JZ4740_CPM_CPPCR_RESET  0x28080011u", source)
+        self.assertIn("#define JZ4740_CPM_CLKGR_RESET  0x00000000u", source)
+        self.assertIn("#define JZ4740_CPM_SCR_RESET    0x00001500u", source)
+        self.assertIn("#define JZ4740_CPM_I2SCDR_RESET 0x00000004u", source)
+        self.assertIn("#define JZ4740_CPM_LPCDR_RW_MASK 0x800007ffu", source)
+        self.assertIn("#define JZ4740_CPM_MSCCDR_RW_MASK 0x0000001fu", source)
+        self.assertIn("#define JZ4740_CPM_UHCCDR_RW_MASK 0x0000000fu", source)
+        self.assertIn("#define JZ4740_CPM_SSICDR_RW_MASK 0x8000000fu", source)
+        self.assertIn("static bool jz4740_cpm_word_only_reg", source)
+        self.assertIn("static uint32_t jz4740_cpm_mask_write", source)
+        self.assertIn("value |= JZ4740_CPM_CPPCR_PLLS;", source)
+        self.assertIn("size != sizeof(uint32_t)", source)
+        self.assertIn("VMSTATE_UINT32_ARRAY(regs, JZ4740CPMState", source)
+        self.assertIn("rc->phases.hold = jz4740_cpm_reset_hold;", source)
+        self.assertIn("rc->phases.exit = jz4740_cpm_reset_exit;", source)
+        self.assertIn("sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0000000u));", board)
+        self.assertIn("jz4740_cpm_set_update(board->cpm, bbk9588_cpm_update, board);", board)
+        self.assertIn("jz4740_cpm_wake_enabled(board->cpm)", board)
+        self.assertNotIn("BBK9588_MMIO_SYSCTRL", board)
+        self.assertNotIn("bbk9588.sysctrl", board)
 
     def test_bbk9588_lcd_source_follows_jz4740_register_semantics(self) -> None:
         source = (
@@ -1204,7 +1204,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("#define BBK9588_JZ_LCD_VSYNC_RW_MASK  0x000007ffu", source)
         self.assertIn("#define BBK9588_JZ_LCD_TIMING_RW_MASK 0x07ff07ffu", source)
         self.assertIn("#define BBK9588_JZ_LCD_REV_RW_MASK    0x07ff0000u", source)
-        self.assertIn("#define BBK9588_JZ_LCD_IRQ         BBK9588_INTC_IRQ_LCD", source)
+        self.assertIn("#define BBK9588_JZ_LCD_IRQ         JZ4740_INTC_IRQ_LCD", source)
         self.assertIn("#define BBK9588_JZ_LCD_STATE_EOF      0x00000020u", source)
         self.assertIn("#define BBK9588_JZ_LCD_STATE_SOF      0x00000010u", source)
         self.assertIn("#define BBK9588_JZ_LCD_STATE_OUF      0x00000008u", source)
@@ -1230,7 +1230,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("((state & BBK9588_JZ_LCD_STATE_OUF) &&\n            (ctrl & BBK9588_JZ_LCD_CTRL_OFUM))", source)
         self.assertIn("((state & BBK9588_JZ_LCD_STATE_IFU0) &&\n            (ctrl & BBK9588_JZ_LCD_CTRL_IFUM0))", source)
         self.assertIn("((state & BBK9588_JZ_LCD_STATE_IFU1) &&\n            (ctrl & BBK9588_JZ_LCD_CTRL_IFUM1))", source)
-        self.assertIn("board->intc_pending_mask &= ~(1u << BBK9588_JZ_LCD_IRQ);", source)
+        self.assertIn("jz4740_intc_set_irq(board->intc, BBK9588_JZ_LCD_IRQ,", source)
         self.assertIn("case BBK9588_JZ_LCD_STATE_OFF:", source)
         self.assertIn("case BBK9588_JZ_LCD_CFG_OFF:", source)
         self.assertIn("case BBK9588_JZ_LCD_VSYNC_OFF:", source)
@@ -1386,7 +1386,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("#define BBK9588_GPIO_IM_RESET       0xffffffffu", source)
         self.assertIn("#define BBK9588_GPIO_FLG_OFF        0x80u", source)
         self.assertIn("#define BBK9588_GPIO_PORT_B_OFF     0x100u", source)
-        self.assertIn("#define BBK9588_GPIO_IRQ_PORT_B     BBK9588_INTC_IRQ_GPIO1", source)
+        self.assertIn("#define BBK9588_GPIO_IRQ_PORT_B     JZ4740_INTC_IRQ_GPIO1", source)
         self.assertIn("#define BBK9588_NAND_READY_IRQ      BBK9588_GPIO_IRQ_PORT_C", source)
 
         self.assertIn("static bool bbk9588_gpio_decode_offset", gpio)
@@ -1433,7 +1433,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("#define BBK9588_RTC_RTCCR_WRDY     0x00000080u", source)
         self.assertIn("#define BBK9588_RTC_RTCCR_1HZ      0x00000040u", source)
         self.assertIn("#define BBK9588_RTC_RTCCR_1HZIE    0x00000020u", source)
-        self.assertIn("#define BBK9588_RTC_IRQ            BBK9588_INTC_IRQ_RTC", source)
+        self.assertIn("#define BBK9588_RTC_IRQ            JZ4740_INTC_IRQ_RTC", source)
         self.assertIn("#define BBK9588_RTC_HCR_PD         0x00000001u", source)
         self.assertIn("#define BBK9588_RTC_HWFCR_MASK     0x0000ffe0u", source)
         self.assertIn("#define BBK9588_RTC_HRCR_MASK      0x00000fe0u", source)
@@ -1459,7 +1459,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("case 0x20: /* HCR */", source)
         self.assertIn("case 0x30: /* HWRSR */", source)
         self.assertIn("case 0x34: /* HSPR */", source)
-        self.assertIn("board->intc_pending_mask |= 1u << BBK9588_RTC_IRQ;", source)
+        self.assertIn("jz4740_intc_set_irq(board->intc, BBK9588_RTC_IRQ,", source)
         self.assertIn("board->rtc_hwrsr |= BBK9588_RTC_HWRSR_ALM;", source)
         self.assertIn("board->rtc_hcr &= ~BBK9588_RTC_HCR_PD;", source)
         self.assertIn("board->rtc_hwrsr &= ~(BBK9588_RTC_HWRSR_ALM |", source)
@@ -1489,7 +1489,126 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertNotIn("seconds != board->rtc_base_seconds", rtc_source)
         self.assertNotIn('"ready-status"', source)
 
-    def test_bbk9588_dmac_source_follows_jz4740_channel_semantics(self) -> None:
+    def test_jz4740_dmac_source_follows_channel_semantics(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "qemu" / "source-overlay"
+        source = (root / "hw" / "dma" / "jz4740_dmac.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            root / "include" / "hw" / "dma" / "jz4740_dmac.h"
+        ).read_text(encoding="utf-8")
+        board = (root / "hw" / "mips" / "bbk9588.c").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("#define JZ4740_DMAC_CHANNELS 6u", header)
+        self.assertIn("#define DMAC_DMACR            0x300u", source)
+        self.assertIn("#define DMAC_DIRQP            0x304u", source)
+        self.assertIn("#define DMAC_DRT_AUTO         8u", source)
+        self.assertIn("#define JZ4740_DMAC_REQUEST_AIC_TX 24u", header)
+        self.assertIn("#define JZ4740_DMAC_REQUEST_AIC_RX 25u", header)
+        self.assertIn("#define DMAC_DTC_MASK         0x00ffffffu", source)
+        self.assertIn("#define DMAC_DCS_NDES         0x80000000u", source)
+        self.assertIn("#define DMAC_DCS_TT           0x00000008u", source)
+        self.assertIn("#define DMAC_DCS_CT           0x00000002u", source)
+        self.assertIn("#define DMAC_DCM_SAI          0x00800000u", source)
+        self.assertIn("#define DMAC_DCM_DAI          0x00400000u", source)
+        self.assertIn("#define DMAC_DCM_LINK         0x00000001u", source)
+        self.assertIn("#define DMAC_DDA_DBA_MASK     0xfffff000u", source)
+        self.assertIn("#define DMAC_DDA_DOA_MASK     0x00000ff0u", source)
+        self.assertIn("#define DMAC_DESC_BYTES       16u", source)
+        self.assertIn("static bool dmac_channel_offset", source)
+        self.assertIn("static void dmac_sync_irq", source)
+        self.assertIn("static void dmac_set_terminal_count", source)
+        self.assertIn("static void dmac_fetch_descriptor", source)
+        self.assertIn("static void dmac_finish_transfer", source)
+        self.assertIn("dmac_descriptor_next(desc_addr, desc_dtc)", source)
+        self.assertIn("static bool dmac_try_bulk_transfer", source)
+        self.assertIn("static void dmac_try_auto_transfer", source)
+        self.assertIn("static void dmac_try_audio_transfer", source)
+        self.assertIn("dmac_memory_read(source + done, chunk, n);", source)
+        self.assertIn("dmac_memory_write(target + done, chunk, n);", source)
+        self.assertIn(
+            "s->ops.write(s->ops_opaque, request, unit, unit_bytes,", source
+        )
+        self.assertIn(
+            "s->ops.read(s->ops_opaque, request, unit, unit_bytes,", source
+        )
+        self.assertIn("VMSTATE_UINT32_ARRAY(regs, JZ4740DMACState", source)
+        self.assertIn("qemu_set_irq(s->irq, level);", source)
+        self.assertIn("qdev_init_gpio_in(DEVICE(obj), dmac_request_input", source)
+        self.assertIn("qdev_get_gpio_in(DEVICE(board->dmac),", board)
+        self.assertIn("jz4740_dmac_set_peripheral_ops(board->dmac,", board)
+        self.assertIn(
+            "bbk9588_msc_dma_transfer(opaque, channel, source, target, count)",
+            board,
+        )
+        self.assertIn(
+            "sysbus_mmio_map(sbd, 0, "
+            "BBK9588_KSEG_TO_PHYS(0xb3020000u));",
+            board,
+        )
+        self.assertNotIn("BBK9588_MMIO_DMAC", board)
+        self.assertNotIn("bbk9588.dmac", board)
+        self.assertNotIn("static void bbk9588_dmac_try_audio_transfer", board)
+
+
+    def test_jz4740_aic_source_models_fifo_dma_irq_and_host_audio(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "qemu" / "source-overlay"
+        source = (root / "hw" / "audio" / "jz4740_aic.c").read_text(
+            encoding="utf-8"
+        )
+        header = (root / "include" / "hw" / "audio" / "jz4740_aic.h").read_text(
+            encoding="utf-8"
+        )
+        board = (root / "hw" / "mips" / "bbk9588.c").read_text(encoding="utf-8")
+        meson = (root / "hw" / "audio" / "meson.build").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('#define TYPE_JZ4740_AIC "jz4740-aic"', header)
+        self.assertIn("JZ4740_AIC_TX_DMA_REQUEST", header)
+        self.assertIn("JZ4740_AIC_RX_DMA_REQUEST", header)
+        self.assertIn("#define JZ4740_AIC_FIFO_DEPTH      32u", source)
+        self.assertIn("#define JZ4740_AIC_TICK_NS         1000000LL", source)
+        self.assertIn("#define AICFR_RESET        0x00007800u", source)
+        self.assertIn("#define I2SDIV_RESET       0x00000003u", source)
+        self.assertIn("#define CDCCR1_RESET       0x021b2302u", source)
+        self.assertIn("#define CDCCR2_RESET       0x00170803u", source)
+        self.assertIn("jz4740_aic_tx_dma_requested", source)
+        self.assertIn("jz4740_aic_rx_dma_requested", source)
+        self.assertIn("jz4740_aic_notify_tx_dma_boundary", header)
+        self.assertIn("uint64_t pending_output_frames;", source)
+        self.assertIn("if (s->tx_dma_boundary)", source)
+        self.assertIn("jz4740_aic_process_output(s, pending)", source)
+        self.assertIn("jz4740_aic_notify_tx_dma_boundary(board->aic);", board)
+        self.assertIn("qemu_set_irq(s->irqs[JZ4740_AIC_IRQ], irq);", source)
+        self.assertIn("audio_be_open_out", source)
+        self.assertIn("audio_be_open_in", source)
+        self.assertIn("audio_be_write", source)
+        self.assertIn("audio_be_read", source)
+        self.assertIn("bool input_voice_attempted;", source)
+        self.assertIn(
+            "if (recording && !s->in_voice && !s->input_voice_attempted)",
+            source,
+        )
+        self.assertIn("s->input_voice_attempted = true;", source)
+        self.assertIn("timer_new_ns(QEMU_CLOCK_VIRTUAL", source)
+        self.assertIn("8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000", source)
+        self.assertIn("void jz4740_aic_get_diagnostics", source)
+        self.assertIn("s->tx_dma_samples += done / sample_bytes;", source)
+        self.assertIn("s->rx_dma_samples += done / sample_bytes;", source)
+        self.assertIn("s->underruns++;", source)
+        self.assertIn("s->overruns++;", source)
+
+        self.assertIn("TYPE_JZ4740_AIC", board)
+        self.assertIn("sysbus_mmio_map(sbd, 0, BBK9588_KSEG_TO_PHYS(0xb0020000u));", board)
+        self.assertIn('{ "bbk9588.msc",      0xb0021000, 0x1000', board)
+        self.assertIn("machine_add_audiodev_property(mc);", board)
+        self.assertIn("CONFIG_BBK9588", meson)
+        self.assertIn("jz4740_aic.c", meson)
+
+    def test_bbk9588_msc_dma_does_not_use_raw_nand_backing(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]
             / "qemu"
@@ -1498,96 +1617,21 @@ class QemuSystemCommandTests(unittest.TestCase):
             / "mips"
             / "bbk9588.c"
         ).read_text(encoding="utf-8")
-
-        self.assertIn("#define BBK9588_DMAC_CHANNELS      6u", source)
-        self.assertIn("#define BBK9588_DMAC_CTRL_OFF      0x300u", source)
-        self.assertIn("#define BBK9588_DMAC_IRQP_OFF      0x304u", source)
-        self.assertIn("#define BBK9588_DMAC_DRT_AUTO      8u", source)
-        self.assertIn("#define BBK9588_DMAC_DTC_MASK      0x00ffffffu", source)
-        self.assertIn("#define BBK9588_DMAC_DCS_NDES      0x80000000u", source)
-        self.assertIn("#define BBK9588_DMAC_DCS_TT        0x00000008u", source)
-        self.assertIn("#define BBK9588_DMAC_DCS_CT        0x00000002u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_SAI       0x00800000u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_DAI       0x00400000u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_V         0x00000010u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_VM        0x00000008u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_VIE       0x00000004u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_TIE       0x00000002u", source)
-        self.assertIn("#define BBK9588_DMAC_DCM_LINK      0x00000001u", source)
-        self.assertIn("#define BBK9588_DMAC_DRT_MASK      0x0000001fu", source)
-        self.assertIn("#define BBK9588_DMAC_DCS_CDOA_MASK 0x00ff0000u", source)
-        self.assertIn("#define BBK9588_DMAC_DDA_DBA_MASK  0xfffff000u", source)
-        self.assertIn("#define BBK9588_DMAC_DDA_DOA_MASK  0x00000ff0u", source)
-        self.assertIn("#define BBK9588_DMAC_DDA_ALIGN_MASK 0x0000000fu", source)
-        self.assertIn("#define BBK9588_DMAC_DESC_BYTES    16u", source)
-        self.assertIn("#define BBK9588_DMAC_DESC_DCM_OFF  0x00u", source)
-        self.assertIn("#define BBK9588_DMAC_DESC_DSA_OFF  0x04u", source)
-        self.assertIn("#define BBK9588_DMAC_DESC_DTA_OFF  0x08u", source)
-        self.assertIn("#define BBK9588_DMAC_DESC_DTC_OFF  0x0cu", source)
-        self.assertIn("static bool bbk9588_dmac_channel_offset", source)
-        self.assertIn("static void bbk9588_dmac_sync_irq_sources", source)
-        self.assertIn("static void bbk9588_dmac_set_terminal_count", source)
-        self.assertIn("static void bbk9588_dmac_fetch_descriptor", source)
-        self.assertIn("static void bbk9588_dmac_finish_transfer", source)
-        self.assertIn("bbk9588_dmac_descriptor_next(desc_addr, desc_dtc)", source)
-        self.assertIn("command = bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DCM_OFF);", source)
-        self.assertIn("bbk9588_phys_read_le32(desc_addr + BBK9588_DMAC_DESC_DSA_OFF)", source)
-        self.assertIn("bbk9588_phys_write_le32(desc_addr + BBK9588_DMAC_DESC_DCM_OFF,\n                                command & ~BBK9588_DMAC_DCM_V);", source)
-        self.assertIn("static bool bbk9588_dmac_channel_enabled", source)
-        self.assertIn("static void bbk9588_dmac_try_msc_transfer", source)
-        self.assertIn("static void bbk9588_dmac_try_auto_ram_transfer", source)
-        self.assertIn("request != BBK9588_DMAC_DRT_AUTO", source)
-        self.assertIn("bbk9588_dmac_unit_bytes(command)", source)
-        self.assertIn("bbk9588_dmac_ram_range_valid(source, bytes)", source)
-        self.assertIn("s->regs[source_index] = source + bytes;", source)
-        self.assertIn("s->regs[target_index] = target + bytes;", source)
-        self.assertIn("s->regs[BBK9588_DMAC_IRQP_OFF / sizeof(uint32_t)] =\n        irqp & BBK9588_DMAC_CHANNEL_MASK;", source)
-        self.assertIn("~(BBK9588_DMAC_CTRL_AR | BBK9588_DMAC_CTRL_HLT)", source)
-        self.assertIn("DIRQP is a pending-status register.", source)
-        self.assertIn("bbk9588_dmac_sync_irq_sources(s);", source)
-        self.assertIn("aligned_offset == BBK9588_DMAC_CTRL_OFF", source)
-        self.assertIn("bbk9588_dmac_try_msc_transfer(s, channel);", source)
-        self.assertIn("bbk9588_dmac_try_auto_ram_transfer(s, channel);", source)
-        self.assertIn("aligned_offset == BBK9588_DMAC_DOORBELL_SET_OFF", source)
-        self.assertIn("s->regs[BBK9588_DMAC_DOORBELL_OFF / sizeof(uint32_t)] |=", source)
-        self.assertIn("s->regs[index] = reg & BBK9588_DMAC_DTC_MASK;", source)
-        self.assertIn("s->regs[index] = reg & BBK9588_DMAC_DRT_MASK;", source)
-        self.assertIn("s->regs[index] = reg & ~BBK9588_DMAC_DDA_ALIGN_MASK;", source)
-        self.assertIn("bbk9588_dmac_finish_transfer(s, channel, command);", source)
-        self.assertNotIn("bbk9588_dmac_sync_audio_irq", source)
-        self.assertNotIn("s->regs[index] = reg & BBK9588_DMAC_CHANNEL_MASK;", source)
-        self.assertNotIn("BBK9588_DMAC_CTRL_AR |\n                                    BBK9588_DMAC_CTRL_HLT |", source)
-        self.assertNotIn("(offset == 0x08 || offset == 0x28)", source)
-        self.assertNotIn("s->regs[index] = reg & 0x1fu;", source)
-
-    def test_bbk9588_msc_dma_uses_msc_owned_oob_lba_map(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1]
-            / "qemu"
-            / "source-overlay"
-            / "hw"
-            / "mips"
-            / "bbk9588.c"
-        ).read_text(encoding="utf-8")
-        start = source.index("static void bbk9588_msc_complete_dma")
-        end = source.index("static void bbk9588_dmac_try_msc_transfer", start)
+        start = source.index("static bool bbk9588_msc_dma_transfer")
+        end = source.index("static void bbk9588_msc_complete_dma", start)
         msc_complete = source[start:end]
 
-        self.assertIn("msc_oob_lba_map_valid", source)
-        self.assertIn("static void bbk9588_msc_oob_lba_map_clear", source)
-        self.assertIn("static void bbk9588_msc_build_oob_lba_map", source)
-        self.assertIn("static uint32_t bbk9588_msc_oob_lba_to_physical_page", source)
-        self.assertIn("static bool bbk9588_msc_read_oob_lba_sector", source)
-        self.assertIn("static bool bbk9588_msc_write_oob_lba_sector", source)
+        self.assertNotIn("msc_oob_lba", source)
+        self.assertNotIn("Bbk9588NandState", msc_complete)
+        self.assertNotIn("nand->", msc_complete)
+        self.assertNotIn("nand_dev", msc_complete)
         self.assertIn("#define BBK9588_NAND_PAGES_PER_BLOCK 64u", source)
         self.assertIn("#define BBK9588_NAND_BLOCKS        4096u", source)
         self.assertIn("#define BBK9588_NAND_TOTAL_SIZE", source)
-        self.assertIn("page_count / BBK9588_NAND_PAGES_PER_BLOCK", source)
-        self.assertIn("block_count > BBK9588_NAND_BLOCKS", source)
-        self.assertIn("BBK9588_NAND_PAGES_PER_BLOCK * stride", source)
-        self.assertIn("bbk9588_msc_oob_lba_to_physical_page(", source)
-        self.assertIn("bbk9588_msc_read_oob_lba_sector(", msc_complete)
-        self.assertIn("bbk9588_msc_write_oob_lba_sector(", msc_complete)
+        self.assertIn("No removable MSC medium is attached by default", msc_complete)
+        self.assertIn("buf = g_malloc0(sectors * 512u);", msc_complete)
+        self.assertIn("cpu_physical_memory_write", msc_complete)
+        self.assertIn("cpu_physical_memory_read", msc_complete)
         self.assertNotIn("initial_data", source)
         self.assertNotIn("initial_size", source)
         self.assertNotIn("bbk9588_nand_build_ftl_map", source)
@@ -1626,20 +1670,22 @@ class QemuSystemCommandTests(unittest.TestCase):
         map_end = source.index("static void bbk9588_cpu_reset", map_start)
         map_window = source[map_start:map_end]
 
-        self.assertIn("#define BBK9588_MSC_STRPCL_OFF     0x1000u", source)
-        self.assertIn("#define BBK9588_MSC_STAT_OFF       0x1004u", source)
-        self.assertIn("#define BBK9588_MSC_RESTO_OFF      0x1010u", source)
-        self.assertIn("#define BBK9588_MSC_RDTO_OFF       0x1014u", source)
-        self.assertIn("#define BBK9588_MSC_IMASK_OFF      0x1024u", source)
-        self.assertIn("#define BBK9588_MSC_IREG_OFF       0x1028u", source)
-        self.assertIn("#define BBK9588_MSC_CMD_OFF        0x102cu", source)
-        self.assertIn("#define BBK9588_MSC_ARG_OFF        0x1030u", source)
-        self.assertIn("#define BBK9588_MSC_RES_OFF        0x1034u", source)
+        self.assertIn("#define BBK9588_MSC_STRPCL_OFF     0x0000u", source)
+        self.assertIn("#define BBK9588_MSC_STAT_OFF       0x0004u", source)
+        self.assertIn("#define BBK9588_MSC_RESTO_OFF      0x0010u", source)
+        self.assertIn("#define BBK9588_MSC_RDTO_OFF       0x0014u", source)
+        self.assertIn("#define BBK9588_MSC_IMASK_OFF      0x0024u", source)
+        self.assertIn("#define BBK9588_MSC_IREG_OFF       0x0028u", source)
+        self.assertIn("#define BBK9588_MSC_CMD_OFF        0x002cu", source)
+        self.assertIn("#define BBK9588_MSC_ARG_OFF        0x0030u", source)
+        self.assertIn("#define BBK9588_MSC_RES_OFF        0x0034u", source)
         self.assertIn("#define BBK9588_MSC_STAT_RESET     0x00000040u", source)
         self.assertIn("#define BBK9588_MSC_RESTO_RESET    0x00000040u", source)
         self.assertIn("#define BBK9588_MSC_RDTO_RESET     0x0000ffffu", source)
         self.assertIn("#define BBK9588_MSC_IMASK_RESET    0x000000ffu", source)
         self.assertIn("static bool bbk9588_is_msc_window", source)
+        self.assertIn('s->window->kseg1_base == 0xb0021000', source)
+        self.assertIn('{ "bbk9588.msc",      0xb0021000, 0x1000', source)
 
         self.assertIn("bbk9588_is_msc_window(s)", prepare)
         self.assertIn("BBK9588_MSC_CMD_OFF", prepare)
@@ -1683,7 +1729,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("nand->page_stride = BBK9588_NAND_PAGE_SIZE;", detect)
         self.assertNotIn("oob_map_valid", detect)
         self.assertNotIn("oob_logical_to_physical_block", source)
-        self.assertIn("msc_oob_lba_map_valid", source)
+        self.assertNotIn("msc_oob_lba", source)
         self.assertIn("#define BBK9588_NAND_TOTAL_PAGES", source)
         self.assertIn("#define BBK9588_NAND_TOTAL_SIZE", source)
         self.assertNotIn("last_oob_page", source)
@@ -1748,7 +1794,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         read_start = source.index("static uint64_t bbk9588_mmio_read")
         write_start = source.index("static void bbk9588_mmio_write")
         read_body = source[read_start:write_start]
-        write_end = source.index("if (s->window->kind == BBK9588_MMIO_DMAC", write_start)
+        write_end = source.index("static const MemoryRegionOps bbk9588_mmio_ops", write_start)
         write_body = source[write_start:write_end]
 
         self.assertIn("#define BBK9588_NAND_NFCSR_RW_MASK     0x000000ffu", source)
@@ -1812,7 +1858,7 @@ class QemuSystemCommandTests(unittest.TestCase):
             / "bbk9588.c"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("#define BBK9588_UDC_IRQ            BBK9588_INTC_IRQ_UDC", source)
+        self.assertIn("#define BBK9588_UDC_IRQ            JZ4740_INTC_IRQ_UDC", source)
         self.assertIn("#define BBK9588_UDC_POWER_RESET    0x20u", source)
         self.assertIn("#define BBK9588_UDC_INTRINE_RESET  0xffffu", source)
         self.assertIn("#define BBK9588_UDC_INTROUTE_RESET 0xfffeu", source)
@@ -1896,6 +1942,175 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIsInstance(kwargs, dict)
         assert isinstance(kwargs, dict)
         self.assertEqual(kwargs.get("creationflags"), 0x4000)
+
+    def test_qemu_process_backend_stop_prefers_hmp_quit(self) -> None:
+        class FakeProcess:
+            returncode: int | None = None
+            terminate_count = 0
+            kill_count = 0
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.terminate_count += 1
+                self.returncode = -15
+
+            def wait(self, timeout: float | None = None) -> int:
+                if self.returncode is None:
+                    raise subprocess.TimeoutExpired("qemu", timeout)
+                return self.returncode
+
+            def kill(self) -> None:
+                self.kill_count += 1
+                self.returncode = -9
+
+        class FakeSocket:
+            closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        process = FakeProcess()
+        hmp = FakeSocket()
+        backend.proc = process  # type: ignore[assignment]
+        backend.hmp_sock = hmp  # type: ignore[assignment]
+
+        def fake_hmp_command(sock: object, command: str) -> str:
+            self.assertIs(sock, hmp)
+            self.assertEqual(command, "quit")
+            process.returncode = 0
+            return ""
+
+        with mock.patch("emu.qemu.system._hmp_command", side_effect=fake_hmp_command) as hmp_command:
+            backend.stop()
+
+        hmp_command.assert_called_once()
+        self.assertEqual(process.terminate_count, 0)
+        self.assertEqual(process.kill_count, 0)
+        self.assertTrue(hmp.closed)
+        self.assertEqual(backend.returncode, 0)
+
+    def test_qemu_process_backend_stop_accepts_hmp_disconnect_after_quit(self) -> None:
+        class FakeProcess:
+            returncode: int | None = None
+            terminate_count = 0
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.terminate_count += 1
+                self.returncode = -15
+
+            def wait(self, timeout: float | None = None) -> int:
+                if self.returncode is None:
+                    raise subprocess.TimeoutExpired("qemu", timeout)
+                return self.returncode
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        class FakeSocket:
+            def close(self) -> None:
+                pass
+
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        process = FakeProcess()
+        backend.proc = process  # type: ignore[assignment]
+        backend.hmp_sock = FakeSocket()  # type: ignore[assignment]
+
+        def disconnect_after_quit(sock: object, command: str) -> str:
+            process.returncode = 0
+            raise ConnectionResetError("monitor closed")
+
+        with mock.patch("emu.qemu.system._hmp_command", side_effect=disconnect_after_quit):
+            backend.stop()
+
+        self.assertEqual(process.terminate_count, 0)
+        self.assertIsNone(backend.last_error)
+        self.assertEqual(backend.returncode, 0)
+
+    def test_qemu_wav_capture_header_is_finalized_and_pcm_is_analyzed(self) -> None:
+        samples = [
+            0,
+            0,
+            1000,
+            1000,
+            -2000,
+            -2000,
+            4000,
+            4000,
+        ] * 2000
+        pcm = struct.pack(f"<{len(samples)}h", *samples)
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF",
+            0,
+            b"WAVE",
+            b"fmt ",
+            16,
+            1,
+            2,
+            8000,
+            32000,
+            4,
+            16,
+            b"data",
+            0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "qemu.wav"
+            capture.write_bytes(header + pcm)
+
+            self.assertTrue(finalize_qemu_wav_header(capture))
+            self.assertFalse(finalize_qemu_wav_header(capture))
+            finalized = capture.read_bytes()[:44]
+            self.assertEqual(struct.unpack_from("<I", finalized, 4)[0], 36 + len(pcm))
+            self.assertEqual(struct.unpack_from("<I", finalized, 40)[0], len(pcm))
+
+            analysis = analyze_pcm_wav(capture)
+            validate_audio_regression(
+                analysis,
+                expected_sample_rate=8000,
+                min_duration_seconds=0.5,
+                min_peak_abs=1000,
+                min_significant_ratio=0.5,
+            )
+
+        self.assertEqual(analysis.channels, 2)
+        self.assertEqual(analysis.sample_rate_hz, 8000)
+        self.assertEqual(analysis.bits_per_sample, 16)
+        self.assertEqual(analysis.frames, len(samples) // 2)
+        self.assertEqual(analysis.peak_abs, 4000)
+        self.assertEqual(analysis.stereo_mismatch_frames, 0)
+        self.assertEqual(analysis.clipped_samples, 0)
+        self.assertAlmostEqual(analysis.nonzero_ratio, 0.75)
+
+    def test_qemu_wav_header_rejects_inconsistent_nonzero_lengths(self) -> None:
+        header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF",
+            123,
+            b"WAVE",
+            b"fmt ",
+            16,
+            1,
+            2,
+            8000,
+            32000,
+            4,
+            16,
+            b"data",
+            4,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "bad.wav"
+            capture.write_bytes(header + b"\0\0\0\0")
+            with self.assertRaisesRegex(ValueError, "RIFF length"):
+                finalize_qemu_wav_header(capture)
 
     def test_cli_dry_run_emits_nand_first_stage_command_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2856,6 +3071,271 @@ class QemuSystemCommandTests(unittest.TestCase):
             finally:
                 runtime.unlink(missing_ok=True)
 
+    def test_runtime_nand_checkpoint_compacts_latest_logical_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "nand.bin"
+            stride = 2048 + 64
+            pages_per_block = 64
+            block_size = stride * pages_per_block
+            image = bytearray(b"\xFF" * (block_size * 2))
+            for page in range(pages_per_block):
+                offset = page * stride
+                image[offset : offset + 2048] = bytes([page]) * 2048
+                oob = offset + 2048
+                image[oob + 1] = 0
+                image[oob + 2] = 0x3F
+                image[oob + 58 : oob + 60] = (1).to_bytes(2, "little")
+                image[oob + 60 : oob + 64] = (0).to_bytes(4, "little")
+            source.write_bytes(image)
+
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                runtime = prepare_runtime_nand_image(source, persistent=True)
+                runtime_data = bytearray(runtime.read_bytes())
+                relocated = bytearray(runtime_data[:block_size])
+                relocated[123] = 0xA5
+                for page in range(pages_per_block):
+                    oob = page * stride + 2048
+                    relocated[oob + 58 : oob + 60] = (2).to_bytes(2, "little")
+                runtime_data[:block_size] = b"\xFF" * block_size
+                runtime_data[block_size:] = relocated
+                runtime.write_bytes(runtime_data)
+                checkpoint = commit_runtime_nand_checkpoint(source, runtime)
+                expected_checkpoint = persistent_runtime_nand_checkpoint_path(source)
+                reopened = prepare_runtime_nand_image(source, persistent=True)
+            finally:
+                os.chdir(old_cwd)
+
+            reopened_data = reopened.read_bytes()
+            self.assertNotEqual(runtime, reopened)
+            self.assertEqual(reopened_data[123], 0xA5)
+            self.assertEqual(reopened_data[2048 + 58 : 2048 + 60], b"\x01\x00")
+            self.assertEqual(checkpoint, expected_checkpoint)
+            self.assertEqual(source.read_bytes()[123], 0)
+            runtime.unlink(missing_ok=True)
+            reopened.unlink(missing_ok=True)
+
+    def test_runtime_nand_persistent_paths_are_isolated_by_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_source = root / "first" / "nand.bin"
+            second_source = root / "second" / "nand.bin"
+            first_source.parent.mkdir()
+            second_source.parent.mkdir()
+            first_source.write_bytes(b"first")
+            second_source.write_bytes(b"second")
+
+            first = persistent_runtime_nand_checkpoint_path(first_source)
+            second = persistent_runtime_nand_checkpoint_path(second_source)
+
+            self.assertNotEqual(first, second)
+            self.assertIn("qemu_nand_persistent", str(first))
+            self.assertIn("qemu_nand_persistent", str(second))
+
+    def test_backend_cleanup_discards_unready_persistent_work_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint = root / "checkpoint.bin"
+            work = root / "work.bin"
+            disposable = root / "disposable.bin"
+            checkpoint.write_bytes(b"checkpoint")
+            work.write_bytes(b"incomplete")
+            disposable.write_bytes(b"disposable")
+
+            backend = QemuProcessBackend(
+                QemuSystemConfig(persist_nand_writes=True)
+            )
+            backend._runtime_nand_image = work
+            backend._runtime_nand_source = root / "source.bin"
+            backend._runtime_nand_checkpoint = checkpoint
+            backend._runtime_nand_persistent = True
+            backend._cleanup_runtime_nand_locked(commit=True)
+            self.assertTrue(checkpoint.exists())
+            self.assertEqual(checkpoint.read_bytes(), b"checkpoint")
+            self.assertFalse(work.exists())
+            self.assertIsNone(backend._runtime_nand_image)
+            self.assertEqual(backend._runtime_nand_commit_count, 0)
+
+            backend._runtime_nand_image = disposable
+            backend._runtime_nand_persistent = False
+            backend._cleanup_runtime_nand_locked()
+            self.assertFalse(disposable.exists())
+
+    def test_backend_status_exposes_persistent_nand_paths(self) -> None:
+        backend = QemuProcessBackend(
+            QemuSystemConfig(persist_nand_writes=True)
+        )
+        backend._runtime_nand_source = Path("base.bin").resolve()
+        backend._runtime_nand_image = Path("work.bin").resolve()
+        backend._runtime_nand_checkpoint = Path("checkpoint.bin").resolve()
+        backend._runtime_nand_persistent = True
+
+        snapshot = backend.snapshot()
+
+        self.assertTrue(snapshot["nand_writes_persistent"])
+        self.assertEqual(
+            snapshot["nand_runtime_image"],
+            str(Path("work.bin").resolve()),
+        )
+        self.assertEqual(
+            snapshot["nand_checkpoint_image"],
+            str(Path("checkpoint.bin").resolve()),
+        )
+        self.assertEqual(
+            snapshot["nand_source_image"],
+            str(Path("base.bin").resolve()),
+        )
+
+    def test_backend_cleanup_commits_ready_persistent_work_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.bin"
+            work = root / "work.bin"
+            checkpoint = root / "checkpoint.bin"
+            source.write_bytes(b"source")
+            work.write_bytes(b"work")
+            backend = QemuProcessBackend(
+                QemuSystemConfig(persist_nand_writes=True)
+            )
+            backend._runtime_nand_source = source
+            backend._runtime_nand_image = work
+            backend._runtime_nand_checkpoint = checkpoint
+            backend._runtime_nand_persistent = True
+            backend.latest_frame_chardev = (1, time.time(), b"frame")
+
+            with mock.patch(
+                "emu.qemu.system.commit_runtime_nand_checkpoint",
+                return_value=checkpoint,
+            ) as commit:
+                backend._cleanup_runtime_nand_locked(commit=True)
+
+            commit.assert_called_once_with(source, work, checkpoint)
+            self.assertEqual(backend._runtime_nand_commit_count, 1)
+            self.assertIsNone(backend._runtime_nand_last_commit_error)
+            self.assertFalse(work.exists())
+
+    def test_backend_cleanup_preserves_work_copy_when_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.bin"
+            work = root / "work.bin"
+            checkpoint = root / "checkpoint.bin"
+            source.write_bytes(b"source")
+            work.write_bytes(b"user data")
+            backend = QemuProcessBackend(
+                QemuSystemConfig(persist_nand_writes=True)
+            )
+            backend._runtime_nand_source = source
+            backend._runtime_nand_image = work
+            backend._runtime_nand_checkpoint = checkpoint
+            backend._runtime_nand_persistent = True
+            backend.latest_frame_chardev = (1, time.time(), b"frame")
+
+            with mock.patch(
+                "emu.qemu.system.commit_runtime_nand_checkpoint",
+                side_effect=IOError("commit failed"),
+            ):
+                backend._cleanup_runtime_nand_locked(commit=True)
+
+            self.assertTrue(work.exists())
+            self.assertEqual(work.read_bytes(), b"user data")
+            self.assertEqual(backend._runtime_nand_image, work)
+            self.assertIn("commit failed", backend._runtime_nand_last_commit_error or "")
+
+    def test_restore_runtime_nand_checkpoint_removes_only_derived_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "base.bin"
+            source.write_bytes(b"base")
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                checkpoint = persistent_runtime_nand_checkpoint_path(source)
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b"checkpoint")
+                runs = (Path("build") / "qemu_nand_runs").resolve()
+                runs.mkdir(parents=True)
+                work = runs / "work.bin"
+                work.write_bytes(b"work")
+                removed, existed = restore_runtime_nand_checkpoint(
+                    source,
+                    retained_work_path=work,
+                )
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertEqual(removed, checkpoint)
+            self.assertTrue(existed)
+            self.assertFalse(checkpoint.exists())
+            self.assertFalse(work.exists())
+            self.assertEqual(source.read_bytes(), b"base")
+
+    def test_restore_runtime_nand_checkpoint_rejects_external_work_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "base.bin"
+            external = root / "external.bin"
+            source.write_bytes(b"base")
+            external.write_bytes(b"keep")
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                checkpoint = persistent_runtime_nand_checkpoint_path(source)
+                checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b"checkpoint")
+                with self.assertRaisesRegex(ValueError, "outside"):
+                    restore_runtime_nand_checkpoint(
+                        source,
+                        retained_work_path=external,
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertTrue(checkpoint.exists())
+            self.assertTrue(external.exists())
+
+    def test_frontend_restore_nand_command_restarts_from_base(self) -> None:
+        state = FrontendState.__new__(FrontendState)
+        selected = Path("base.bin").resolve()
+        checkpoint = Path("checkpoint.bin").resolve()
+        backend = mock.Mock()
+        backend.snapshot.return_value = {
+            "nand_runtime_image": None,
+            "nand_last_commit_error": None,
+        }
+        state.args = argparse.Namespace(nand_image=selected)
+        state.qemu_backend = backend
+        state.stop = mock.Mock(return_value={})  # type: ignore[method-assign]
+        state.reset = mock.Mock(return_value={"running": True})  # type: ignore[method-assign]
+
+        with mock.patch(
+            "emu.web.frontend_state.restore_runtime_nand_checkpoint",
+            return_value=(checkpoint, True),
+        ) as restore:
+            result = state.command({"op": "restore-nand-image"})
+
+        state.stop.assert_called_once_with()
+        state.reset.assert_called_once_with()
+        restore.assert_called_once_with(selected, retained_work_path=None)
+        self.assertTrue(result["nand_restored"])
+        self.assertTrue(result["nand_checkpoint_removed"])
+        self.assertEqual(result["nand_checkpoint_path"], str(checkpoint))
+
+    def test_frontend_storage_trace_command_routes_to_qemu(self) -> None:
+        state = FrontendState.__new__(FrontendState)
+        backend = mock.Mock()
+        backend.set_storage_trace.return_value = {
+            "storage_trace_enabled": True,
+        }
+        state.qemu_backend = backend
+
+        result = state.command({"op": "qemu-storage-trace", "enabled": True})
+
+        backend.set_storage_trace.assert_called_once_with(True)
+        self.assertTrue(result.get("storage_trace_enabled"), result)
+
     def test_qemu_legacy_python_storage_hook_seed_is_disabled(self) -> None:
         backend = QemuProcessBackend(QemuSystemConfig())
         backend._write_u32_paused_locked = lambda va, value: self.fail("unexpected GDB u32 seed write")  # type: ignore[method-assign]
@@ -2927,6 +3407,29 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertNotIn("storage_" + "fastpath_count", row)
         self.assertNotIn("storage_" + "fastpath_events", row)
 
+    def test_qemu_storage_trace_runtime_toggle_uses_machine_property(self) -> None:
+        class _RunningProc:
+            def poll(self) -> None:
+                return None
+
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        backend.proc = _RunningProc()  # type: ignore[assignment]
+        backend.hmp_sock = object()  # type: ignore[assignment]
+
+        with mock.patch("emu.qemu.system._hmp_command", return_value="") as hmp:
+            enabled = backend.set_storage_trace(True)
+            disabled = backend.set_storage_trace(False)
+
+        self.assertTrue(enabled.get("storage_trace_enabled"), enabled)
+        self.assertFalse(disabled.get("storage_trace_enabled"), disabled)
+        self.assertEqual(
+            [call.args[1] for call in hmp.call_args_list],
+            [
+                "qom-set /machine storage-trace true",
+                "qom-set /machine storage-trace false",
+            ],
+        )
+
     def test_qemu_performance_metrics_compute_rates(self) -> None:
         class _RunningProc:
             pid = 12345
@@ -2962,6 +3465,124 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(row.get("guest_ips_source"), "bbk9588-frame-chardev")
         self.assertEqual(row.get("guest_insn_count"), 3500)
         self.assertEqual(row.get("guest_insn_packet_count"), 2)
+
+    def test_qemu_performance_metrics_include_aic_diagnostics(self) -> None:
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        values = (
+            44100,
+            12,
+            2,
+            0x19,
+            0x00007821,
+            0x00804802,
+            0x031B2302,
+            0x00170703,
+            4096,
+            128,
+            2048,
+            64,
+            3,
+            1,
+            10,
+            9,
+            500_000,
+            900_000,
+            4_500_000,
+            2,
+            12,
+            1024,
+            31,
+            0,
+        )
+
+        backend._record_audio_metrics_locked(values, 12.5)
+        row = backend._update_performance_metrics_locked(12.6, 1.0)
+        audio = row.get("audio")
+
+        self.assertIsInstance(audio, dict)
+        self.assertEqual(audio.get("sample_rate_hz"), 44100)
+        self.assertEqual(audio.get("tx_fifo_level"), 12)
+        self.assertTrue(audio.get("playing"))
+        self.assertTrue(audio.get("timer_running"))
+        self.assertTrue(audio.get("output_voice"))
+        self.assertEqual(audio.get("tx_dma_samples"), 4096)
+        self.assertEqual(audio.get("underruns"), 3)
+        self.assertEqual(audio.get("dma_completion_count"), 10)
+        self.assertEqual(audio.get("dma_last_rearm_gap_ns"), 500_000)
+        self.assertEqual(audio.get("dma_last_units"), 1024)
+        self.assertEqual(row.get("audio_packet_count"), 1)
+
+    def test_qemu_dmac_trace_snapshot_decodes_audio_channel_state(self) -> None:
+        class RunningProcess:
+            def poll(self) -> None:
+                return None
+
+        words = (
+            0x444D4B42,
+            123,
+            6,
+            3,
+            0x60,
+            0x20,
+            0x80012340,
+            0x00100000,
+            0xFFEFFFFF,
+            0x8,
+            0,
+            0,
+            0,
+            24,
+            0x00001641,
+            17,
+        )
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        backend.proc = RunningProcess()  # type: ignore[assignment]
+
+        with mock.patch.object(
+            backend,
+            "_read_guest_ram_snapshot_locked",
+            return_value=struct.pack("<16I", *words),
+        ):
+            trace = backend.dmac_trace_snapshot()
+
+        self.assertTrue(trace.get("available"))
+        self.assertEqual(trace.get("event_name"), "audio-partial")
+        self.assertEqual(trace.get("channel"), 3)
+        channel3 = trace.get("channel3")
+        self.assertIsInstance(channel3, dict)
+        self.assertEqual(channel3.get("status"), "0x00000018")
+        self.assertEqual(channel3.get("config"), "0x00001641")
+        self.assertEqual(channel3.get("count"), 17)
+
+    def test_qemu_frame_reader_accepts_aic_performance_packet(self) -> None:
+        values = (
+            44100, 8, 0, 0x19, 1, 2, 3, 4, 1024, 0, 512, 0, 2, 0,
+            10, 9, 500_000, 900_000, 4_500_000, 2, 12, 1024, 31, 0,
+        )
+        payload = QEMU_BBK_AIC_PERF_PAYLOAD.pack(*values)
+        packet = QEMU_BBK_FRAME_HEADER.pack(
+            QEMU_BBK_PERF_MAGIC,
+            23,
+            1,
+            0,
+            0,
+            QEMU_BBK_PERF_FORMAT_AIC,
+            len(payload),
+        ) + payload
+
+        class FrameSocket:
+            def recv(self, size: int) -> bytes:
+                nonlocal packet
+                chunk, packet = packet[:size], packet[size:]
+                return chunk
+
+        backend = QemuProcessBackend(QemuSystemConfig(machine="bbk9588"))
+        backend.bbk_frame_sock = FrameSocket()  # type: ignore[assignment]
+        backend._frame_reader()
+
+        self.assertEqual(backend.audio_packet_count, 1)
+        self.assertEqual(backend.audio_metrics.get("sample_rate_hz"), 44100)
+        self.assertEqual(backend.audio_metrics.get("tx_dma_samples"), 1024)
 
     def test_qemu_frame_reader_notifies_frontend_immediately(self) -> None:
         payload = b"\x00\x00" * (240 * 320)
@@ -4832,7 +5453,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(state.qemu_frontend_input_calibration_log[-1]["event"], "qemu-frontend-input-calibration-status-deferred")
         self.assertIn("TimeoutError", str(state.qemu_frontend_input_calibration_log[-1].get("error")))
 
-    def test_frontend_input_calibration_can_start_without_cached_pc(self) -> None:
+    def test_frontend_input_calibration_waits_for_pc_before_unknown_pc_fallback(self) -> None:
         class UnknownPcBackend(_FakeFrontendQemuBackend):
             def snapshot(self) -> dict[str, object]:
                 return {"running": True}
@@ -4843,8 +5464,13 @@ class QemuSystemCommandTests(unittest.TestCase):
         state.frontend_input_calibration_last_stage_step = -1
         state.qemu_frontend_input_calibration_last_action_at = 0.0
         state.qemu_frontend_input_calibration_log = []
+        state.reset_at = time.time()
         backend = UnknownPcBackend()
 
+        state._apply_frontend_input_calibration_locked(backend)  # type: ignore[arg-type]
+        self.assertEqual(state.frontend_input_calibration_stage, 0)
+
+        state.reset_at = time.time() - 60.0
         for _index in range(2):
             state.qemu_frontend_input_calibration_last_action_at = time.time() - 1.0
             state._apply_frontend_input_calibration_locked(backend)  # type: ignore[arg-type]
@@ -4856,7 +5482,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         ])
 
     def test_frontend_full_status_keeps_heavy_traces_explicit(self) -> None:
-        state = FrontendState(
+        state = self._frontend_state_without_qemu(
             argparse.Namespace(
                 frontend_input_calibration=False,
                 boot_mode="nand",
@@ -4919,7 +5545,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         class FrameBackend:
             latest_frame_chardev = (42, time.time() - 1.0, b"\x00\x00" * (240 * 320))
 
-        state = FrontendState(
+        state = self._frontend_state_without_qemu(
             argparse.Namespace(
                 frontend_input_calibration=False,
                 boot_mode="nand",
@@ -4981,7 +5607,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(state.frame_push_replace_count, 1)
 
     def test_frontend_performance_metrics_compute_web_and_png_rates(self) -> None:
-        state = FrontendState(
+        state = self._frontend_state_without_qemu(
             argparse.Namespace(
                 frontend_input_calibration=False,
                 boot_mode="nand",
@@ -5014,6 +5640,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn("function firstNumber(...values)", frontend)
         self.assertIn("function formatRate(value, unit, fallback = 'n/a')", frontend)
         self.assertIn("function formatPercent(value, fallback = 'n/a')", frontend)
+        self.assertIn("function formatAudioMode(audio)", frontend)
         self.assertIn("const minKeyHoldMs = 100;", frontend)
         self.assertIn("function beginKeyButton(btn)", frontend)
         self.assertIn("function endKeyButton(btn, phase)", frontend)
@@ -5030,6 +5657,19 @@ class QemuSystemCommandTests(unittest.TestCase):
             frontend,
         )
         self.assertIn("['guest ips', formatGuestIps(qemuPerf)]", frontend)
+        self.assertIn("['audio', formatAudioMode(qemuAudio)]", frontend)
+        self.assertIn(
+            "['audio fifo', `tx ${qemuAudio.tx_fifo_level ?? 0} / rx ${qemuAudio.rx_fifo_level ?? 0}`]",
+            frontend,
+        )
+        self.assertIn(
+            "['audio dma', `tx ${formatCounter(qemuAudio.tx_dma_samples)} / rx ${formatCounter(qemuAudio.rx_dma_samples)}`]",
+            frontend,
+        )
+        self.assertIn(
+            "['audio xrun', `${formatCounter(qemuAudio.underruns)} / ${formatCounter(qemuAudio.overruns)}`]",
+            frontend,
+        )
 
     def test_frontend_layout_rotation_and_custom_keymap_controls(self) -> None:
         root = Path(__file__).resolve().parents[2]
@@ -5088,7 +5728,7 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(display_to_touch_point(0, 0, 320, 240, "ccw90"), (0, 319))
 
     def test_frontend_qemu_storage_service_error_uses_legacy_hook_terms(self) -> None:
-        state = FrontendState(
+        state = self._frontend_state_without_qemu(
             argparse.Namespace(
                 nand_image=None,
                 image=None,
