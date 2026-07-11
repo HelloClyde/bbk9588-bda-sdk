@@ -2,6 +2,7 @@ param(
   [string]$Workspace = ".",
   [string]$Python = "python",
   [string]$BuildDir = "build",
+  [string]$RuntimeDir = "runtime",
   [string]$SystemDir = "",
   [string]$AppsDir = "",
   [string]$C200 = "",
@@ -10,7 +11,7 @@ param(
   [string]$UBoot = "",
   [string]$FatImage = "bbk9588_fat_page1c40.img",
   [string]$CombinedNand = "bbk9588_nand_loader0_uboot40_fat_page1c40.bin",
-  [string]$StampedNand = "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin",
+  [string]$StampedNand = "bbk9588_nand.bin",
   [string]$FatPageBase = "0x1c40",
   [string]$OsPageBase = "0x200",
   [string]$LoaderPageBase = "0x0",
@@ -44,7 +45,9 @@ if (-not $Loader) {
 }
 
 $build = Join-Path $root $BuildDir
+$runtime = Join-Path $root $RuntimeDir
 New-Item -ItemType Directory -Force -Path $build | Out-Null
+New-Item -ItemType Directory -Force -Path $runtime | Out-Null
 
 $systemPath = Join-Path $root $SystemDir
 $appsPath = Join-Path $root $AppsDir
@@ -54,7 +57,7 @@ $loaderPath = if ($Loader) { Join-Path $root $Loader } else { "" }
 $ubootPath = if ($UBoot) { Join-Path $root $UBoot } else { "" }
 $fatPath = Join-Path $build $FatImage
 $combinedPath = Join-Path $build $CombinedNand
-$stampedPath = Join-Path $build $StampedNand
+$stampedPath = Join-Path $runtime $StampedNand
 
 foreach ($path in @($systemPath, $appsPath, $kj409588Path)) {
   if (-not (Test-Path -LiteralPath $path)) {

@@ -33,13 +33,13 @@ HTML = r"""<!doctype html>
   <style>
     :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; background: #15171a; color: #e8eaed; letter-spacing: 0; }
     * { box-sizing: border-box; }
-    html, body { min-height: 100%; }
-    body { margin: 0; min-height: 100vh; background: #15171a; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { margin: 0; background: #15171a; }
     .app-header { height: 56px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid #343941; background: #191b1f; }
-    .workspace { min-height: calc(100vh - 56px); display: grid; grid-template-columns: minmax(280px, 340px) minmax(390px, 1fr) minmax(280px, 340px); grid-template-areas: "controls stage status"; }
+    .workspace { height: calc(100vh - 56px); min-height: 0; display: grid; grid-template-columns: minmax(280px, 340px) minmax(390px, 1fr) minmax(280px, 340px); grid-template-areas: "controls stage status"; overflow: hidden; }
     .control-sidebar { grid-area: controls; padding: 16px; border-right: 1px solid #343941; background: #1b1e22; overflow: auto; }
     .emulator-stage { grid-area: stage; min-width: 0; padding: 16px 20px 22px; display: flex; flex-direction: column; align-items: center; gap: 12px; overflow: auto; }
-    .status-sidebar { grid-area: status; padding: 16px; border-left: 1px solid #343941; background: #202327; overflow: auto; }
+    .status-sidebar { grid-area: status; min-height: 0; padding: 16px; border-left: 1px solid #343941; background: #202327; display: flex; flex-direction: column; overflow: hidden; }
     h1 { font-size: 18px; margin: 0; font-weight: 650; }
     h2 { font-size: 13px; margin: 0 0 10px; color: #b8c0cc; font-weight: 600; }
     button, input, select { font: inherit; }
@@ -86,15 +86,36 @@ HTML = r"""<!doctype html>
     .path-input { flex: 1 1 260px; width: auto; min-width: 0; }
     .image-status { min-height: 1.2em; overflow-wrap: anywhere; }
     .check { display: inline-flex; gap: 6px; align-items: center; color: #c9d1d9; font-size: 12px; }
+    .sidebar-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-bottom: 12px; padding: 3px; background: #181b1f; border: 1px solid #343941; border-radius: 7px; }
+    .sidebar-tab { background: transparent; color: #aeb7c4; padding: 7px 8px; }
+    .sidebar-tab.active { background: #343941; color: white; }
+    .tab-pane { min-height: 0; margin-bottom: 0; }
+    .tab-pane[hidden] { display: none; }
+    #statusTab { flex: 1; overflow-y: auto; }
+    #filesTab { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    #filesTab[hidden] { display: none; }
+    .file-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+    .file-toolbar button { min-width: 34px; padding: 6px 8px; }
+    .file-path { min-height: 28px; padding: 6px 8px; margin-bottom: 8px; background: #111317; border: 1px solid #343941; border-radius: 5px; color: #cbd3dd; font-size: 12px; overflow-wrap: anywhere; }
+    .file-list { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid #343941; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .file-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid #30343b; }
+    .file-name { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 3px 2px; color: #e8eaed; background: transparent; text-align: left; overflow: hidden; }
+    .file-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-size { color: #8f99a7; font-size: 11px; white-space: nowrap; }
+    .file-actions { display: flex; gap: 3px; }
+    .file-actions button { width: 28px; height: 28px; padding: 0; background: #343941; }
+    .file-actions button.delete { background: #693333; }
+    .file-empty { padding: 20px 4px; color: #8f99a7; font-size: 12px; text-align: center; }
+    .file-manager-status { min-height: 18px; margin-top: 8px; color: #9aa4b2; font-size: 12px; overflow-wrap: anywhere; }
     pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.45; color: #c9d1d9; }
     .muted { color: #9aa4b2; font-size: 12px; }
     @media (max-width: 1120px) {
-      .workspace { grid-template-columns: minmax(250px, 300px) minmax(390px, 1fr); grid-template-areas: "controls stage" "status status"; }
+      .workspace { grid-template-columns: minmax(250px, 300px) minmax(390px, 1fr); grid-template-rows: minmax(0, 1fr) minmax(220px, 38vh); grid-template-areas: "controls stage" "status status"; }
       .status-sidebar { border-left: 0; border-top: 1px solid #343941; }
     }
     @media (max-width: 760px) {
       .app-header { height: 50px; }
-      .workspace { min-height: calc(100vh - 50px); grid-template-columns: minmax(0, 1fr); grid-template-areas: "stage" "controls" "status"; }
+      .workspace { height: calc(100vh - 50px); grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(160px, .55fr) minmax(220px, .8fr); grid-template-areas: "stage" "controls" "status"; overflow-y: auto; }
       .emulator-stage { padding: 12px; }
       .control-sidebar, .status-sidebar { border: 0; border-top: 1px solid #343941; }
       #screen { max-height: none; }
@@ -114,28 +135,15 @@ HTML = r"""<!doctype html>
       <section class="panel">
         <h2>NAND 镜像</h2>
         <div class="row">
-          <select id="nandImageSelect" class="grow"></select>
-          <button id="reloadImages" class="secondary">刷新</button>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <input id="nandImagePath" class="path-input" placeholder="NAND 镜像路径">
-          <button id="applyNandImage">切换并重启</button>
+          <div id="imageStatus" class="image-status grow">bbk9588_nand.bin</div>
           <button id="restoreNandImage" class="warn" title="恢复基础 NAND 镜像">↺ 恢复</button>
         </div>
-        <div id="imageStatus" class="muted image-status" style="margin-top:8px"></div>
       </section>
       <section class="panel">
-        <h2>运行</h2>
+        <h2>模拟器</h2>
         <div class="row">
-          <button id="boot">后台启动</button>
-          <button id="step" class="secondary">运行一片</button>
-          <button id="auto" class="secondary">连续运行</button>
           <button id="stop" class="secondary">停止</button>
           <button id="reset" class="warn">重置</button>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <label class="muted">每片指令</label>
-          <input id="steps" type="number" min="1000" max="2000000" step="10000" value="250000">
           <label class="check"><input id="frontendInputCalibration" type="checkbox">前端输入校准</label>
         </div>
       </section>
@@ -174,10 +182,26 @@ HTML = r"""<!doctype html>
         </section>
       </div>
     </main>
-    <aside class="status-sidebar" aria-label="模拟器状态">
-      <section class="panel">
+    <aside class="status-sidebar" aria-label="状态与文件">
+      <div class="sidebar-tabs" role="tablist" aria-label="右侧视图">
+        <button id="statusTabButton" class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="statusTab">状态</button>
+        <button id="filesTabButton" class="sidebar-tab" role="tab" aria-selected="false" aria-controls="filesTab">文件</button>
+      </div>
+      <section id="statusTab" class="panel tab-pane" role="tabpanel">
         <h2>状态</h2>
         <div id="status" class="kv"></div>
+      </section>
+      <section id="filesTab" class="panel tab-pane" role="tabpanel" hidden>
+        <div class="file-toolbar" role="toolbar" aria-label="NAND 文件操作">
+          <button id="fileUp" class="secondary" title="上级目录" aria-label="上级目录">←</button>
+          <button id="fileRefresh" class="secondary" title="刷新" aria-label="刷新">↻</button>
+          <button id="fileMkdir" class="secondary">+ 文件夹</button>
+          <button id="fileImport">⇧ 导入</button>
+          <input id="fileImportInput" type="file" hidden>
+        </div>
+        <div id="filePath" class="file-path">A:\</div>
+        <div id="fileList" class="file-list"></div>
+        <div id="fileManagerStatus" class="file-manager-status"></div>
       </section>
     </aside>
   </div>
@@ -186,16 +210,20 @@ const screen = document.getElementById('screen');
 const screenCtx = screen.getContext('2d', { alpha: false });
 screenCtx.imageSmoothingEnabled = false;
 const statusEl = document.getElementById('status');
-const stepsEl = document.getElementById('steps');
 const frontendInputCalibrationEl = document.getElementById('frontendInputCalibration');
-const nandImageSelect = document.getElementById('nandImageSelect');
-const nandImagePath = document.getElementById('nandImagePath');
 const imageStatusEl = document.getElementById('imageStatus');
 const rotateLeftEl = document.getElementById('rotateLeft');
 const rotateRightEl = document.getElementById('rotateRight');
 const orientationLabelEl = document.getElementById('orientationLabel');
 const resetKeyBindingsEl = document.getElementById('resetKeyBindings');
-let timer = null;
+const statusTabButtonEl = document.getElementById('statusTabButton');
+const filesTabButtonEl = document.getElementById('filesTabButton');
+const statusTabEl = document.getElementById('statusTab');
+const filesTabEl = document.getElementById('filesTab');
+const filePathEl = document.getElementById('filePath');
+const fileListEl = document.getElementById('fileList');
+const fileManagerStatusEl = document.getElementById('fileManagerStatus');
+const fileImportInputEl = document.getElementById('fileImportInput');
 let poller = null;
 let framePoller = null;
 let framePollInFlight = false;
@@ -203,7 +231,6 @@ let ws = null;
 let wsOpenPromise = null;
 let wsWatchdog = null;
 let wsLastMessageAt = 0;
-let continuousActive = false;
 let pointerActive = false;
 let activePointerId = null;
 let touchDownAt = 0;
@@ -219,6 +246,9 @@ let lastRawFrameBuffer = null;
 let rgb565Lut = null;
 let rawImageData = null;
 let bindingCaptureCode = null;
+let currentSidebarTab = 'status';
+let currentNandDirectory = '/';
+let nandFilesBusy = false;
 const minTouchHoldMs = 180;
 const minTouchMoveIntervalMs = 1000 / 30;
 const touchMoveBackpressureMs = 100;
@@ -415,20 +445,8 @@ function formatElapsed(seconds) {
   if (m) return `${m}m ${String(s).padStart(2, '0')}s`;
   return `${s}s`;
 }
-function formatJobSteps(job) {
-  if (!job) return '';
-  const total = job.total_steps || 'inf';
-  return `${job.observed_insn_delta ?? 0}/${job.requested_done_steps ?? job.done_steps}/${total}`;
-}
 function basename(path) {
   return String(path || '').split(/[\\/]/).pop() || String(path || '');
-}
-function formatBytes(value) {
-  const n = Number(value || 0);
-  if (!n) return '';
-  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB`;
-  return `${n} B`;
 }
 function firstNumber(...values) {
   for (const value of values) {
@@ -464,74 +482,161 @@ function formatAudioMode(audio) {
   const rate = audio.sample_rate_hz ? ` ${audio.sample_rate_hz} Hz` : '';
   return `${mode}${rate}${audio.muted ? ' muted' : ''}`;
 }
-async function refreshImages() {
-  const catalog = await api('/api/images');
-  const images = Array.isArray(catalog.images) ? catalog.images : [];
-  nandImageSelect.replaceChildren();
-  for (const image of images) {
-    const option = document.createElement('option');
-    option.value = image.path || '';
-    const size = image.size ? ` ${formatBytes(image.size)}` : '';
-    option.textContent = `${image.current ? '* ' : ''}${image.name || basename(image.path)}${size}${image.exists ? '' : ' 缺失'}`;
-    option.disabled = !image.exists;
-    option.selected = Boolean(image.current);
-    nandImageSelect.appendChild(option);
-  }
-  if (!nandImageSelect.options.length) {
-    const option = document.createElement('option');
-    option.textContent = '未找到 NAND 镜像';
-    option.disabled = true;
-    nandImageSelect.appendChild(option);
-  }
-  const current = catalog.current_path || nandImageSelect.value || '';
-  if (!nandImagePath.value || current) nandImagePath.value = current;
-  imageStatusEl.textContent = current ? `当前 ${current}` : '未选择 NAND 镜像';
-}
-async function applyNandImage() {
-  const path = (nandImagePath.value || nandImageSelect.value || '').trim();
-  if (!path) {
-    imageStatusEl.textContent = '没有可用镜像';
-    return;
-  }
-  imageStatusEl.textContent = '正在切换镜像...';
-  setContinuousActive(false);
-  stopPolling();
-  try {
-    const status = await api('/api/command', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({op:'set-nand-image', path, reset:true})
-    });
-    renderStatus(status);
-    await refreshImages();
-    connectWs().catch(console.error);
-  } catch (err) {
-    imageStatusEl.textContent = String(err.message || err);
-  }
-}
 async function restoreNandImage() {
-  const path = (nandImagePath.value || nandImageSelect.value || '').trim();
-  if (!path) {
-    imageStatusEl.textContent = '没有可用镜像';
-    return;
-  }
   if (!window.confirm('恢复基础镜像会删除这个镜像的全部持久化写入。继续？')) return;
   imageStatusEl.textContent = '正在恢复基础镜像...';
-  setContinuousActive(false);
   stopPolling();
   try {
     const status = await api('/api/command', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({op:'restore-nand-image', path})
+      body:JSON.stringify({op:'restore-nand-image'})
     });
     renderStatus(status);
-    await refreshImages();
     connectWs().catch(console.error);
-    imageStatusEl.textContent = `已恢复 ${basename(path)}`;
+    imageStatusEl.textContent = basename(status.nand_image) || 'bbk9588_nand.bin';
   } catch (err) {
     imageStatusEl.textContent = String(err.message || err);
   }
+}
+function setSidebarTab(tab) {
+  currentSidebarTab = tab === 'files' ? 'files' : 'status';
+  const filesActive = currentSidebarTab === 'files';
+  statusTabButtonEl.classList.toggle('active', !filesActive);
+  filesTabButtonEl.classList.toggle('active', filesActive);
+  statusTabButtonEl.setAttribute('aria-selected', String(!filesActive));
+  filesTabButtonEl.setAttribute('aria-selected', String(filesActive));
+  statusTabEl.hidden = filesActive;
+  filesTabEl.hidden = !filesActive;
+  if (filesActive) loadNandFiles(currentNandDirectory).catch(showFileManagerError);
+}
+function formatFileSize(value) {
+  const size = Math.max(0, Number(value || 0));
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${size} B`;
+}
+function displayNandPath(path) {
+  const normalized = String(path || '/').replaceAll('/', '\\');
+  return normalized === '\\' ? 'A:\\' : `A:${normalized}`;
+}
+function showFileManagerError(error) {
+  fileManagerStatusEl.textContent = String(error?.message || error || '文件操作失败');
+}
+function setNandFilesBusy(busy, message = '') {
+  nandFilesBusy = Boolean(busy);
+  for (const button of filesTabEl.querySelectorAll('button')) button.disabled = nandFilesBusy;
+  fileImportInputEl.disabled = nandFilesBusy;
+  fileManagerStatusEl.textContent = message;
+}
+function renderNandFiles(result) {
+  currentNandDirectory = String(result.path || '/');
+  filePathEl.textContent = displayNandPath(currentNandDirectory);
+  document.getElementById('fileUp').disabled = nandFilesBusy || currentNandDirectory === '/';
+  const entries = Array.isArray(result.entries) ? result.entries : [];
+  const rows = [];
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    const nameButton = document.createElement('button');
+    nameButton.className = 'file-name';
+    nameButton.title = String(entry.name || '');
+    const icon = document.createElement('span');
+    icon.textContent = entry.is_dir ? '▸' : '·';
+    const nameText = document.createElement('span');
+    nameText.className = 'file-name-text';
+    nameText.textContent = String(entry.name || '');
+    const sizeText = document.createElement('span');
+    sizeText.className = 'file-size';
+    sizeText.textContent = entry.is_dir ? '' : formatFileSize(entry.size);
+    nameButton.append(icon, nameText, sizeText);
+    if (entry.is_dir) {
+      nameButton.onclick = () => loadNandFiles(entry.path).catch(showFileManagerError);
+    } else {
+      nameButton.onclick = () => exportNandFile(entry.path);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'file-actions';
+    if (!entry.is_dir) {
+      const exportButton = document.createElement('button');
+      exportButton.textContent = '↓';
+      exportButton.title = '导出';
+      exportButton.setAttribute('aria-label', `导出 ${entry.name}`);
+      exportButton.onclick = () => exportNandFile(entry.path);
+      actions.appendChild(exportButton);
+    }
+    const renameButton = document.createElement('button');
+    renameButton.textContent = '✎';
+    renameButton.title = '改名';
+    renameButton.setAttribute('aria-label', `改名 ${entry.name}`);
+    renameButton.onclick = () => renameNandEntry(entry);
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'delete';
+    deleteButton.textContent = '×';
+    deleteButton.title = '删除';
+    deleteButton.setAttribute('aria-label', `删除 ${entry.name}`);
+    deleteButton.onclick = () => deleteNandEntry(entry);
+    actions.append(renameButton, deleteButton);
+    row.append(nameButton, actions);
+    rows.push(row);
+  }
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'file-empty';
+    empty.textContent = '空文件夹';
+    rows.push(empty);
+  }
+  fileListEl.replaceChildren(...rows);
+  fileManagerStatusEl.textContent = `${entries.length} 项`;
+}
+async function loadNandFiles(path = '/') {
+  if (nandFilesBusy) return;
+  setNandFilesBusy(true, '正在读取 NAND...');
+  try {
+    renderNandFiles(await api(`/api/files?path=${encodeURIComponent(path)}`));
+  } finally {
+    setNandFilesBusy(false, fileManagerStatusEl.textContent);
+    document.getElementById('fileUp').disabled = currentNandDirectory === '/';
+  }
+}
+async function runNandFileMutation(url, options, message) {
+  if (nandFilesBusy) return;
+  setNandFilesBusy(true, `${message}，模拟器将重启...`);
+  try {
+    const status = await api(url, options);
+    renderStatus(status);
+    await loadNandFilesAfterMutation();
+    connectWs().catch(console.error);
+  } catch (error) {
+    showFileManagerError(error);
+  } finally {
+    setNandFilesBusy(false, fileManagerStatusEl.textContent);
+  }
+}
+async function loadNandFilesAfterMutation() {
+  const result = await api(`/api/files?path=${encodeURIComponent(currentNandDirectory)}`);
+  renderNandFiles(result);
+}
+function jsonRequest(body) {
+  return {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)};
+}
+function exportNandFile(path) {
+  window.location.assign(`/api/files/export?path=${encodeURIComponent(path)}`);
+}
+function renameNandEntry(entry) {
+  const name = window.prompt('新名称', String(entry.name || ''));
+  if (!name || name === entry.name) return;
+  runNandFileMutation('/api/files/rename', jsonRequest({path:entry.path, name}), '正在改名');
+}
+function deleteNandEntry(entry) {
+  const kind = entry.is_dir ? '文件夹及其中全部内容' : '文件';
+  if (!window.confirm(`确定删除${kind}“${entry.name}”？`)) return;
+  runNandFileMutation('/api/files/delete', jsonRequest({path:entry.path}), '正在删除');
+}
+function parentNandDirectory(path) {
+  const parts = String(path || '/').split('/').filter(Boolean);
+  parts.pop();
+  return parts.length ? `/${parts.join('/')}` : '/';
 }
 function qemuCp0Status(s) {
   return s.cp0 || s.qemu?.cp0 || null;
@@ -609,13 +714,13 @@ function requestRotation(delta) {
 function renderStatus(s) {
   applyFrontendOrientation(s.orientation || currentOrientation);
   frontendInputCalibrationEl.checked = Boolean(s.frontend_input_calibration);
+  imageStatusEl.textContent = basename(s.nand_image) || 'bbk9588_nand.bin';
   const qemuPerf = s.qemu?.performance || {};
   const qemuAudio = qemuPerf.audio || {};
   const frontendPerf = s.frontend_performance || {};
   const rows = [
     ['running', s.running],
     ['since reset', formatElapsed(s.reset_elapsed_seconds ?? s.emulator_elapsed_seconds)],
-    ['run elapsed', formatElapsed(s.run_elapsed_seconds)],
     ['qemu fps', formatRate(firstNumber(qemuPerf.frame_chardev_fps, qemuPerf.frame_chardev_average_fps), 'fps')],
     ['web fps', formatRate(frontendPerf.websocket_fps, 'fps')],
     ['web tx', formatRate(frontendPerf.websocket_transport_fps, 'fps')],
@@ -643,10 +748,6 @@ function renderStatus(s) {
     ['frame sent', s.frame_push?.ws_sent_count ?? 0],
     ['push lag', `${s.frame_push?.source_lag_ms ?? ''} ms`],
     ['frame skipped', s.frame_push?.replace_count ?? 0],
-    ['job', s.job?.name || ''],
-    ['job mode', s.job?.mode || ''],
-    ['job status', s.job?.status || ''],
-    ['job elapsed', s.job ? formatElapsed(s.job.elapsed_seconds) : ''],
     ['stop', s.stop_reason || ''],
     ['pc', s.pc],
     ['qemu region', s.qemu_pc_region || s.qemu_pc_classification?.region || s.qemu_pc_classification?.name || ''],
@@ -855,14 +956,6 @@ function stopPolling() {
 function stopFramePolling() {
   if (framePoller) { clearInterval(framePoller); framePoller = null; }
 }
-function setContinuousActive(active) {
-  continuousActive = active;
-  document.getElementById('auto').textContent = active ? '停止连续' : '连续运行';
-}
-async function step() {
-  const n = Number(stepsEl.value || 250000);
-  wsSend({op:'step', steps:n});
-}
 function requestStop() {
   wsSend({op:'stop'});
   setTimeout(async () => {
@@ -882,47 +975,49 @@ function requestStop() {
     }
   }, 1200);
 }
-document.getElementById('boot').onclick = async () => {
-  const n = Number(stepsEl.value || 250000);
-  setContinuousActive(true);
-  await connectWs();
-  wsSend({op:'run-start', name:'boot', steps:0, chunk:n});
-};
-document.getElementById('step').onclick = step;
 document.getElementById('reset').onclick = async () => {
-  if (timer) { clearInterval(timer); timer = null; }
-  setContinuousActive(false);
   stopPolling();
   wsSend({op:'reset'});
 };
-document.getElementById('auto').onclick = async () => {
-  const n = Number(stepsEl.value || 250000);
-  if (continuousActive) {
-    setContinuousActive(false);
-    requestStop();
-    return;
-  }
-  setContinuousActive(true);
-  await connectWs();
-  wsSend({op:'run-start', name:'continuous', steps:0, chunk:n});
-};
 document.getElementById('stop').onclick = async () => {
-  if (timer) { clearInterval(timer); timer = null; }
-  setContinuousActive(false);
   stopPolling();
   requestStop();
 };
 frontendInputCalibrationEl.onchange = () => {
   wsSend({op:'frontend-input-calibration', enabled:frontendInputCalibrationEl.checked});
 };
-nandImageSelect.onchange = () => {
-  if (nandImageSelect.value) nandImagePath.value = nandImageSelect.value;
-};
-document.getElementById('reloadImages').onclick = () => refreshImages().catch(err => {
-  imageStatusEl.textContent = String(err.message || err);
-});
-document.getElementById('applyNandImage').onclick = applyNandImage;
 document.getElementById('restoreNandImage').onclick = restoreNandImage;
+statusTabButtonEl.onclick = () => setSidebarTab('status');
+filesTabButtonEl.onclick = () => setSidebarTab('files');
+document.getElementById('fileUp').onclick = () => {
+  loadNandFiles(parentNandDirectory(currentNandDirectory)).catch(showFileManagerError);
+};
+document.getElementById('fileRefresh').onclick = () => {
+  loadNandFiles(currentNandDirectory).catch(showFileManagerError);
+};
+document.getElementById('fileMkdir').onclick = () => {
+  const name = window.prompt('文件夹名称');
+  if (!name) return;
+  runNandFileMutation(
+    '/api/files/mkdir',
+    jsonRequest({path:currentNandDirectory, name}),
+    '正在新建文件夹'
+  );
+};
+document.getElementById('fileImport').onclick = () => {
+  if (nandFilesBusy) return;
+  fileImportInputEl.value = '';
+  fileImportInputEl.click();
+};
+fileImportInputEl.onchange = () => {
+  const file = fileImportInputEl.files?.[0];
+  if (!file) return;
+  runNandFileMutation(
+    `/api/files/import?path=${encodeURIComponent(currentNandDirectory)}&name=${encodeURIComponent(file.name)}`,
+    {method:'POST', headers:{'Content-Type':'application/octet-stream'}, body:file},
+    '正在导入'
+  );
+};
 rotateLeftEl.onclick = () => requestRotation(-1);
 rotateRightEl.onclick = () => requestRotation(1);
 
@@ -1185,7 +1280,6 @@ updateOrientationControls();
 updateKeyBindingUi();
 connectWs();
 refresh().catch(console.error);
-refreshImages().catch(console.error);
 </script>
 </body>
 </html>

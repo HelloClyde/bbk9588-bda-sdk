@@ -56,7 +56,9 @@ DEFAULT_QEMU_DMAC_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0300
 QEMU_DMAC_TRACE_MAGIC = 0x444D4B42
 DEFAULT_QEMU_SURFACE_TRACE = DEFAULT_QEMU_DIAG_BASE + 0x0500
 QEMU_SURFACE_TRACE_MAGIC = 0x53555246
+DEFAULT_QEMU_NAND_IMAGE = Path("runtime") / "bbk9588_nand.bin"
 DEFAULT_QEMU_NAND_IMAGE_CANDIDATES = (
+    DEFAULT_QEMU_NAND_IMAGE,
     Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin",
     Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40_root256_ftloob.bin",
     Path("build") / "bbk9588_nand_loader0_uboot40_fat_page1c40.bin",
@@ -7428,7 +7430,7 @@ def persistent_runtime_nand_checkpoint_path(path: Path) -> Path:
         os.path.normcase(str(original)).encode("utf-8")
     ).hexdigest()[:16]
     return (
-        Path("build") / "qemu_nand_persistent" / f"nand_{digest}{suffix}"
+        Path("runtime") / "qemu_nand_persistent" / f"nand_{digest}{suffix}"
     ).resolve()
 
 
@@ -7540,6 +7542,26 @@ def commit_runtime_nand_checkpoint(
     return checkpoint
 
 
+def ensure_runtime_nand_checkpoint(path: Path) -> Path:
+    """Create the stable checkpoint for a base NAND image if needed."""
+
+    original = path.resolve()
+    source = qemu_safe_payload_path(original)
+    checkpoint = persistent_runtime_nand_checkpoint_path(original)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    if checkpoint.exists():
+        return checkpoint
+    temporary = checkpoint.with_name(
+        f".{checkpoint.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, checkpoint)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return checkpoint
+
+
 def prepare_runtime_nand_image(path: Path, *, persistent: bool = False) -> Path:
     """Return an isolated writable NAND work image for QEMU."""
 
@@ -7548,17 +7570,7 @@ def prepare_runtime_nand_image(path: Path, *, persistent: bool = False) -> Path:
     runs_dir = Path("build") / "qemu_nand_runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     if persistent:
-        checkpoint = persistent_runtime_nand_checkpoint_path(original)
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        if not checkpoint.exists():
-            temporary = checkpoint.with_name(
-                f".{checkpoint.name}.{os.getpid()}.{time.time_ns()}.tmp"
-            )
-            try:
-                shutil.copy2(source, temporary)
-                os.replace(temporary, checkpoint)
-            finally:
-                temporary.unlink(missing_ok=True)
+        checkpoint = ensure_runtime_nand_checkpoint(original)
         copy_source = checkpoint
     else:
         copy_source = source

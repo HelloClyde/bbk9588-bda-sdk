@@ -15,11 +15,27 @@ import http.client
 from unittest import mock
 from pathlib import Path
 
+from pyfatfs.PyFat import PyFat
+from pyfatfs.PyFatFS import PyFatFS
+
+from emu.qemu.nand_fs import (
+    LOGICAL_BLOCK_SIZE,
+    PAGE_SIZE,
+    PAGE_STRIDE,
+    PAGES_PER_BLOCK,
+    RAW_BLOCK_SIZE,
+    list_nand_directory,
+    mutate_nand_files,
+    normalize_nand_path,
+    read_nand_file,
+)
+
 from emu.qemu.system import (
     DEFAULT_C200_BASE,
     DEFAULT_BBK9588_FIRMWARE_PATCHES,
     DEFAULT_QEMU_EXECUTABLE,
     DEFAULT_QEMU_FIRMWARE_PATCHES,
+    DEFAULT_QEMU_NAND_IMAGE,
     KNOWN_STALL_REGIONS,
     DEFAULT_QEMU_MACHINE,
     QEMU_BBK_FRAME_FORMAT_RGB565,
@@ -3117,6 +3133,70 @@ class QemuSystemCommandTests(unittest.TestCase):
             runtime.unlink(missing_ok=True)
             reopened.unlink(missing_ok=True)
 
+    def test_nand_file_manager_round_trips_fat16_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fat_image = root / "fat.img"
+            nand_image = root / "nand.bin"
+            volume_offset = 0x20 * 512
+            volume_size = 32 * 1024 * 1024
+            fat_image.write_bytes(b"\0" * (volume_offset + volume_size))
+            formatter = PyFat(encoding="gbk", offset=volume_offset)
+            formatter.mkfs(
+                str(fat_image),
+                fat_type=PyFat.FAT_TYPE_FAT16,
+                size=volume_size,
+            )
+            formatter.close()
+            with fat_image.open("r+b") as stream:
+                stream.seek(volume_offset + 28)
+                stream.write((0x20).to_bytes(4, "little"))
+            fs = PyFatFS(
+                str(fat_image),
+                encoding="gbk",
+                offset=volume_offset,
+                preserve_case=True,
+            )
+            fs.makedir("/应用")
+            fs.close()
+
+            fat_size = fat_image.stat().st_size
+            logical_blocks = (fat_size + LOGICAL_BLOCK_SIZE - 1) // LOGICAL_BLOCK_SIZE
+            nand_image.write_bytes(b"\xff" * ((logical_blocks + 1) * RAW_BLOCK_SIZE))
+            with fat_image.open("rb") as source, nand_image.open("r+b") as nand:
+                for logical in range(logical_blocks):
+                    physical = logical + 1
+                    block = source.read(LOGICAL_BLOCK_SIZE)
+                    block += b"\0" * (LOGICAL_BLOCK_SIZE - len(block))
+                    for page in range(PAGES_PER_BLOCK):
+                        start = page * PAGE_SIZE
+                        nand.seek(physical * RAW_BLOCK_SIZE + page * PAGE_STRIDE)
+                        nand.write(block[start : start + PAGE_SIZE])
+                    oob = physical * RAW_BLOCK_SIZE + PAGE_SIZE
+                    nand.seek(oob + 58)
+                    nand.write((1).to_bytes(2, "little"))
+                    nand.write(logical.to_bytes(4, "little"))
+
+            root_entries = list_nand_directory(nand_image)
+            self.assertEqual([entry["name"] for entry in root_entries["entries"]], ["应用"])
+
+            def install(fs: PyFatFS) -> None:
+                fs.makedir("/应用/安装")
+                fs.writebytes("/应用/安装/demo.bda", b"BDA-TEST")
+                fs.move("/应用/安装/demo.bda", "/应用/安装/雷霆.bda")
+                fs.movedir("/应用/安装", "/应用/游戏", create=True)
+
+            mutate_nand_files(nand_image, install)
+            listing = list_nand_directory(nand_image, "/应用/游戏")
+            self.assertEqual(listing["entries"][0]["name"], "雷霆.bda")
+            self.assertEqual(read_nand_file(nand_image, "/应用/游戏/雷霆.bda")[1], b"BDA-TEST")
+
+            mutate_nand_files(nand_image, lambda writable: writable.removetree("/应用/游戏"))
+            self.assertEqual(list_nand_directory(nand_image, "/应用")["entries"], [])
+            self.assertEqual(normalize_nand_path("A:\\应用\\游戏"), "/应用/游戏")
+            with self.assertRaises(ValueError):
+                normalize_nand_path("/应用/../系统")
+
     def test_runtime_nand_persistent_paths_are_isolated_by_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5680,9 +5760,32 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertIn('class="emulator-stage"', frontend)
         self.assertIn('class="status-sidebar"', frontend)
         self.assertIn(".kv-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }", frontend)
+        self.assertIn("html, body { width: 100%; height: 100%; overflow: hidden; }", frontend)
+        self.assertIn(".workspace { height: calc(100vh - 56px); min-height: 0;", frontend)
+        self.assertIn("#filesTab { flex: 1; display: flex; flex-direction: column; overflow: hidden; }", frontend)
+        self.assertIn("#filesTab[hidden] { display: none; }", frontend)
+        self.assertIn(".file-list { flex: 1; min-height: 0;", frontend)
+        self.assertIn("overflow-y: auto; overscroll-behavior: contain;", frontend)
         self.assertIn("statusEl.replaceChildren(...statusNodes);", frontend)
         self.assertNotIn("最近事件", frontend)
         self.assertNotIn("const eventsEl", frontend)
+        self.assertIn('id="imageStatus" class="image-status grow">bbk9588_nand.bin', frontend)
+        self.assertNotIn("运行一片", frontend)
+        self.assertNotIn("连续运行", frontend)
+        self.assertNotIn("每片指令", frontend)
+        self.assertNotIn('id="nandImageSelect"', frontend)
+        self.assertNotIn('id="nandImagePath"', frontend)
+        self.assertNotIn('id="applyNandImage"', frontend)
+        self.assertNotIn("refreshImages", frontend)
+        self.assertNotIn("wsSend({op:'step'", frontend)
+        self.assertNotIn("wsSend({op:'run-start'", frontend)
+        self.assertIn('id="statusTabButton"', frontend)
+        self.assertIn('id="filesTabButton"', frontend)
+        self.assertIn('id="fileMkdir"', frontend)
+        self.assertIn('id="fileImport"', frontend)
+        self.assertIn("/api/files/export?path=", frontend)
+        self.assertIn("/api/files/rename", frontend)
+        self.assertIn("/api/files/delete", frontend)
         self.assertIn('id="rotateLeft"', frontend)
         self.assertIn('id="rotateRight"', frontend)
         self.assertIn("wsSend({op:'set-orientation', orientation:next})", frontend)
@@ -5817,6 +5920,17 @@ class QemuSystemCommandTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertEqual(selected[0].get("path"), str(nand.resolve()))
         self.assertEqual(selected[0].get("size"), 4096)
+
+    def test_default_nand_and_checkpoint_live_outside_build_directory(self) -> None:
+        self.assertEqual(
+            DEFAULT_QEMU_NAND_IMAGE,
+            Path("runtime") / "bbk9588_nand.bin",
+        )
+        checkpoint = persistent_runtime_nand_checkpoint_path(
+            Path("runtime") / "bbk9588_nand.bin"
+        )
+        self.assertEqual(checkpoint.parent.name, "qemu_nand_persistent")
+        self.assertEqual(checkpoint.parent.parent.name, "runtime")
 
     def test_frontend_qemu_backend_status_and_stop(self) -> None:
         if find_qemu() is None:

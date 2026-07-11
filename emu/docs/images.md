@@ -61,14 +61,14 @@ python .\emu\tools\make_combined_nand.py `
 
 python .\emu\tools\stamp_ftl_oob.py `
   .\build\bbk9588_nand_loader0_uboot40_fat_page1c40.bin `
-  .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
+  .\runtime\bbk9588_nand.bin `
   --fat-page-base 0x1c40
 ```
 
 前端默认使用最终的 `_ftloob` 镜像：
 
 ```text
-build/bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin
+runtime/bbk9588_nand.bin
 ```
 
 ## 运行时写入策略
@@ -79,7 +79,13 @@ QEMU 前端会把源 NAND 镜像复制到：
 build/qemu_nand_runs/
 ```
 
-普通前端会话不会直接修改 `build/` 下的源镜像。
+普通前端会话不会直接修改 `runtime/bbk9588_nand.bin` 基础镜像；持久 checkpoint
+也位于 `runtime/`，因此清理 `build/` 不会删除用户数据。
+
+Web 右侧“文件”标签管理的是当前持久 checkpoint。目录浏览和导出使用只读 FAT
+快照；新建目录、导入、改名和删除会先正常停止 QEMU、提交 work copy，再原子更新
+checkpoint 并重启 QEMU。该工具只用于离线安装和维护文件，不参与 C200 运行时的
+FTL/FAT 访问。
 
 ## 发布规则
 
@@ -88,6 +94,7 @@ build/qemu_nand_runs/
 - `系统/`
 - `应用/`
 - `build/`
+- `runtime/`
 - `*.bin`
 - `*.bda`
 - `*.dba`

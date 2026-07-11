@@ -77,7 +77,8 @@ P0 和 P1 的边界是：AIC 可以从一开始就作为独立设备新增，避
 
 1. QEMU 只模拟 JZ4740 SoC、板级外设和 raw NAND 行为。
 2. loader/U-Boot/C200 自己完成 FTL、FAT、资源缓存和 UI 逻辑。
-3. Python 只负责启动、Web 前端、镜像打包和只读诊断。
+3. Python 只负责启动、Web 前端、镜像打包、只读诊断和 QEMU 停止后的离线 NAND
+   文件维护；guest 运行时的 FTL/FAT 仍全部由 loader/U-Boot/C200 完成。
 
 主要代码位置：
 
@@ -167,6 +168,11 @@ P0 和 P1 的边界是：AIC 可以从一开始就作为独立设备新增，避
   checkpoint commit、异常保留 work copy、跨冷启动恢复应用状态回归。
 - [x] 增加显式“恢复基础镜像”操作；Web 左侧“↺ 恢复”按钮二次确认后调用
   `restore-nand-image`，只删除所选基础镜像派生的 checkpoint 和受控 work copy。
+- [x] 基础镜像固定为 `runtime/bbk9588_nand.bin`，持久 checkpoint 位于
+  `runtime/qemu_nand_persistent/`，会话 work copy 和 FAT 快照缓存留在 `build/`。
+- [x] Web 右侧增加“状态/文件”标签；文件页支持新建目录、导入/导出、改名和递归
+  删除。写操作先停止 QEMU 并提交 work copy，再原子修改 checkpoint 和重启 QEMU；
+  该离线工具不进入 guest 运行路径，也不改变 QEMU C 不解析 FAT 的边界。
   普通 reset 不进入恢复路径，基础镜像本身永不删除或修改。
 
 验收：

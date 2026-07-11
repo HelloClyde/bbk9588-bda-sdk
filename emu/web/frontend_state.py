@@ -9,23 +9,34 @@ import threading
 import time
 from collections import deque
 from itertools import islice
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from emu.core.framebuffer import png_bytes_from_rgb, rgb565_raw_to_info_rgb
 from emu.qemu.system import (
     DEFAULT_QEMU_EXECUTABLE,
     DEFAULT_QEMU_MACHINE,
+    DEFAULT_QEMU_NAND_IMAGE,
     QemuProcessBackend,
     TOUCH_CALIBRATION_REFERENCE_POINTS,
     build_bbk_qemu_config,
     classify_guest_pc,
+    ensure_runtime_nand_checkpoint,
     restore_runtime_nand_checkpoint,
+)
+from emu.qemu.nand_fs import (
+    extract_logical_fat_image,
+    join_nand_path,
+    list_fat_directory,
+    mutate_nand_files,
+    normalize_nand_path,
+    read_fat_file,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
 COMBINED_NAND_IMAGE_CANDIDATES = (
+    ROOT / DEFAULT_QEMU_NAND_IMAGE,
     BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin",
     BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root256_ftloob.bin",
     BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40.bin",
@@ -291,6 +302,9 @@ class FrontendState:
         self.ws_connection_count = 0
         self.ws_connection_peak = 0
         self.frontend_activity_seq = 0
+        self.nand_files_lock = threading.Lock()
+        self.nand_files_cache_path = BUILD / "nand_fs_cache" / "bbk9588_fat.img"
+        self.nand_files_cache_signature: tuple[str, int, int] | None = None
 
         self.reset()
 
@@ -387,6 +401,129 @@ class FrontendState:
         result["nand_restored"] = True
         result["nand_checkpoint_removed"] = existed
         result["nand_checkpoint_path"] = str(checkpoint)
+        return result
+
+    def _nand_files_checkpoint(self) -> Path:
+        selected = self._default_nand_image()
+        if selected is None:
+            raise FileNotFoundError("default NAND image is missing")
+        return ensure_runtime_nand_checkpoint(selected)
+
+    def _nand_files_fat_snapshot(self) -> Path:
+        checkpoint = self._nand_files_checkpoint()
+        stat = checkpoint.stat()
+        signature = (str(checkpoint.resolve()), stat.st_size, stat.st_mtime_ns)
+        cache_path = getattr(
+            self,
+            "nand_files_cache_path",
+            BUILD / "nand_fs_cache" / "bbk9588_fat.img",
+        )
+        cached_signature = getattr(self, "nand_files_cache_signature", None)
+        if cached_signature != signature or not cache_path.is_file():
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = cache_path.with_suffix(".tmp")
+            try:
+                extract_logical_fat_image(checkpoint, temporary)
+                os.replace(temporary, cache_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            self.nand_files_cache_signature = signature
+        return cache_path
+
+    def _invalidate_nand_files_cache(self) -> None:
+        self.nand_files_cache_signature = None
+        cache_path = getattr(self, "nand_files_cache_path", None)
+        if isinstance(cache_path, Path):
+            cache_path.unlink(missing_ok=True)
+
+    def nand_files_list(self, directory: object = "/") -> dict[str, object]:
+        with self.nand_files_lock:
+            result = list_fat_directory(self._nand_files_fat_snapshot(), directory)
+        result["image"] = str(self._default_nand_image() or "")
+        return result
+
+    def nand_file_export(self, file_path: object) -> tuple[str, bytes]:
+        with self.nand_files_lock:
+            return read_fat_file(self._nand_files_fat_snapshot(), file_path)
+
+    def _mutate_nand_files(self, operation) -> dict[str, object]:
+        with self.nand_files_lock:
+            backend = self.qemu_backend
+            if backend is not None:
+                self.stop()
+                backend_status = backend.snapshot()
+                commit_error = backend_status.get("nand_last_commit_error")
+                if commit_error:
+                    self.reset()
+                    raise RuntimeError(f"could not commit running NAND before file operation: {commit_error}")
+            checkpoint = self._nand_files_checkpoint()
+            try:
+                mutate_nand_files(checkpoint, operation)
+                self._invalidate_nand_files_cache()
+            except Exception:
+                if backend is not None:
+                    self.reset()
+                raise
+            status = self.reset() if backend is not None else self.snapshot()
+        status["nand_files_changed"] = True
+        return status
+
+    def nand_files_mkdir(self, directory: object, name: object) -> dict[str, object]:
+        target = join_nand_path(directory, name)
+
+        def operation(fs) -> None:
+            fs.makedir(target, recreate=False)
+
+        result = self._mutate_nand_files(operation)
+        result["nand_file_path"] = target
+        return result
+
+    def nand_files_import(
+        self,
+        directory: object,
+        name: object,
+        data: bytes,
+    ) -> dict[str, object]:
+        if len(data) > 128 * 1024 * 1024:
+            raise ValueError("NAND file upload exceeds 128 MiB")
+        target = join_nand_path(directory, name)
+
+        def operation(fs) -> None:
+            fs.writebytes(target, data)
+
+        result = self._mutate_nand_files(operation)
+        result.update({"nand_file_path": target, "nand_file_size": len(data)})
+        return result
+
+    def nand_files_rename(self, file_path: object, name: object) -> dict[str, object]:
+        source = normalize_nand_path(file_path, allow_root=False)
+        target = join_nand_path(str(PurePosixPath(source).parent), name)
+
+        def operation(fs) -> None:
+            if fs.isdir(source):
+                fs.movedir(source, target, create=True)
+            elif fs.isfile(source):
+                fs.move(source, target, overwrite=False)
+            else:
+                raise FileNotFoundError(f"NAND path does not exist: {source}")
+
+        result = self._mutate_nand_files(operation)
+        result.update({"nand_file_path": target, "nand_file_previous_path": source})
+        return result
+
+    def nand_files_delete(self, file_path: object) -> dict[str, object]:
+        target = normalize_nand_path(file_path, allow_root=False)
+
+        def operation(fs) -> None:
+            if fs.isdir(target):
+                fs.removetree(target)
+            elif fs.isfile(target):
+                fs.remove(target)
+            else:
+                raise FileNotFoundError(f"NAND path does not exist: {target}")
+
+        result = self._mutate_nand_files(operation)
+        result["nand_file_deleted"] = target
         return result
 
     def _reset_runtime_fields_locked(self) -> None:

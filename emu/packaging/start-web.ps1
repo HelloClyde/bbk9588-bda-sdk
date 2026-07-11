@@ -51,8 +51,11 @@ if (-not (Test-Path -LiteralPath $Qemu)) {
     throw "Packaged QEMU executable not found: $Qemu"
 }
 
-$NandImage = Join-Path $Root "build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin"
+$RuntimeDir = Join-Path $Root "runtime"
+New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+$NandImage = Join-Path $RuntimeDir "bbk9588_nand.bin"
 $FallbackNandImages = @(
+    (Join-Path $Root "build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin"),
     (Join-Path $Root "build\bbk9588_nand_loader0_uboot40_fat_page1c40_root256_ftloob.bin"),
     (Join-Path $Root "build\bbk9588_nand_fat_page1c40_root512_ftloob.bin"),
     (Join-Path $Root "build\bbk9588_nand_fat_page1c40_root256_ftloob.bin"),
@@ -62,7 +65,7 @@ $FallbackNandImages = @(
 if (-not $RebuildImages -and -not (Test-Path -LiteralPath $NandImage)) {
     foreach ($candidate in $FallbackNandImages) {
         if (Test-Path -LiteralPath $candidate) {
-            $NandImage = $candidate
+            Copy-Item -LiteralPath $candidate -Destination $NandImage
             break
         }
     }

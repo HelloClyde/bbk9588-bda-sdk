@@ -25,7 +25,7 @@ from emu.web.frontend_ws import WebSocketFrameReader, encode_ws_frame
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
-DEFAULT_NAND = BUILD / "bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin"
+DEFAULT_NAND = ROOT / "runtime" / "bbk9588_nand.bin"
 WS_RAW_FRAME_MAGIC = b"BBKRAW1\0"
 WS_RAW_FRAME_HEADER_SIZE = 20
 WS_RAW_FRAME_FORMAT_RGB565 = 1

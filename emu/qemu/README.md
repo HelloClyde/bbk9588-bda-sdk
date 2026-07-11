@@ -57,7 +57,7 @@ bin/bbk9588-qemu-system-mipsel.exe
 ```powershell
 python -m emu.web.frontend `
   --boot-mode nand `
-  --nand-image .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
+  --nand-image .\runtime\bbk9588_nand.bin `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
@@ -95,7 +95,7 @@ bin/bbk9588-qemu-system-mipsel.exe
   boot-sector 扫描和 FAT/cluster bridge 已移除；FAT/资源逻辑由
   U-Boot/C200 经 modeled raw NAND 路径执行。后续若需要模拟 SD/MMC，必须给 MSC
   接独立 block backend，不能复用 NAND OOB FTL。
-- Web 默认不直接修改基础 NAND。每次运行从 `build/qemu_nand_persistent/` 中与基础
+- Web 默认不直接修改基础 NAND。每次运行从 `runtime/qemu_nand_persistent/` 中与基础
   镜像路径绑定的 canonical checkpoint 创建隔离 work copy；正常停止且已有有效画面
   时，将 work copy 的最新 OOB logical block view 压实回 checkpoint。这样既保留应用
   写入，也保持 loader/U-Boot 所需的 canonical boot layout。启动未完成、异常退出或

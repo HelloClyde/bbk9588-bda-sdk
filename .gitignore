@@ -5,6 +5,9 @@
 # Build outputs and hardware probe artifacts.
 /build/
 
+# Persistent emulator runtime data.
+/runtime/
+
 # Toolchain bundle: keep the packaged archive and docs, ignore extracted files.
 /tools/*
 !/tools/README.md

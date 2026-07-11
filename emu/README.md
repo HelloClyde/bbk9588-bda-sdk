@@ -78,7 +78,7 @@ python -m emu.web.frontend `
   --host 127.0.0.1 `
   --port 8000 `
   --boot-mode nand `
-  --nand-image .\build\bbk9588_nand_loader0_uboot40_fat_page1c40_root512_ftloob.bin `
+  --nand-image .\runtime\bbk9588_nand.bin `
   --qemu E:\qemu-src\build-bbk9588-win\qemu-system-mipsel.exe
 ```
 
@@ -162,8 +162,9 @@ python .\emu\tools\validate_release_package.py .\build\dist\bbk9588-emulator-版
 QEMU/C200 运行路径已经能进入系统 UI，支持 framebuffer 输出、Web 前端触摸/按键输入，
 并能打开多个内置应用。默认路径已经改为 BootROM -> loader (`0x80000004`) -> U-Boot -> FAT/FTL ->
 `kj409588.bin`；旧的 BootROM 直接读取 FAT `C200.bin` 路径只作为显式 legacy 诊断选项保留。
-Web 前端
-可以切换可用 NAND 镜像并重启。仍在推进的部分：
+Web 前端固定使用 `runtime/bbk9588_nand.bin`，不再暴露本机镜像切换控件。右侧
+“文件”标签可离线管理 checkpoint 中的 FAT 文件，支持新建目录、导入、导出、改名
+和删除。写操作会先停止并提交当前 NAND，完成后自动重启 QEMU。仍在推进的部分：
 
 - NAND/FTL/FAT/cache 路径仍需继续靠硬件模型完善。
 - U-Boot 冷启动路径需要继续优化 QEMU C NAND data port 性能和真机 OOB 元数据匹配。

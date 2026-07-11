@@ -10,7 +10,7 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from emu.web.frontend_ws import WebSocketFrameReader, encode_ws_frame, websocket_accept_key
 
@@ -32,6 +32,26 @@ class FrontendHandler(BaseHTTPRequestHandler):
 
     def _json(self, data: object, status: int = 200) -> None:
         self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def _download(self, name: str, body: bytes) -> None:
+        self.close_connection = True
+        self.connection.settimeout(1.0)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(name)}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self) -> dict[str, object]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length else b"{}"
+        body = json.loads(raw.decode("utf-8") or "{}")
+        if not isinstance(body, dict):
+            raise ValueError("request body must be a JSON object")
+        return body
 
     def _ws_send_frame(self, opcode: int, payload: bytes) -> None:
         self.connection.sendall(encode_ws_frame(opcode, payload))
@@ -249,6 +269,15 @@ class FrontendHandler(BaseHTTPRequestHandler):
                     self._json(self.state.snapshot())
             elif parsed.path == "/api/images":
                 self._json(self.state.nand_image_catalog())
+            elif parsed.path == "/api/files":
+                directory = parse_qs(parsed.query).get("path", ["/"])[0]
+                self._json(self.state.nand_files_list(directory))
+            elif parsed.path == "/api/files/export":
+                file_path = parse_qs(parsed.query).get("path", [""])[0]
+                if not file_path:
+                    raise ValueError("missing NAND file path")
+                name, data = self.state.nand_file_export(file_path)
+                self._download(name, data)
             elif parsed.path == "/api/logs":
                 limit = int(parse_qs(parsed.query).get("limit", ["512"])[0])
                 self._json(self.state.logs(limit))
@@ -303,12 +332,24 @@ class FrontendHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/reset":
                 self._json(self.state.reset())
             elif parsed.path == "/api/command":
+                self._json(self.state.command(self._read_json_body()))
+            elif parsed.path == "/api/files/mkdir":
+                body = self._read_json_body()
+                self._json(self.state.nand_files_mkdir(body.get("path", "/"), body.get("name")))
+            elif parsed.path == "/api/files/rename":
+                body = self._read_json_body()
+                self._json(self.state.nand_files_rename(body.get("path"), body.get("name")))
+            elif parsed.path == "/api/files/delete":
+                body = self._read_json_body()
+                self._json(self.state.nand_files_delete(body.get("path")))
+            elif parsed.path == "/api/files/import":
                 length = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(length) if length else b"{}"
-                msg = json.loads(raw.decode("utf-8") or "{}")
-                if not isinstance(msg, dict):
-                    raise ValueError("command body must be a JSON object")
-                self._json(self.state.command(msg))
+                if length < 0 or length > 128 * 1024 * 1024:
+                    raise ValueError("invalid NAND upload size")
+                data = self.rfile.read(length) if length else b""
+                directory = qs.get("path", ["/"])[0]
+                name = qs.get("name", [""])[0]
+                self._json(self.state.nand_files_import(directory, name, data))
             elif parsed.path == "/api/boot":
                 self._json(self.state.boot())
             elif parsed.path == "/api/checkpoint":
