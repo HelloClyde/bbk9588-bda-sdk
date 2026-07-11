@@ -1,0 +1,3 @@
+[submodule "emu"]
+	path = emu
+	url = https://github.com/HelloClyde/bbk9588-emulator.git
