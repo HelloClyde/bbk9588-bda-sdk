@@ -7,9 +7,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bda_compile_c import build_bda, bundled_prefix, find_tool, sdk_include_dir
-from bda_header import BdaHeaderFields, decoded_header_words, verify, write_header
-from bda_validate import validate_bda
+from bda_packer.build import build_bda, bundled_prefix, find_tool, sdk_include_dir
+from bda_packer.header import BdaHeaderFields, decoded_header_words, verify, write_header
+from bda_packer.validate import validate_bda
 
 
 class StandalonePackerTest(unittest.TestCase):

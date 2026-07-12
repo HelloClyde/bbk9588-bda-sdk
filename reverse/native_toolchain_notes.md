@@ -15,7 +15,7 @@
 唯一构建入口：
 
 ```powershell
-python reverse\bda_compile_c.py reverse\examples\hello_world_msgbox.c `
+python -m bda_packer reverse\examples\hello_world_msgbox.c `
   --title HelloWorld `
   --category 9 `
   --icon-png path\to\icon.png `
@@ -31,7 +31,7 @@ header、四个 VX icon 和 flat code/data。
 ## Validate
 
 ```powershell
-python reverse\bda_validate.py build\HelloWorld.bda
+python -m bda_packer.validate build\HelloWorld.bda
 python -m unittest reverse.test_bda_header reverse.test_bda_validate reverse.test_sdk_examples
 ```
 
