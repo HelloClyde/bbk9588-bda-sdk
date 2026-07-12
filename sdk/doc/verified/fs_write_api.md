@@ -22,7 +22,7 @@ int bda_fs_fread_raw(
 );
 int bda_fs_read_raw(int file, void *buffer, bda_size_t size);
 int bda_fs_tell_raw(int file);
-int bda_fs_error_like(int file);
+int bda_fs_error(int file);
 int bda_fs_close_raw(int file);
 ```
 

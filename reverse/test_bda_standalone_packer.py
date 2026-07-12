@@ -20,6 +20,7 @@ class StandalonePackerTest(unittest.TestCase):
 
         self.assertIn("Admission rule", header_text)
         self.assertIn("动态验证", policy_text)
+        self.assertNotIn("_like", header_text.lower())
         self.assertNotIn("bda_gui_touch_position_like", header_text)
         self.assertNotIn("bda_gui_create_window_like", header_text)
         self.assertNotIn("bda_fs_mkdir_like", header_text)

@@ -6,30 +6,30 @@ C200 固件与模拟器显示后端，测试画面实际显示了彩色像素块
 ## 已验证接口
 
 ```c
-bda_handle_t bda_gui_register_frame_desc_like(bda_frame_desc_like_t *descriptor);
-int bda_gui_frame_activate_like(bda_handle_t handle, u32 mode);
-bda_handle_t bda_gui_frame_surface_like(u32 kind);
-bda_handle_t bda_gui_current_draw_like(bda_handle_t handle);
-int bda_gui_default_proc_like(
+bda_handle_t bda_gui_register_frame_desc(bda_frame_desc_t *descriptor);
+int bda_gui_frame_activate(bda_handle_t handle, u32 mode);
+void *bda_gui_frame_surface(u32 kind);
+bda_handle_t bda_gui_current_draw(bda_handle_t handle);
+int bda_gui_default_proc(
     bda_handle_t handle,
     u32 message,
     u32 wparam,
     u32 lparam
 );
-int bda_gui_event_pump_frame_once_like(
-    bda_gui_message_like_t *message,
+int bda_gui_event_pump_frame_once(
+    bda_gui_message_t *message,
     bda_handle_t frame
 );
-int bda_gui_frame_stop_like(bda_handle_t handle);
-int bda_gui_frame_release_like(bda_handle_t handle);
-void *bda_gui_draw_object_create_like(u32 kind);
-void *bda_gui_select_draw_object_like(bda_handle_t context, void *object);
+int bda_gui_frame_stop(bda_handle_t handle);
+int bda_gui_frame_release(bda_handle_t handle);
+void *bda_gui_draw_object_create(u32 kind);
+void *bda_gui_select_draw_object(bda_handle_t context, void *object);
 
-int bda_gui_draw_guard_begin_like(void);
-int bda_gui_draw_guard_end_like(void);
-int bda_gui_rgb_like(bda_handle_t context, u32 red, u32 green, u32 blue);
-int bda_gui_put_pixel_like(bda_handle_t context, s32 x, s32 y, u32 color);
-int bda_gui_put_pixel_rgb_like(
+int bda_gui_draw_guard_begin(void);
+int bda_gui_draw_guard_end(void);
+int bda_gui_rgb(bda_handle_t context, u32 red, u32 green, u32 blue);
+int bda_gui_put_pixel(bda_handle_t context, s32 x, s32 y, u32 color);
+int bda_gui_put_pixel_rgb(
     bda_handle_t context,
     s32 x,
     s32 y,
@@ -37,19 +37,19 @@ int bda_gui_put_pixel_rgb_like(
     u32 green,
     u32 blue
 );
-void bda_gui_move_to_like(bda_handle_t context, s32 x, s32 y);
-void bda_gui_line_to_like(bda_handle_t context, s32 x, s32 y);
-void bda_gui_circle_like(bda_handle_t context, s32 center_x, s32 center_y, s32 radius);
-void bda_gui_rectangle_like(
+void bda_gui_move_to(bda_handle_t context, s32 x, s32 y);
+void bda_gui_line_to(bda_handle_t context, s32 x, s32 y);
+void bda_gui_circle(bda_handle_t context, s32 center_x, s32 center_y, s32 radius);
+void bda_gui_rectangle(
     bda_handle_t context,
     s32 left,
     s32 top,
     s32 right,
     s32 bottom
 );
-int bda_gui_set_text_mode_like(bda_handle_t context, u32 mode);
-int bda_gui_set_text_color_like(bda_handle_t context, u32 color);
-int bda_gui_draw_text_like(
+int bda_gui_set_text_mode(bda_handle_t context, u32 mode);
+int bda_gui_set_text_color(bda_handle_t context, u32 color);
+int bda_gui_draw_text(
     bda_handle_t context,
     s32 x,
     s32 y,
@@ -101,39 +101,39 @@ descriptor.title = 0;
 descriptor.wndproc = window_proc;
 descriptor.height = 240;
 descriptor.width = 320;
-descriptor.surface = (u32)bda_gui_frame_surface_like(15);
+descriptor.surface = (u32)bda_gui_frame_surface(15);
 
-frame = bda_gui_register_frame_desc_like(&descriptor);
-bda_gui_frame_activate_like(frame, 0x100);
-draw = bda_gui_current_draw_like(frame);
+frame = bda_gui_register_frame_desc(&descriptor);
+bda_gui_frame_activate(frame, 0x100);
+draw = bda_gui_current_draw(frame);
 ```
 
-在 window procedure 收到 `BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE` (`0x60`) 时，用回调的
+在 window procedure 收到 `BDA_MSG_DRAW_CONTEXT_ATTACH` (`0x60`) 时，用回调的
 `handle` 再取一次 current draw context。绘制前选择固件 draw object，结束后恢复：
 
 ```c
-void *object = bda_gui_draw_object_create_like(7);
+void *object = bda_gui_draw_object_create(7);
 void *old_object;
 u32 cyan;
 
-bda_gui_draw_guard_begin_like();
-old_object = bda_gui_select_draw_object_like(draw, object);
+bda_gui_draw_guard_begin();
+old_object = bda_gui_select_draw_object(draw, object);
 
-cyan = (u32)bda_gui_rgb_like(draw, 20, 145, 170);
-bda_gui_put_pixel_like(draw, 20, 50, cyan);
-bda_gui_put_pixel_rgb_like(draw, 21, 50, 235, 165, 35);
+cyan = (u32)bda_gui_rgb(draw, 20, 145, 170);
+bda_gui_put_pixel(draw, 20, 50, cyan);
+bda_gui_put_pixel_rgb(draw, 21, 50, 235, 165, 35);
 
-bda_gui_move_to_like(draw, 20, 130);
-bda_gui_line_to_like(draw, 220, 130);
-bda_gui_circle_like(draw, 60, 185, 34);
-bda_gui_rectangle_like(draw, 126, 151, 218, 219);
+bda_gui_move_to(draw, 20, 130);
+bda_gui_line_to(draw, 220, 130);
+bda_gui_circle(draw, 60, 185, 34);
+bda_gui_rectangle(draw, 126, 151, 218, 219);
 
-bda_gui_set_text_mode_like(draw, 1);
-bda_gui_set_text_color_like(draw, cyan);
-bda_gui_draw_text_like(draw, 40, 10, "GRAPHICS API", -1);
+bda_gui_set_text_mode(draw, 1);
+bda_gui_set_text_color(draw, cyan);
+bda_gui_draw_text(draw, 40, 10, "GRAPHICS API", -1);
 
-bda_gui_select_draw_object_like(draw, old_object);
-bda_gui_draw_guard_end_like();
+bda_gui_select_draw_object(draw, old_object);
+bda_gui_draw_guard_end();
 ```
 
 `draw_text` 的 `extra < 0` 路径按 NUL 结尾字符串计算长度。传入的字符串必须在调用期间
@@ -148,9 +148,9 @@ bda_gui_draw_guard_end_like();
 - 当前 `kind=7` draw object 的动态结果是矩形轮廓，不是填充矩形。
 - `set_fill_color_like` 只确认会写 context 字段；本次没有证明它能让 rectangle 填充，
   因此不把“填充矩形”列入已验证能力。
-- `put_pixel_like` 的 color 应来自同一 context 的 `bda_gui_rgb_like()`；不要硬编码为
+- `bda_gui_put_pixel()` 的 color 应来自同一 context 的 `bda_gui_rgb()`；不要硬编码为
   RGB565。
-- `put_pixel_rgb_like` 省略显式颜色转换，适合少量点或测试。大面积逐像素填充可用，
+- `bda_gui_put_pixel_rgb()` 省略显式颜色转换，适合少量点或测试。大面积逐像素填充可用，
   但效率明显低于尚未完成生命周期验证的 bitmap/render 路径。
 
 ## 验证记录
@@ -174,13 +174,13 @@ bda_gui_draw_guard_end_like();
 
 截图中的可见证据：
 
-- 左上青色块：`bda_gui_rgb_like()` 转换颜色后，由 `bda_gui_put_pixel_like()` 逐点绘制。
-- 右上橙色块：`bda_gui_put_pixel_rgb_like()` 直接使用 RGB 分量逐点绘制。
-- 两个色块外框和右侧大框：`bda_gui_rectangle_like()` 的轮廓输出。
-- 中部水平线：`bda_gui_move_to_like()` 与 `bda_gui_line_to_like()`。
-- 左下圆形：`bda_gui_circle_like()`。
+- 左上青色块：`bda_gui_rgb()` 转换颜色后，由 `bda_gui_put_pixel()` 逐点绘制。
+- 右上橙色块：`bda_gui_put_pixel_rgb()` 直接使用 RGB 分量逐点绘制。
+- 两个色块外框和右侧大框：`bda_gui_rectangle()` 的轮廓输出。
+- 中部水平线：`bda_gui_move_to()` 与 `bda_gui_line_to()`。
+- 左下圆形：`bda_gui_circle()`。
 - `GRAPHICS API`、`RECT`、`FILL` 等文字：text mode、text color 和
-  `bda_gui_draw_text_like()`。
+  `bda_gui_draw_text()`。
 - 下方黄白棋盘：两种单像素 API 在同一区域交叉绘制。
 
 青色块使用 `RGB转换 + GUI+0x368`，橙色块使用 `GUI+0x36c` 直接 RGB。两条路径都

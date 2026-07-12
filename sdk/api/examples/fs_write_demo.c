@@ -85,7 +85,7 @@ static void run_write_test(const char *path, write_result_t *result) {
         file
     );
     result->tell_after_write = bda_fs_tell_raw(file);
-    result->error_after_write = bda_fs_error_like(file);
+    result->error_after_write = bda_fs_error(file);
     result->close_write = bda_fs_close_raw(file);
 
     result->open_read = bda_fs_fopen_raw(path, "rb");

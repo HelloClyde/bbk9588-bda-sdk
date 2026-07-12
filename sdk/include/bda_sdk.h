@@ -9,10 +9,6 @@
  * reproducible observable result. Static disassembly, an original-app call
  * site, successful compilation, or a non-crashing run is not sufficient.
  * Evidence and usage notes live in sdk/doc/verified/. See sdk/include/README.md.
- *
- * Names ending in _like are retained for source compatibility. Their presence
- * here means the documented wrapper ABI is dynamically verified; it does not
- * claim that the original firmware symbol name is known.
  */
 
 typedef unsigned char u8;
@@ -40,11 +36,11 @@ typedef int (*bda_wndproc_t)(bda_handle_t, u32, u32, u32);
 #define BDA_INPUT_PACKET_ESCAPE_INDEX 4u
 #define BDA_INPUT_PACKET_ENTER_INDEX  5u
 
-#define BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE 0x0060u
-#define BDA_MSG_DRAW_CONTEXT_DETACH_LIKE 0x0066u
-#define BDA_MSG_REDRAW_INPUT_LIKE        0x00b1u
+#define BDA_MSG_DRAW_CONTEXT_ATTACH 0x0060u
+#define BDA_MSG_DRAW_CONTEXT_DETACH 0x0066u
+#define BDA_MSG_REDRAW_INPUT        0x00b1u
 
-typedef struct bda_frame_desc_like {
+typedef struct bda_frame_desc {
     u32 style;
     u32 internal28;
     const char *title;
@@ -58,9 +54,9 @@ typedef struct bda_frame_desc_like {
     s32 width;
     u32 surface;
     u32 aux30;
-} bda_frame_desc_like_t;
+} bda_frame_desc_t;
 
-typedef struct bda_gui_message_like {
+typedef struct bda_gui_message {
     bda_handle_t handle;
     u32 message;
     u32 wparam;
@@ -68,11 +64,11 @@ typedef struct bda_gui_message_like {
     u32 aux10;
     u32 aux14;
     u32 aux18;
-} bda_gui_message_like_t;
+} bda_gui_message_t;
 
-typedef struct bda_gui_input_packet_like {
+typedef struct bda_gui_input_packet {
     u8 bytes[BDA_GUI_INPUT_PACKET_SIZE];
-} bda_gui_input_packet_like_t;
+} bda_gui_input_packet_t;
 
 /* Private implementation details. Applications must use the wrappers below. */
 #define BDA_SDK_INTERNAL_GUI_TABLE_ADDR 0x81c00004u
@@ -261,7 +257,7 @@ static inline int bda_fs_tell_raw(int file) {
     return fn(file);
 }
 
-static inline int bda_fs_error_like(int file) {
+static inline int bda_fs_error(int file) {
     typedef int (*fn_t)(int);
     fn_t fn = (fn_t)bda_sdk_internal_api(
         bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_ERROR
@@ -270,8 +266,8 @@ static inline int bda_fs_error_like(int file) {
 }
 
 /* Physical-key packet: GUI+0x5d4. */
-static inline int bda_gui_input_packet_like(
-    bda_gui_input_packet_like_t *packet
+static inline int bda_gui_input_packet(
+    bda_gui_input_packet_t *packet
 ) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(),
@@ -280,8 +276,8 @@ static inline int bda_gui_input_packet_like(
     );
 }
 
-static inline int bda_gui_input_packet_key_pressed_like(
-    const bda_gui_input_packet_like_t *packet,
+static inline int bda_gui_input_packet_key_pressed(
+    const bda_gui_input_packet_t *packet,
     u32 keycode
 ) {
     u32 index;
@@ -297,10 +293,10 @@ static inline int bda_gui_input_packet_key_pressed_like(
     return packet->bytes[index] == 1u;
 }
 
-static inline int bda_gui_key_pressed_like(u32 keycode) {
-    bda_gui_input_packet_like_t packet;
-    (void)bda_gui_input_packet_like(&packet);
-    return bda_gui_input_packet_key_pressed_like(&packet, keycode);
+static inline int bda_gui_key_pressed(u32 keycode) {
+    bda_gui_input_packet_t packet;
+    (void)bda_gui_input_packet(&packet);
+    return bda_gui_input_packet_key_pressed(&packet, keycode);
 }
 
 /* Firmware-bound touch level query dynamically verified on kj409588/C200. */
@@ -310,15 +306,15 @@ static inline int bda_touch_pressed_9588(void) {
 }
 
 /* Busy-wait delay exercised by the verified input, touch and graphics BDAs. */
-static inline void bda_sys_delay_like(u32 delay_units) {
+static inline void bda_sys_delay(u32 delay_units) {
     (void)bda_sdk_internal_call1(
         bda_sdk_internal_sys(), BDA_SDK_INTERNAL_SYS_DELAY, delay_units
     );
 }
 
 /* Verified frame lifecycle and event pump used by the graphics BDA. */
-static inline bda_handle_t bda_gui_register_frame_desc_like(
-    bda_frame_desc_like_t *descriptor
+static inline bda_handle_t bda_gui_register_frame_desc(
+    bda_frame_desc_t *descriptor
 ) {
     return (bda_handle_t)bda_sdk_internal_call1(
         bda_sdk_internal_gui(),
@@ -327,7 +323,7 @@ static inline bda_handle_t bda_gui_register_frame_desc_like(
     );
 }
 
-static inline int bda_gui_frame_activate_like(bda_handle_t handle, u32 mode) {
+static inline int bda_gui_frame_activate(bda_handle_t handle, u32 mode) {
     return bda_sdk_internal_call2(
         bda_sdk_internal_gui(),
         BDA_SDK_INTERNAL_GUI_FRAME_ACTIVATE,
@@ -336,19 +332,19 @@ static inline int bda_gui_frame_activate_like(bda_handle_t handle, u32 mode) {
     );
 }
 
-static inline int bda_gui_frame_stop_like(bda_handle_t handle) {
+static inline int bda_gui_frame_stop(bda_handle_t handle) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_FRAME_STOP, (u32)handle
     );
 }
 
-static inline int bda_gui_frame_release_like(bda_handle_t handle) {
+static inline int bda_gui_frame_release(bda_handle_t handle) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_FRAME_RELEASE, (u32)handle
     );
 }
 
-static inline int bda_gui_default_proc_like(
+static inline int bda_gui_default_proc(
     bda_handle_t handle, u32 message, u32 wparam, u32 lparam
 ) {
     return bda_sdk_internal_call4(
@@ -361,8 +357,8 @@ static inline int bda_gui_default_proc_like(
     );
 }
 
-static inline int bda_gui_event_pump_frame_once_like(
-    bda_gui_message_like_t *message,
+static inline int bda_gui_event_pump_frame_once(
+    bda_gui_message_t *message,
     bda_handle_t frame
 ) {
     int present = bda_sdk_internal_call2(
@@ -386,35 +382,35 @@ static inline int bda_gui_event_pump_frame_once_like(
 }
 
 /* Verified graphics primitives. A registered and active frame is required. */
-static inline int bda_gui_draw_guard_begin_like(void) {
+static inline int bda_gui_draw_guard_begin(void) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_DRAW_GUARD, 1u
     );
 }
 
-static inline int bda_gui_draw_guard_end_like(void) {
+static inline int bda_gui_draw_guard_end(void) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_DRAW_GUARD, 0u
     );
 }
 
-static inline void *bda_gui_draw_object_create_like(u32 kind) {
+static inline void *bda_gui_draw_object_create(u32 kind) {
     return (void *)bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_DRAW_OBJECT, kind
     );
 }
 
-static inline void *bda_gui_frame_surface_like(u32 kind) {
-    return bda_gui_draw_object_create_like(kind);
+static inline void *bda_gui_frame_surface(u32 kind) {
+    return bda_gui_draw_object_create(kind);
 }
 
-static inline bda_handle_t bda_gui_current_draw_like(bda_handle_t handle) {
+static inline bda_handle_t bda_gui_current_draw(bda_handle_t handle) {
     return (bda_handle_t)bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_CURRENT_DRAW, (u32)handle
     );
 }
 
-static inline void *bda_gui_select_draw_object_like(
+static inline void *bda_gui_select_draw_object(
     bda_handle_t context, void *object
 ) {
     return (void *)bda_sdk_internal_call2(
@@ -425,7 +421,7 @@ static inline void *bda_gui_select_draw_object_like(
     );
 }
 
-static inline int bda_gui_rgb_like(
+static inline int bda_gui_rgb(
     bda_handle_t context, u32 red, u32 green, u32 blue
 ) {
     return bda_sdk_internal_call4(
@@ -438,7 +434,7 @@ static inline int bda_gui_rgb_like(
     );
 }
 
-static inline int bda_gui_put_pixel_like(
+static inline int bda_gui_put_pixel(
     bda_handle_t context, s32 x, s32 y, u32 color
 ) {
     return bda_sdk_internal_call4(
@@ -451,7 +447,7 @@ static inline int bda_gui_put_pixel_like(
     );
 }
 
-static inline int bda_gui_put_pixel_rgb_like(
+static inline int bda_gui_put_pixel_rgb(
     bda_handle_t context,
     s32 x,
     s32 y,
@@ -471,7 +467,7 @@ static inline int bda_gui_put_pixel_rgb_like(
     );
 }
 
-static inline void bda_gui_move_to_like(
+static inline void bda_gui_move_to(
     bda_handle_t context, s32 x, s32 y
 ) {
     (void)bda_sdk_internal_call3(
@@ -483,7 +479,7 @@ static inline void bda_gui_move_to_like(
     );
 }
 
-static inline void bda_gui_line_to_like(
+static inline void bda_gui_line_to(
     bda_handle_t context, s32 x, s32 y
 ) {
     (void)bda_sdk_internal_call3(
@@ -495,7 +491,7 @@ static inline void bda_gui_line_to_like(
     );
 }
 
-static inline void bda_gui_circle_like(
+static inline void bda_gui_circle(
     bda_handle_t context, s32 x, s32 y, s32 radius
 ) {
     (void)bda_sdk_internal_call4(
@@ -508,7 +504,7 @@ static inline void bda_gui_circle_like(
     );
 }
 
-static inline void bda_gui_rectangle_like(
+static inline void bda_gui_rectangle(
     bda_handle_t context, s32 left, s32 top, s32 right, s32 bottom
 ) {
     (void)bda_sdk_internal_call5(
@@ -522,7 +518,7 @@ static inline void bda_gui_rectangle_like(
     );
 }
 
-static inline int bda_gui_set_text_mode_like(
+static inline int bda_gui_set_text_mode(
     bda_handle_t context, u32 mode
 ) {
     return bda_sdk_internal_call2(
@@ -533,7 +529,7 @@ static inline int bda_gui_set_text_mode_like(
     );
 }
 
-static inline int bda_gui_set_text_color_like(
+static inline int bda_gui_set_text_color(
     bda_handle_t context, u32 color
 ) {
     return bda_sdk_internal_call2(
@@ -544,7 +540,7 @@ static inline int bda_gui_set_text_color_like(
     );
 }
 
-static inline int bda_gui_draw_text_like(
+static inline int bda_gui_draw_text(
     bda_handle_t context, s32 x, s32 y, const char *text, s32 extra
 ) {
     return bda_sdk_internal_call5(
