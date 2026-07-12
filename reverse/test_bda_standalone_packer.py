@@ -7,12 +7,33 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bda_packer.build import build_bda, bundled_prefix, find_tool, sdk_include_dir
+from bda_packer.build import (
+    build_bda,
+    bundled_prefix,
+    compiler_include_dirs,
+    find_tool,
+    sdk_include_dir,
+)
 from bda_packer.header import BdaHeaderFields, decoded_header_words, verify, write_header
 from bda_packer.validate import validate_bda
 
 
 class StandalonePackerTest(unittest.TestCase):
+    def test_custom_include_dirs_precede_stable_sdk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            custom = Path(temp_dir) / "candidate"
+            custom.mkdir()
+            directories = compiler_include_dirs([custom])
+
+        self.assertEqual(directories[0], custom.resolve())
+        self.assertEqual(directories[-1], sdk_include_dir().resolve())
+
+    def test_missing_custom_include_dir_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing"
+            with self.assertRaisesRegex(SystemExit, "include 目录不存在"):
+                compiler_include_dirs([missing])
+
     def test_public_header_enforces_dynamic_verification_boundary(self) -> None:
         include_dir = sdk_include_dir()
         header_text = (include_dir / "bda_sdk.h").read_text(encoding="utf-8")
@@ -77,6 +98,34 @@ class StandalonePackerTest(unittest.TestCase):
             self.assertEqual(report["entry_va"], 0x81C00020)
             self.assertEqual(report["title"], "HelloWorld")
             self.assertEqual(report["category"], 4)
+
+            candidate = root / "candidate"
+            candidate.mkdir()
+            (candidate / "bda_sdk.h").write_text(
+                "static inline int bda_candidate_probe(void) { return 23; }\n",
+                encoding="ascii",
+            )
+            custom_source = root / "custom_include.c"
+            custom_output = root / "CustomInclude.bda"
+            custom_source.write_text(
+                '#include "bda_sdk.h"\n'
+                '__attribute__((section(".text.bda_main")))\n'
+                'int bda_main(void) { return bda_candidate_probe(); }\n',
+                encoding="ascii",
+            )
+            custom_output.write_bytes(
+                build_bda(
+                    custom_source,
+                    "CustomInclude",
+                    4,
+                    prefix,
+                    None,
+                    (0, 0, 0),
+                    [candidate],
+                )
+            )
+            custom_report = validate_bda(custom_output)
+            self.assertTrue(custom_report["ok"], custom_report)
 
 
 if __name__ == "__main__":

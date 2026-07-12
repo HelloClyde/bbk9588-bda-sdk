@@ -4,6 +4,7 @@ import argparse
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 from .header import BdaHeaderFields, write_header
@@ -38,6 +39,17 @@ def sdk_include_dir() -> Path:
     return SDK_INCLUDE_DIR
 
 
+def compiler_include_dirs(extra_dirs: Sequence[Path] = ()) -> list[Path]:
+    directories: list[Path] = []
+    for directory in (*extra_dirs, sdk_include_dir()):
+        resolved = directory.resolve()
+        if not resolved.is_dir():
+            raise SystemExit(f"include 目录不存在：{directory}")
+        if resolved not in directories:
+            directories.append(resolved)
+    return directories
+
+
 def find_tool(prefix: str, name: str) -> str:
     executable = f"{prefix}{name}"
     candidates = [executable]
@@ -63,7 +75,16 @@ def run_checked(command: list[str], step: str) -> None:
         raise SystemExit(f"{step}失败，退出码 {exc.returncode}") from exc
 
 
-def compile_c(source: Path, prefix: str) -> bytes:
+def compile_c(
+    source: Path,
+    prefix: str,
+    include_dirs: Sequence[Path] = (),
+) -> bytes:
+    include_args = [
+        argument
+        for directory in compiler_include_dirs(include_dirs)
+        for argument in ("-I", str(directory))
+    ]
     cc = find_tool(prefix, "gcc")
     objcopy = find_tool(prefix, "objcopy")
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -97,8 +118,7 @@ SECTIONS
                 "-ffreestanding",
                 "-fno-builtin",
                 "-nostdlib",
-                "-I",
-                str(sdk_include_dir()),
+                *include_args,
                 "-Wl,--build-id=none",
                 f"-Wl,-T,{linker_script}",
                 str(source),
@@ -167,6 +187,7 @@ def build_bda(
     prefix: str,
     icon_png: Path | None,
     icon_background: tuple[int, int, int],
+    include_dirs: Sequence[Path] = (),
 ) -> bytearray:
     if not source.is_file():
         raise SystemExit(f"源码不存在：{source}")
@@ -175,7 +196,7 @@ def build_bda(
     if icon_png is not None and not icon_png.is_file():
         raise SystemExit(f"图标 PNG 不存在：{icon_png}")
 
-    code = compile_c(source, prefix)
+    code = compile_c(source, prefix, include_dirs)
     data = bytearray(b"\0" * ENTRY_OFFSET)
     icons = build_icons(icon_png, icon_background)
     expected_icon_bytes = ENTRY_OFFSET - ICON_START
@@ -233,6 +254,15 @@ def main() -> None:
         default=None,
         help="toolchain prefix，例如 mipsel-none-elf- 或完整路径前缀",
     )
+    ap.add_argument(
+        "-I",
+        "--include-dir",
+        action="append",
+        type=Path,
+        default=[],
+        metavar="DIR",
+        help="额外 include 目录，可重复；搜索顺序优先于稳定 sdk/include",
+    )
     ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")
     ns = ap.parse_args()
 
@@ -244,6 +274,7 @@ def main() -> None:
         prefix,
         ns.icon_png,
         ns.icon_background,
+        ns.include_dir,
     )
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     ns.output.write_bytes(data)
