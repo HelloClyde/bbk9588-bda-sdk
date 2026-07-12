@@ -13,6 +13,18 @@ from bda_packer.validate import validate_bda
 
 
 class StandalonePackerTest(unittest.TestCase):
+    def test_public_header_enforces_dynamic_verification_boundary(self) -> None:
+        include_dir = sdk_include_dir()
+        header_text = (include_dir / "bda_sdk.h").read_text(encoding="utf-8")
+        policy_text = (include_dir / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("Admission rule", header_text)
+        self.assertIn("动态验证", policy_text)
+        self.assertNotIn("_like", header_text.lower())
+        self.assertNotIn("bda_gui_touch_position_like", header_text)
+        self.assertNotIn("bda_gui_create_window_like", header_text)
+        self.assertNotIn("bda_fs_mkdir_like", header_text)
+
     def test_header_is_built_from_firmware_constants(self) -> None:
         data = bytearray(b"\0" * 0x200)
         fields = BdaHeaderFields(
@@ -41,7 +53,9 @@ class StandalonePackerTest(unittest.TestCase):
         except SystemExit as exc:
             self.skipTest(str(exc))
 
-        self.assertTrue((sdk_include_dir() / "bda_sdk.h").is_file())
+        header = sdk_include_dir() / "bda_sdk.h"
+        self.assertTrue(header.is_file())
+        self.assertEqual(header, Path("sdk/include/bda_sdk.h").resolve())
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "hello.c"
