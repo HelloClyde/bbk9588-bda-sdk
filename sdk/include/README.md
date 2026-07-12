@@ -36,5 +36,6 @@
 - frame 绘制链和图形图元：`sdk/doc/verified/graphics_primitives_api.md`
 
 未达到上述条件的 API 必须留在 `sdk/api/bda_sdk.h` 或 `sdk/doc/` 逆向材料中，
-不得被打包器隐式提供。若后续证据推翻现有 ABI，应立即从公开头移除或降回候选区，
+不得被打包器隐式提供。受控 probe 可以显式传 `-I sdk/api` 使用候选头，但这不会改变
+候选 API 的验证状态。若后续证据推翻现有 ABI，应立即从公开头移除或降回候选区，
 不能为了源码兼容继续声明为稳定 API。
