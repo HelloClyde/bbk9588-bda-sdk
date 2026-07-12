@@ -18,7 +18,7 @@ ICON_START = 0x88
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
 ICON_SIZES = tuple(24 + width * height * 2 for width, height in ICON_SPECS)
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SDK_INCLUDE_DIRS = (REPO_ROOT / "sdk" / "api", REPO_ROOT / "reverse" / "sdk")
+SDK_INCLUDE_DIR = REPO_ROOT / "sdk" / "include"
 
 
 def bundled_prefix() -> str | None:
@@ -32,11 +32,10 @@ def bundled_prefix() -> str | None:
 
 
 def sdk_include_dir() -> Path:
-    for directory in SDK_INCLUDE_DIRS:
-        if (directory / "bda_sdk.h").is_file():
-            return directory
-    searched = ", ".join(str(path) for path in SDK_INCLUDE_DIRS)
-    raise SystemExit(f"未找到 bda_sdk.h；已检查：{searched}")
+    header = SDK_INCLUDE_DIR / "bda_sdk.h"
+    if not header.is_file():
+        raise SystemExit(f"打包器缺少 SDK header：{header}")
+    return SDK_INCLUDE_DIR
 
 
 def find_tool(prefix: str, name: str) -> str:

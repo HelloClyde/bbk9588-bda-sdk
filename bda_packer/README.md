@@ -27,3 +27,6 @@ python -m bda_packer.validate build\HelloWorld.bda
 
 输入必须是定义 `bda_main()` 的 freestanding C 源码。打包器不读取已有 BDA，
 不提供 template、main patch、passthrough 或汇编打包模式。
+编译始终使用 `sdk/include/bda_sdk.h`，不依赖 `sdk/api`、`reverse/sdk` 或工作区外部 header。
+`sdk/include` 只公开已经由独立 BDA 动态验证的稳定 API；准入规则见
+`sdk/include/README.md`。逆向候选接口不会自动暴露给打包器。
