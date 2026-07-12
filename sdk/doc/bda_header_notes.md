@@ -1,0 +1,93 @@
+# BDA Header 与固件加载规则
+
+本文只记录从 `fly-src-api/kj409588.bin` 静态还原并由 standalone BDA 动态测试的
+格式。`kj409588.bin` 前 `0x40` byte 是封装头，后续 C200 image 按
+`0x80004000` 加载。
+
+## 固件校验路径
+
+菜单扫描函数 `0x8002c4c0` 和启动函数 `0x8002c5b0` / `0x8002c878` 都先读取
+`0x88` byte header。关键指令如下：
+
+- `0x8002c4dc..0x8002c4f8`：前 11 个 u32 与 `0x44525744` XOR 解码。
+- `0x8002c4fc..0x8002c514`：`0x84` checksum 与 `0x322d464b` XOR 解码。
+- `0x8002c518..0x8002c52c`：对解码后的 `0x00..0x83` 共 `0x84` byte 求和。
+- `0x8002c574..0x8002c584`：header 开头必须是 C string `"BBK"`。
+- `0x8002c548..0x8002c554`：word `0x04` 必须是 `0x5d245562`。
+- `0x8002c58c..0x8002c590`：checksum 必须等于 byte sum。
+- `0x8002c598..0x8002c5a4`：category 低 16 位必须小于 `10`。
+- `0x8002c530..0x8002c540`：标题 `"资源管理"` 被菜单明确过滤。
+- `0x8002c718..0x8002c724`：启动时 version 低 16 位必须至少为 `0x0102`。
+
+## Header 布局
+
+```text
+Offset  解码后含义
+0x00    0x004b4242，little-endian bytes 为 "BBK\0"
+0x04    0x5d245562，固件精确比较
+0x08    0x01000102，builder 固定值；loader 检查 low16 >= 0x0102
+0x0c    category；菜单/loader 检查 low16 < 10
+0x10    文件大小 - 4
+0x14    文件内 native entry offset
+0x18    第一个 VX icon offset
+0x1c    icon 0 size
+0x20    icon 1 size
+0x24    icon 2 size
+0x28    icon 3 size
+0x2c    GBK title，16 byte，NUL padding
+0x3c    保留区；固件校验不读取，standalone builder 置零
+0x84    encoded header checksum
+0x88    icon/resource 起点
+```
+
+`0x00..0x2b` 的 11 个字段以 `decoded ^ 0x44525744` 存储。checksum 算法是：
+
+1. 解码前 11 个 u32。
+2. 对解码后的 `0x00..0x83` 每个 byte 求和，取低 32 位。
+3. 写入 `sum ^ 0x322d464b` 到 `0x84`。
+
+原机常见四个 VX icon size 为 `0x3218, 0x3218, 0x16e0, 0x1a60`，总布局使
+entry offset 为 `0x95f8`。
+
+## 加载与执行
+
+固件不会执行 BDA 文件开头。启动函数执行以下步骤：
+
+1. 从 header `0x14` 取得 entry file offset。
+2. `0x8002c74c..0x8002c758` seek 到该 offset。
+3. `0x8002c764..0x8002c77c` 把 entry 到 EOF 的全部内容读到 `0x81c00020`。
+4. `0x8002c794` 刷新 cache。
+5. `0x8002c79c` 直接 `jalr 0x81c00020`。
+
+入口运行地址始终是 `0x81c00020`，不会随 file offset 平移。系统启动早期的
+`0x8002b330` 已把 `0x80281680` 的 8 个 runtime seed word 复制到
+`0x81c00000..0x81c0001f`，SDK 从固定地址取得 GUI/FS/SYS/MEM/RES table。
+
+BDA 不是 ELF，loader 不做 relocation，也没有可靠的 `.bss` 清零阶段。因此 builder
+把代码链接到 `0x81c00020`，并把 `.bss` 合并成文件里的零填充 `.data`。
+
+## 唯一构建入口
+
+```powershell
+python -m bda_packer reverse\examples\hello_world_msgbox.c `
+  --title HelloWorld `
+  --category 9 `
+  --icon-png path\to\icon.png `
+  -o build\HelloWorld.bda
+
+python -m bda_packer.validate build\HelloWorld.bda
+```
+
+打包器不接受任何已有 BDA，没有 template、patch、passthrough 或汇编打包模式。
+`--icon-png` 可省略，此时生成内置诊断图标。
+
+## 验证边界
+
+`bda_validate.py` 复现上述固件条件，并额外检查文件大小字段、entry 范围、首条 MIPS
+指令和四个 VX block。静态通过只证明文件会通过已还原的 loader 条件；系统 API
+是否可用仍必须由独立 BDA 动态验证。
+
+当前原版 worker 的 category 4 已有 10 个菜单项。动态测试中新增第 11 个合法 BDA 文件
+不会展示，但把同一文件临时放到已有 category 4 菜单路径后，标题、图标和 native entry
+都能正常加载。这个现象属于菜单索引容量边界，不是 header 校验失败；测试新增应用时应
+先确认目标分类的现有项目数。

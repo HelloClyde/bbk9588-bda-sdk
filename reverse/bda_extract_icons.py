@@ -5,8 +5,7 @@ import struct
 import zlib
 from pathlib import Path
 
-
-XOR_KEY = 0x44525744
+from bda_header import decoded_header_words
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -43,15 +42,17 @@ def rgb565_to_rgb(data: bytes, width: int, height: int, endian: str) -> bytes:
     return bytes(out)
 
 
-def decoded_header_words(data: bytes) -> list[int]:
-    return [int.from_bytes(data[i : i + 4], "little") ^ XOR_KEY for i in range(0, 0x2C, 4)]
-
-
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Extract VX RGB565 icon resources from a native BDA.")
-    ap.add_argument("bda", type=Path)
-    ap.add_argument("-o", "--out-dir", type=Path, default=Path("build/icons"))
-    ap.add_argument("--endian", choices=["little", "big"], default="little")
+    ap = argparse.ArgumentParser(
+        description="从原生 BDA 导出 VX RGB565 菜单图标为 PNG。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("bda", type=Path, help="要导出图标的 BDA")
+    ap.add_argument("-o", "--out-dir", type=Path, default=Path("build/icons"), help="输出目录")
+    ap.add_argument("--endian", choices=["little", "big"], default="little", help="VX RGB565 像素字节序")
     ns = ap.parse_args()
 
     data = ns.bda.read_bytes()
@@ -65,7 +66,7 @@ def main() -> None:
     for idx, size in enumerate(sizes):
         hdr = data[cur : cur + 0x18]
         if hdr[:2] != b"VX":
-            print(f"{idx}: missing VX at 0x{cur:x}")
+            print(f"{idx}: 0x{cur:x} 缺少 VX")
             cur += size
             continue
         width = int.from_bytes(hdr[6:10], "little")
@@ -73,7 +74,7 @@ def main() -> None:
         pixels = data[cur + 0x18 : cur + size]
         expected = width * height * 2
         if len(pixels) < expected:
-            print(f"{idx}: short pixels at 0x{cur:x}")
+            print(f"{idx}: 0x{cur:x} 像素数据不足")
             cur += size
             continue
         rgb = rgb565_to_rgb(pixels[:expected], width, height, ns.endian)

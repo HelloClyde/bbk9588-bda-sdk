@@ -3,14 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-
-XOR_KEY = 0x44525744
-CHECKSUM_OFF = 0x84
-CHECKSUM_XOR_KEY = 0x322D464B
-
-
-def decoded_header_words(data: bytes) -> list[int]:
-    return [int.from_bytes(data[i : i + 4], "little") ^ XOR_KEY for i in range(0, 0x2C, 4)]
+from bda_header import decoded_header_words, fix_header_checksum
 
 
 def icon_ranges(data: bytes) -> list[tuple[int, int]]:
@@ -23,21 +16,17 @@ def icon_ranges(data: bytes) -> list[tuple[int, int]]:
     return ranges
 
 
-def fix_header_checksum(data: bytearray) -> int:
-    buf = bytearray(data[:CHECKSUM_OFF])
-    for off in range(0, 0x2C, 4):
-        v = int.from_bytes(buf[off : off + 4], "little") ^ XOR_KEY
-        buf[off : off + 4] = v.to_bytes(4, "little")
-    checksum = (sum(buf) & 0xFFFFFFFF) ^ CHECKSUM_XOR_KEY
-    data[CHECKSUM_OFF : CHECKSUM_OFF + 4] = checksum.to_bytes(4, "little")
-    return checksum
-
-
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Copy the four VX icon resources from one BDA to another.")
-    ap.add_argument("input", type=Path, help="BDA to modify")
-    ap.add_argument("--icons-from", type=Path, required=True, help="BDA providing icon VX resources")
-    ap.add_argument("-o", "--output", type=Path, required=True)
+    ap = argparse.ArgumentParser(
+        description="把一个 BDA 的四个 VX 菜单图标复制到另一个 BDA。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("input", type=Path, help="要修改的 BDA")
+    ap.add_argument("--icons-from", type=Path, required=True, help="提供 VX 图标资源的 BDA")
+    ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")
     ns = ap.parse_args()
 
     data = bytearray(ns.input.read_bytes())
@@ -48,11 +37,11 @@ def main() -> None:
     for idx, ((da, db), (sa, sb)) in enumerate(zip(dst_ranges, src_ranges)):
         if db - da != sb - sa:
             raise SystemExit(
-                f"icon {idx} size mismatch: input=0x{db-da:x}, icons-from=0x{sb-sa:x}; "
-                "same-size copy only"
+                f"图标 {idx} 大小不匹配：input=0x{db-da:x}, icons-from=0x{sb-sa:x}；"
+                "只能复制相同大小的图标区"
             )
         if src[sa : sa + 2] != b"VX":
-            raise SystemExit(f"source icon {idx} missing VX signature")
+            raise SystemExit(f"源图标 {idx} 缺少 VX 签名")
         data[da:db] = src[sa:sb]
         print(f"icon{idx}: 0x{sa:x}-0x{sb:x} -> 0x{da:x}-0x{db:x}")
 
