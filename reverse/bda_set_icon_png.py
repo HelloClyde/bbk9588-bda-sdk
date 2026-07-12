@@ -5,10 +5,8 @@ import struct
 import zlib
 from pathlib import Path
 
+from bda_header import decoded_header_words, fix_header_checksum
 
-XOR_KEY = 0x44525744
-CHECKSUM_OFF = 0x84
-CHECKSUM_XOR_KEY = 0x322D464B
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
 
 
@@ -24,7 +22,7 @@ def png_chunk(kind: bytes, payload: bytes) -> bytes:
 def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int, int]]]:
     data = path.read_bytes()
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise SystemExit("only PNG input is supported")
+        raise SystemExit("只支持 PNG 输入")
     pos = 8
     width = height = color_type = bit_depth = None
     idat = bytearray()
@@ -36,15 +34,15 @@ def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int, int]]]:
         if kind == b"IHDR":
             width, height, bit_depth, color_type, comp, filt, interlace = struct.unpack(">IIBBBBB", payload)
             if bit_depth != 8 or comp != 0 or filt != 0 or interlace != 0:
-                raise SystemExit("PNG must be non-interlaced 8-bit")
+                raise SystemExit("PNG 必须是 8-bit 非隔行格式")
             if color_type not in (2, 6):
-                raise SystemExit("PNG must be RGB or RGBA")
+                raise SystemExit("PNG 必须是 RGB 或 RGBA")
         elif kind == b"IDAT":
             idat.extend(payload)
         elif kind == b"IEND":
             break
     if width is None or height is None:
-        raise SystemExit("missing PNG IHDR")
+        raise SystemExit("PNG 缺少 IHDR")
 
     channels = 3 if color_type == 2 else 4
     raw = zlib.decompress(bytes(idat))
@@ -75,7 +73,7 @@ def read_png(path: Path) -> tuple[int, int, list[tuple[int, int, int, int]]]:
                 pred = left if pa <= pb and pa <= pc else up if pb <= pc else ul
                 val = cur[x] + pred
             else:
-                raise SystemExit(f"unsupported PNG filter {ft}")
+                raise SystemExit(f"不支持的 PNG filter：{ft}")
             cur[x] = val & 0xFF
         rows.append(cur)
         prev = cur
@@ -102,17 +100,62 @@ def resize_cover(
     oy = (src_h - crop_h) / 2
     out: list[tuple[int, int, int, int]] = []
     for y in range(dst_h):
-        sy = min(src_h - 1, max(0, int(oy + (y + 0.5) / scale)))
+        y0 = oy + y / scale
+        y1 = oy + (y + 1) / scale
+        iy0 = max(0, int(y0))
+        iy1 = min(src_h - 1, int(y1) + 1)
         for x in range(dst_w):
-            sx = min(src_w - 1, max(0, int(ox + (x + 0.5) / scale)))
-            out.append(pixels[sy * src_w + sx])
+            x0 = ox + x / scale
+            x1 = ox + (x + 1) / scale
+            ix0 = max(0, int(x0))
+            ix1 = min(src_w - 1, int(x1) + 1)
+            total = rr = gg = bb = aa = 0.0
+            for sy in range(iy0, iy1 + 1):
+                wy = max(0.0, min(y1, sy + 1.0) - max(y0, float(sy)))
+                if wy == 0.0:
+                    continue
+                row = sy * src_w
+                for sx in range(ix0, ix1 + 1):
+                    wx = max(0.0, min(x1, sx + 1.0) - max(x0, float(sx)))
+                    w = wx * wy
+                    if w == 0.0:
+                        continue
+                    r, g, b, a = pixels[row + sx]
+                    total += w
+                    aa += a * w
+                    rr += r * a * w
+                    gg += g * a * w
+                    bb += b * a * w
+            if total == 0.0 or aa == 0.0:
+                out.append((0, 0, 0, 0))
+            else:
+                alpha = int(round(aa / total))
+                out.append((
+                    int(round(rr / aa)),
+                    int(round(gg / aa)),
+                    int(round(bb / aa)),
+                    alpha,
+                ))
     return out
 
 
-def rgb565_bytes(pixels: list[tuple[int, int, int, int]], bg: tuple[int, int, int]) -> bytes:
+def rgb565_bytes(
+    pixels: list[tuple[int, int, int, int]],
+    bg: tuple[int, int, int],
+    *,
+    transparent_key: tuple[int, int, int] | None = None,
+    alpha_threshold: int = 8,
+) -> bytes:
     out = bytearray()
     br, bgc, bb = bg
     for r, g, b, a in pixels:
+        if transparent_key is not None:
+            if a <= alpha_threshold:
+                r, g, b = transparent_key
+            # VX icons only have a color key, not per-pixel alpha. Use the
+            # already despilled source color for visible edge pixels rather
+            # than blending them with the key color and creating a fringe.
+            a = 255
         if a < 255:
             r = (r * a + br * (255 - a)) // 255
             g = (g * a + bgc * (255 - a)) // 255
@@ -134,10 +177,6 @@ def make_vx(width: int, height: int, pixels565: bytes) -> bytes:
     return bytes(hdr) + pixels565
 
 
-def decoded_header_words(data: bytes) -> list[int]:
-    return [int.from_bytes(data[i : i + 4], "little") ^ XOR_KEY for i in range(0, 0x2C, 4)]
-
-
 def icon_ranges(data: bytes) -> list[tuple[int, int]]:
     words = decoded_header_words(data)
     cur = words[6]
@@ -148,29 +187,27 @@ def icon_ranges(data: bytes) -> list[tuple[int, int]]:
     return ranges
 
 
-def fix_header_checksum(data: bytearray) -> int:
-    buf = bytearray(data[:CHECKSUM_OFF])
-    for off in range(0, 0x2C, 4):
-        v = int.from_bytes(buf[off : off + 4], "little") ^ XOR_KEY
-        buf[off : off + 4] = v.to_bytes(4, "little")
-    checksum = (sum(buf) & 0xFFFFFFFF) ^ CHECKSUM_XOR_KEY
-    data[CHECKSUM_OFF : CHECKSUM_OFF + 4] = checksum.to_bytes(4, "little")
-    return checksum
-
-
 def parse_bg(s: str) -> tuple[int, int, int]:
     s = s.strip().lstrip("#")
     if len(s) != 6:
-        raise argparse.ArgumentTypeError("background must be RRGGBB")
+        raise argparse.ArgumentTypeError("背景色必须是 RRGGBB 六位十六进制")
     return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate BDA VX icon resources from a PNG.")
-    ap.add_argument("input", type=Path, help="BDA to modify")
-    ap.add_argument("--png", type=Path, required=True, help="RGB/RGBA non-interlaced 8-bit PNG")
-    ap.add_argument("-o", "--output", type=Path, required=True)
-    ap.add_argument("--background", type=parse_bg, default=(0, 0, 0), help="RGBA matte color, default 000000")
+    ap = argparse.ArgumentParser(
+        description="从 PNG 生成并替换 BDA 的四个 VX 菜单图标。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("input", type=Path, help="要修改的 BDA")
+    ap.add_argument("--png", type=Path, required=True, help="RGB/RGBA 8-bit 非隔行 PNG")
+    ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")
+    ap.add_argument("--background", type=parse_bg, default=(0, 0, 0), help="PNG 透明背景色，默认 000000")
+    ap.add_argument("--transparent-key", type=parse_bg, default=None, help="把 alpha 透明像素写成该 RGB565 colorkey，例如 FF00FF")
+    ap.add_argument("--alpha-threshold", type=int, default=8, help="alpha 小于等于该值时写 transparent-key，默认 8")
     ns = ap.parse_args()
 
     src_w, src_h, src_pixels = read_png(ns.png)
@@ -178,9 +215,18 @@ def main() -> None:
     ranges = icon_ranges(data)
     for idx, ((width, height), (start, end)) in enumerate(zip(ICON_SPECS, ranges)):
         resized = resize_cover(src_w, src_h, src_pixels, width, height)
-        vx = make_vx(width, height, rgb565_bytes(resized, ns.background))
+        vx = make_vx(
+            width,
+            height,
+            rgb565_bytes(
+                resized,
+                ns.background,
+                transparent_key=ns.transparent_key,
+                alpha_threshold=ns.alpha_threshold,
+            ),
+        )
         if len(vx) != end - start:
-            raise SystemExit(f"generated icon {idx} size mismatch")
+            raise SystemExit(f"生成的图标 {idx} 大小不匹配")
         data[start:end] = vx
         print(f"icon{idx}: {width}x{height} -> 0x{start:x}-0x{end:x}")
     checksum = fix_header_checksum(data)

@@ -6,9 +6,12 @@ import re
 import struct
 from pathlib import Path
 
+from bda_header import decoded_header_words
+
 
 ENTRY_SIG = bytes.fromhex("e8 ff bd 27 10 00 bf af")
 RUNTIME_ENTRY_VA = 0x81C00020
+COMMON_ENTRY_OFFSET = 0x95F8
 
 
 def u32(data: bytes, off: int) -> int:
@@ -39,6 +42,16 @@ def materialized_addr(data: bytes, off: int) -> int | None:
 def find_entry(data: bytes) -> int | None:
     off = data.find(ENTRY_SIG)
     return off if off >= 0 else None
+
+
+def header_entry(data: bytes) -> int | None:
+    words = decoded_header_words(data)
+    if len(words) < 6:
+        return None
+    entry = words[5]
+    if entry < 0 or entry >= len(data) or entry % 4:
+        return None
+    return entry
 
 
 def shell_paths(data: bytes) -> list[dict[str, int | str]]:
@@ -74,18 +87,22 @@ def infer_load_base(data: bytes, entry: int | None) -> int | None:
 
 def analyze(path: Path) -> dict[str, object]:
     data = path.read_bytes()
-    entry = find_entry(data)
-    base = infer_load_base(data, entry)
+    signature_entry = find_entry(data)
+    decoded_entry = header_entry(data)
+    entry = signature_entry if signature_entry is not None else decoded_entry
+    base = infer_load_base(data, signature_entry)
     header_words = [u32(data, off) for off in range(0, min(0x2C, len(data)), 4)]
-    bss_start = materialized_addr(data, entry + 0x34) if entry is not None else None
-    bss_end = materialized_addr(data, entry + 0x3C) if entry is not None else None
+    bss_start = materialized_addr(data, signature_entry + 0x34) if signature_entry is not None else None
+    bss_end = materialized_addr(data, signature_entry + 0x3C) if signature_entry is not None else None
     legacy_file_base = base
+    runtime_entry_va = RUNTIME_ENTRY_VA if entry is not None else None
     return {
         "path": str(path),
         "size": len(data),
         "entry_offset": entry,
-        "runtime_entry_va": RUNTIME_ENTRY_VA if entry is not None else None,
-        "runtime_file_base": (RUNTIME_ENTRY_VA - entry) if entry is not None else None,
+        "entry_source": "signature" if signature_entry is not None else ("header" if decoded_entry is not None else None),
+        "runtime_entry_va": runtime_entry_va,
+        "runtime_file_base": (runtime_entry_va - entry) if entry is not None and runtime_entry_va is not None else None,
         "legacy_file_base_from_dlx_refs": legacy_file_base,
         "legacy_entry_va_from_dlx_refs": (legacy_file_base + entry)
         if legacy_file_base is not None and entry is not None

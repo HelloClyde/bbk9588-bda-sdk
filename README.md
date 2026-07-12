@@ -7,7 +7,7 @@ format and system APIs.
 The project currently covers:
 
 - native BDA header decoding and checksum repair
-- no-template native BDA packaging
+- standalone native BDA packaging without an existing BDA
 - menu title/category/icon experiments
 - DLX resource inspection, extraction, and rebuilding
 - a freestanding MIPS little-endian C SDK draft
@@ -50,7 +50,7 @@ Hardware-confirmed highlights:
 - BDA apps are MIPS32 little-endian native code, not ELF.
 - Common native entry is file offset `0x95f8`, runtime VA `0x81c00020`.
 - BDA headers use an XOR-encoded metadata area plus a byte-sum checksum.
-- No-template C and ASM BDAs can be built from scratch and shown in the menu.
+- Standalone C BDAs can be built from scratch and shown in the menu.
 - Custom menu title, category, and icon generation works.
 - DLX files are resource containers whose image entries often contain VX blocks.
 - `text_A.dlx` can be opened and decoded from a custom app; VX drawing works.
@@ -92,7 +92,6 @@ or you can pass `--prefix` to use another compatible toolchain.
 
 ```powershell
 python reverse\bda_compile_c.py reverse\examples\hello_msgbox.c `
-  --no-template `
   --title HelloBDA `
   --category 9 `
   -o build\HelloBDA.bda
@@ -101,13 +100,12 @@ python reverse\bda_compile_c.py reverse\examples\hello_msgbox.c `
 With a custom icon:
 
 ```powershell
-python reverse\bda_compile_c.py reverse\examples\notpl_demo_msgbox.c `
-  --no-template `
-  --title NoTplDemo `
+python reverse\bda_compile_c.py reverse\examples\hello_world_msgbox.c `
+  --title IconDemo `
   --category 9 `
   --icon-png path\to\icon.png `
   --icon-background 14245c `
-  -o build\NoTplDemo.bda
+  -o build\IconDemo.bda
 ```
 
 ## Inspect BDA and DLX Files
@@ -125,7 +123,6 @@ Build the resident debug bridge:
 
 ```powershell
 python reverse\bda_compile_c.py reverse\examples\usb_debug_bridge.c `
-  --no-template `
   --title UsbDebug `
   --category 9 `
   -o build\UsbDebugBridge.bda
