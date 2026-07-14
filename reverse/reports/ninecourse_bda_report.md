@@ -1,24 +1,23 @@
-# JiuMenKeCheng / Nine Courses.bda Report
+# 九门课程.bda 逆向报告
 
-`九门课程.bda` is a category-0x05 learning/content app. It is larger and more
-stateful than `课程表.bda`, and it is currently one of the better examples of a
-non-game app that mixes file data, external DLX skins, GUI controls, text, and
-large-region drawing.
+`九门课程.bda` 是分类 `0x05` 的学习/内容应用。它比 `课程表.bda` 更大、
+状态更多，是当前较好的非游戏样本之一：同一个应用里同时出现文件数据、外部
+DLX 皮肤、GUI 控件、文字绘制和大区域绘制。
 
-## Identity and Layout
+## 头部和布局
 
 ```text
-file size      143,868 bytes
-menu title     九门课程
-category       0x05
-entry offset   0x95f8
-entry VA       0x81c00020
-image base     0x81bf6a28
-BSS range      0x81c19c20..0x81c52991
-checksum       ok
+文件大小         143,868 bytes
+菜单标题         九门课程
+分类             0x05
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS 范围         0x81c19c20..0x81c52991
+checksum          ok
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES  0x81c19c20
@@ -28,9 +27,9 @@ FS   0x81c19c2c
 MEM  0x81c19c30
 ```
 
-## External Resources
+## 外部资源
 
-Visible strings include:
+可见字符串包括：
 
 ```text
 \Shell\JiuMenKeCheng.dlx
@@ -39,7 +38,7 @@ rb
 wb
 ```
 
-It also embeds the same four common shell VX resources:
+应用还内嵌四个通用 shell VX 资源：
 
 ```text
 0x000088  80x80
@@ -48,107 +47,110 @@ It also embeds the same four common shell VX resources:
 0x007b98  58x58
 ```
 
-The app repeatedly references the two external DLX names, so these are probably
-normal/dark skin packages or per-view artwork packages.
+两个外部 DLX 名称被反复引用，推测是普通/暗色皮肤包，或不同页面使用的美术包。
 
-## API Use
+## API 使用概览
 
-The current indirect-call scan finds 708 runtime table calls:
+当前间接调用扫描共发现 708 个运行时表调用：
 
 ```text
-FS  +0x000  9   fopen-like
-FS  +0x004  9   fclose-like
-FS  +0x008 23   fread-like
-FS  +0x00c  4   fwrite-like
-FS  +0x010 21   fseek-like
-FS  +0x02c  2   directory-exists/chdir-like
-FS  +0x030  2   mkdir-like
-FS  +0x048  3   disk info-like
-FS  +0x064  2   unresolved FS helper
+FS  +0x000   9  fopen 类
+FS  +0x004   9  fclose 类
+FS  +0x008  23  fread 类
+FS  +0x00c   4  fwrite 类
+FS  +0x010  21  fseek 类
+FS  +0x02c   2  目录存在检查/chdir 类
+FS  +0x030   2  mkdir 类
+FS  +0x048   3  磁盘信息类
+FS  +0x064   2  低层 block read support helper；不公开 SDK wrapper
 
-GUI +0x030/+0x050/+0x054  event poll/step/dispatch
-GUI +0x084/+0x088/+0x08c/+0x17c  frame lifecycle
-GUI +0x1a4/+0x1a8/+0x1ac/+0x1b0  control/object family
+GUI +0x030/+0x050/+0x054  事件 poll/step/dispatch
+GUI +0x084/+0x088/+0x08c/+0x17c  frame 生命周期
+GUI +0x1a4/+0x1a8/+0x1ac/+0x1b0  control/object 创建、销毁和 update message
 GUI +0x308/+0x30c  begin/end draw
-GUI +0x338/+0x33c/+0x378/+0x4f0  text mode, color, draw text
-GUI +0x3f8/+0x400  framebuffer/large-region draw family
-GUI +0x430/+0x46c  rectangle/resource helper family
-GUI +0x540  VX/resource draw appears in resource-draw branches
+GUI +0x338/+0x33c/+0x378/+0x4f0  文字模式、颜色、文字绘制
+GUI +0x3f8/+0x400  framebuffer/大区域绘制族
+GUI +0x430/+0x46c  rect prepare / rect contains 调用对
+GUI +0x540  VX/资源绘制分支中出现
 
-MEM +0x008 25  allocation-like
-MEM +0x00c 23  free-like
-RES +0x090  3  resource state/helper-like
-RES +0x094 18  trace/log-like
+MEM +0x008  25  allocation 类
+MEM +0x00c  23  free 类
+RES +0x090   3  资源状态辅助类
+RES +0x094  18  trace/log 类
 ```
 
-## GUI Object Model
+## GUI 对象模型
 
-The app creates a top-level object through `GUI+0x1a4` with a style value in the
-`0x08000000` family and stores the returned handle in app globals. It then uses
-additional control/object calls:
+应用通过 `GUI+0x1a4` 创建顶层对象，style 值位于 `0x08000000` 家族，并把
+返回 handle 保存到应用全局变量。随后它使用额外控件/对象调用：
 
 ```text
 GUI+0x1ac(handle, 0x64, 0x190)
 GUI+0x1b0(handle, 0x64)
 ```
 
-These appear in scroll/page-change or view-rebuild paths. They are not used by
-the minimal Element image probe, so they are important candidates for why a
-simple custom Showcase app can draw once but cannot behave like a full app.
+这些调用出现在滚动、翻页或重建视图路径中。C200 已确认 `GUI+0x1ac`
+同步发送内部 message `0x162`，参数形态为 `handle,a1,a2`；`GUI+0x1b0`
+同步发送内部 message `0x163`，参数形态为 `handle,a1`。它们不是 lock/unlock
+或 begin/end frame，而是对象 update notification，最终效果由目标 object/control
+callback 决定。最小 Element 图片探针没有使用它们，因此它们是解释“简单
+Showcase 应用能画一次但不像完整应用那样运行”的重要线索。
 
-## Drawing Model
+## 绘制模型
 
-Nine Courses heavily uses both normal draw handles and large-region helpers:
+九门课程大量使用普通 draw handle 和大区域辅助：
 
 ```text
-GUI+0x308/+0x30c       draw lifetime
+GUI+0x308/+0x30c       draw 生命周期
 GUI+0x074              draw/present guard
-GUI+0x3f8/+0x400       large-region/framebuffer-like pair
-GUI+0x430/+0x46c       rectangle/resource helper family
-GUI+0x4f0              text draw-like
+GUI+0x3f8/+0x400       大区域/framebuffer 调用对
+GUI+0x430/+0x46c       rect prepare / rect contains 调用对
+GUI+0x4f0              文字绘制类
 ```
 
-`GUI+0x4f0` appears 50 times. Some calls pass static strings, while others draw
-dynamic text buffers built from course data. The app frequently sets text mode
-and text colors before drawing, matching Notepad, Time, Ebook, and BBVM.
+`GUI+0x4f0` 出现 50 次。有些调用传静态字符串，有些绘制由课程数据生成的动态
+文本缓冲区。应用在绘制前频繁设置文字模式和文字颜色，与记事本、时间、电子图书
+和 BBVM 的行为一致。
 
-The `GUI+0x3f8/+0x400` cluster is also used by small games, but here it appears
-inside a learning/content UI. So this pair should be described as
-large-region/framebuffer-like, not game-only.
+`GUI+0x430/+0x46c` 在内容 UI 热点判断里成对出现。C200 已确认 `GUI+0x430`
+是 `rect,x0,y0,x1,y1` 五参数 rect writer，`GUI+0x46c` 是 `rect,x,y`
+点-in-rect 判断；这里不应再解释为资源/图片绘制 API。
 
-## File and Storage Flow
+`GUI+0x3f8/+0x400` 也出现在小游戏里，但这里它出现在学习/内容 UI 内部。因此
+这对入口应描述为大区域/framebuffer 类，而不是游戏专用。
 
-The app reads and writes more data than Schedule. It uses:
+## 文件和存储流程
+
+该应用比课程表读写更多数据。它使用：
 
 ```text
-open/read/seek/write/close for fixed records
-FS+0x02c / FS+0x030 directory preparation
-FS+0x048 disk info checks
-FS+0x064 unresolved helper calls
+open/read/seek/write/close 处理固定记录
+FS+0x02c / FS+0x030 准备目录
+FS+0x048 检查磁盘信息
+FS+0x064 低层 block read support 调用
 ```
 
-At `FS+0x048` call sites it reads words from the returned info buffer and
-computes storage capacity-like values, same general pattern as Settings and
-Time.
+在 `FS+0x048` 调用点，应用会读取返回信息缓冲区中的 word，并计算类似容量的
+值；这个模式与系统设置和时间应用一致。
 
-`FS+0x064` is still unresolved. Two call sites pass stack buffers and then test
-bytes from the returned structure against app globals. This does not fit the
-plain stdio group and should stay provisional.
+`FS+0x064` 不是普通 stdio 调用。两个调用点都会建立 `0x218` byte stack
+buffer，传 `a2=1, a3=stack+0x10`，然后分别读取 `stack+0x34` 或
+`stack+0x14` 的 byte 与应用全局变量比较。C200 侧确认该入口会检查
+signed 16-bit volume/index、转换 block/cluster 参数，并调用内部
+`0x8017fbc0(...)` 读到调用者 buffer。它仍不应公开为 SDK wrapper；详见
+`sdk/doc/fs_notes.md` 和 `sdk/doc/c200_api_function_notes.md`。
 
-## SDK Implications
+## 对 SDK 的含义
 
-1. Custom display apps need a stable object/frame lifecycle before using text
-   and image helpers.
-2. `GUI+0x1ac/+0x1b0` should be added as a provisional control/object update
-   pair; Nine Courses is currently the strongest source.
-3. `GUI+0x3f8/+0x400` should not be labeled game-only.
-4. `FS+0x064` needs a dedicated probe or deeper static pass before exposing it
-   as a public SDK helper.
+1. 自定义显示应用在使用文字和图片 helper 前，需要稳定的对象/frame 生命周期。
+2. `GUI+0x1ac/+0x1b0` 已可按 object update message pair 记录；九门课程是当前
+   最强来源，但具体业务效果仍要看 object/control callback。
+3. `GUI+0x3f8/+0x400` 不应标成游戏专用。
+4. `FS+0x064` 依赖 firmware 内部 volume/index 和 block 参数，不能暴露为公共 SDK helper。
 
-## Open Items
+## 未确认点
 
-1. Exact semantics of `GUI+0x1ac` and `GUI+0x1b0`.
-2. Exact struct/record format for the course data files.
-3. Exact role of `FS+0x064`.
-4. Whether the DLX normal/dark pair is theme-driven or selected by a display
-   mode flag.
+1. `GUI+0x1ac/+0x1b0` 在九门课程滚动/翻页路径中的高层业务语义。
+2. 课程数据文件的结构/记录格式。
+3. `FS+0x064` 上游 volume/index 和 block 参数来自哪些课程数据路径。
+4. 普通/暗色 DLX 是否由主题、显示模式或资源回退路径选择。

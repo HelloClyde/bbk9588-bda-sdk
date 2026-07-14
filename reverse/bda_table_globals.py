@@ -74,8 +74,14 @@ def detect_globals(path: Path, span: int = 0x180) -> dict[str, int]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Detect BDA globals that cache runtime API table pointers.")
-    ap.add_argument("bda", nargs="+", type=Path)
+    ap = argparse.ArgumentParser(
+        description="检测 BDA 启动时缓存 GUI/FS/SYS/MEM/RES runtime table pointer 的 global 地址。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("bda", nargs="+", type=Path, help="要扫描的原机 BDA 文件，可一次传多个")
     ns = ap.parse_args()
 
     for path in ns.bda:

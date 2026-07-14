@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static char g_path[260];
 static unsigned char g_dir_state[512];
@@ -14,11 +14,11 @@ int bda_main(void) {
     selector.extensions = "gba";
     selector.dir_state = g_dir_state;
     selector.title = "Select game";
-    selector.reserved1c = -1;
-    selector.reserved20 = -1;
-    selector.reserved24 = -1;
+    selector.sentinel1c = -1;
+    selector.sentinel20 = -1;
+    selector.sentinel24 = -1;
 
     bda_gui_file_selector_open_like(1);
-    bda_gui_file_selector_update_like(&selector);
+    bda_gui_file_selector_update_like();
     return 0;
 }

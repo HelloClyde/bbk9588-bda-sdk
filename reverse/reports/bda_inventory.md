@@ -1,8 +1,8 @@
-# Native BDA Inventory
+# 原生 BDA 清点索引
 
-Generated from the original app directory (`*.bda`). This is an index for per-app reports; it is not a full analysis by itself.
+本索引由原始应用目录中的 `*.bda` 生成，用于给逐应用逆向报告提供清单；它本身不是完整分析。
 
-| BDA | Size | Title | Cat | Entry | BSS | Checksum | Hot API Offsets | DLX refs |
+| BDA | 大小 | 标题 | 分类 | 入口 | BSS | 校验 | 高频 API Offset | DLX 引用 |
 | --- | ---: | --- | ---: | ---: | --- | --- | --- | ---: |
 | BB虚拟机.bda | 315964 | BB虚拟机 | 4 | 0x95f8 | 0x81c43c60-0x81c442d1 | ok | +0x368:24, +0x0e0:22, +0x074:21, +0x00c:14, +0x008:13, +0x414:12 | 0 |
 | Eros方块.bda | 83996 | Eros方块 | 4 | 0x95f8 | 0x81c0b240-0x81c0b561 | ok | +0x008:14, +0x00c:14, +0x0e0:13, +0x074:10, +0x094:9, +0x414:8 | 0 |
@@ -59,7 +59,7 @@ Generated from the original app directory (`*.bda`). This is an index for per-ap
 | 黄冈教辅.bda | 813580 | 黄冈教辅 | 5 | 0x95f8 |  | ok | +0x00c:768, +0x000:572, +0x008:559, +0x094:236, +0x004:183, +0x4f0:176 | 10 |
 | 黑白子.bda | 151276 | 黑白子 | 4 | 0x95f8 | 0x81c1b910-0x81c27271 | ok | +0x008:14, +0x00c:14, +0x0e0:13, +0x074:10, +0x094:10, +0x414:8 | 0 |
 
-## Notes
+## 说明
 
-- `Hot API Offsets` are raw indirect call offsets before table classification.
-- Per-app reports should use this inventory as a checklist, then add function-level evidence and cross references to SDK notes.
+- `高频 API Offset` 是表分类之前统计到的原始间接调用 offset。
+- 逐应用报告应把本索引当作清单，再补充函数级证据以及和 SDK 文档的交叉引用。

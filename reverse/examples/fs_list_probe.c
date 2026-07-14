@@ -1,7 +1,7 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static char g_message[640];
-static unsigned char g_find_data[512];
+static bda_fs_find_data_like_t g_find_data;
 
 static void append_char(char **out, char value) {
     **out = value;
@@ -43,25 +43,25 @@ static void append_dump(char **out, const unsigned char *data, unsigned int coun
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     char *out = g_message;
-    bda_memset(g_find_data, 0, sizeof(g_find_data));
+    bda_fs_find_data_init_like(&g_find_data);
 
     append_text(&out, "ready=");
     append_hex32(&out, (unsigned int)bda_fs_storage_ready_like());
     append_char(&out, '\n');
 
-    int first = bda_fs_findfirst_like("a:\\*.*", 0x27, g_find_data);
+    int first = bda_fs_findfirst_like("a:\\*.*", 0x27, &g_find_data);
     append_text(&out, "findfirst=");
     append_hex32(&out, (unsigned int)first);
     append_char(&out, '\n');
-    append_dump(&out, g_find_data, 96);
+    append_dump(&out, (const unsigned char *)&g_find_data, 96);
 
     if (first != -1) {
-        int next = bda_fs_findnext_like(g_find_data);
+        int next = bda_fs_findnext_like(&g_find_data);
         append_text(&out, "\nnext=");
         append_hex32(&out, (unsigned int)next);
         append_char(&out, '\n');
-        append_dump(&out, g_find_data, 64);
-        bda_fs_findclose_like(g_find_data);
+        append_dump(&out, (const unsigned char *)&g_find_data, 64);
+        bda_fs_findclose_like(&g_find_data);
     }
 
     append_char(&out, 0);

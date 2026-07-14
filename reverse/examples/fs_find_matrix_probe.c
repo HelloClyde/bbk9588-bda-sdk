@@ -1,7 +1,7 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static char g_message[900];
-static unsigned char g_find_data[512];
+static bda_fs_find_data_like_t g_find_data;
 
 typedef struct find_case {
     const char *name;
@@ -59,11 +59,11 @@ int bda_main(void) {
     append_line(&out, "ready", bda_fs_storage_ready_like());
 
     for (unsigned int i = 0; i < sizeof(g_cases) / sizeof(g_cases[0]); ++i) {
-        bda_memset(g_find_data, 0, sizeof(g_find_data));
-        int ret = bda_fs_findfirst_like(g_cases[i].pattern, g_cases[i].attr, g_find_data);
+        bda_fs_find_data_init_like(&g_find_data);
+        int ret = bda_fs_findfirst_like(g_cases[i].pattern, g_cases[i].attr, &g_find_data);
         append_line(&out, g_cases[i].name, ret);
         if (ret != -1) {
-            bda_fs_findclose_like(g_find_data);
+            bda_fs_findclose_like(&g_find_data);
         }
     }
 

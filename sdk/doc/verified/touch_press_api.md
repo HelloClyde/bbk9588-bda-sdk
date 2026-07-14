@@ -1,7 +1,8 @@
 # 触摸按下/抬起 API
 
-本文只收录已经由独立 BDA 动态验证的触摸按下状态查询。坐标读取尚未完成动态闭环，
-不属于本文的已验证范围。
+本文只收录已经由独立 BDA 动态验证的触摸按下状态查询。窗口消息中的触摸坐标后来已由
+`TouchStageV11.bda` 在真机完成动态闭环，但它属于另一套 message ABI，见
+`touch_window_lifecycle_api.md`。
 
 ## API 定义
 
@@ -71,6 +72,6 @@ e9d1347306177c200531ebbbd773a688fa309ab57c08d9129abedc64b40edd46
 - `GUI+0x6c0 -> 0x8001a3a0` 静态上是读取 raw/calibration globals、写两个
   `u16 *` 输出的坐标转换器。自建 BDA 只得到裁剪上限 `(239,319)`，但当时没有在
   同一次按压中同步采集 raw globals，因此动态验证无结论；它没有进入 verified。
-- 原机 BDA 的 window procedure 会处理 `message=1/2` 并从 `lparam` 拆坐标。
-  先前自建 frame 的 probe 保存了 `g_frame`，却通过旧 helper 固定轮询 `handle=0` 的
-  global/default slot；“没有收到消息”的结果属于验证夹具错误，不能否定原机回调坐标 ABI。
+- 原机 BDA 的 window procedure 会处理 `message=1/2` 并从 `lparam` 拆坐标。先前自建
+  frame 的失败 probe 固定轮询了错误的 `handle=0`；V11 改为把实际 frame handle 传给
+  event pump 后，真机已确认按下、抬起坐标和十字显示均可用。

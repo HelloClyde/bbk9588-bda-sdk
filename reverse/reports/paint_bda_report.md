@@ -1,8 +1,8 @@
-# Paint BDA report
+# 电子画板.bda 逆向报告
 
-Target: `应用/程序/电子画板.bda`
+目标：`应用/程序/电子画板.bda`
 
-Generated evidence:
+证据：
 
 - `reverse/reports/paint_layout.json`
 - `reverse/reports/paint_calls.txt`
@@ -14,20 +14,19 @@ Generated evidence:
 - `reverse/reports/paint_gui314_context.txt`
 - `reverse/reports/paint_media.txt`
 
-## Header and layout
+## 头部和布局
 
 ```text
-title              电子画板
-category           0x08
-file size          1245084 bytes
-entry offset       0x95f8
-runtime entry VA   0x81c00020
-runtime file base  0x81bf6a28
-checksum           ok in inventory
+菜单标题         电子画板
+分类             0x08
+文件大小         1245084 bytes
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+checksum          inventory 中为 ok
 ```
 
-The generic layout scanner did not find BSS bounds for this app, but startup
-does cache the runtime API tables:
+通用布局扫描器没有推断出该应用的 BSS 边界，但启动代码确实缓存了运行时 API 表：
 
 ```text
 RES 0x81d269c0
@@ -37,10 +36,9 @@ FS  0x81d269cc
 MEM 0x81d269d0
 ```
 
-## Embedded resources
+## 内嵌资源
 
-The app does not reference external `\shell\*.dlx` paths. It does reference
-image extensions:
+应用没有引用外部 `\shell\*.dlx` 路径，但引用了图片扩展名：
 
 ```text
 .jpg
@@ -48,7 +46,7 @@ image extensions:
 bmp;jpg
 ```
 
-Scanning the BDA itself finds four embedded VX images:
+扫描 BDA 本体可找到四张内嵌 VX 图片：
 
 ```text
 0x000088  80x80
@@ -57,12 +55,12 @@ Scanning the BDA itself finds four embedded VX images:
 0x007b98  58x58
 ```
 
-These are probably menu/icon resources stored in the BDA header/resource area.
-Most of the app's large size is code/data rather than external DLX skins.
+这些很可能是 BDA 头部/资源区中的菜单图标资源。应用的大体积主要来自代码和数据，
+不是外部 DLX 皮肤。
 
-## API usage summary
+## API 使用概览
 
-Classified indirect calls:
+已分类间接调用：
 
 ```text
 GUI      566
@@ -74,7 +72,7 @@ UNKNOWN    4
 total    625
 ```
 
-Hot GUI offsets:
+高频 GUI 偏移：
 
 ```text
 GUI +0x368  157
@@ -88,12 +86,12 @@ GUI +0x4f0   13
 GUI +0x310   10
 ```
 
-This is currently the best production app for drawing/canvas APIs.
+这是当前研究绘图/画布 API 的最佳量产应用样本。
 
-## Pixel/line drawing
+## 像素和线段绘制
 
-`GUI +0x368` is the strongest newly mapped helper. It is called 157 times, often
-inside loops with coordinates and RGB565 colors:
+`GUI+0x368` 是当前映射最强的新绘图 helper。它被调用 157 次，常出现在带坐标
+和 RGB565 颜色的循环中：
 
 ```text
 a0 = surface/canvas handle
@@ -102,7 +100,7 @@ a2 = y
 a3 = RGB565 color
 ```
 
-Examples:
+示例：
 
 ```text
 0x81c04018: GUI+0x368(surface, x+i, y, 0xf800)
@@ -111,10 +109,10 @@ Examples:
 0x81c040d0: GUI+0x368(surface, x2, y+i, 0xf800)
 ```
 
-These four loops form rectangle borders in red (`0xf800`), so `GUI +0x368` can
-be named a put-pixel or draw-point helper with high confidence.
+这四个循环会用红色 `0xf800` 画矩形边框，因此 `GUI+0x368` 可以高置信度命名为
+put-pixel 或 draw-point 类 helper。
 
-Other call sites invert a 16-bit color before passing it:
+其他调用点会在传参前反转 16-bit 颜色：
 
 ```text
 lhu a3, color
@@ -123,71 +121,77 @@ andi a3, a3, 0xffff
 GUI+0x368(surface, x, y, inverted_rgb565)
 ```
 
-This fits eraser/selection/invert drawing behavior.
+这符合橡皮、选择或反色绘制行为。
 
-## Region drawing and refresh
+## 区域绘制和刷新
 
-`GUI +0x35c` is called before region copy/draw operations and after color
-creation. It commonly looks like:
+`GUI+0x35c` 会在区域复制/绘制操作前调用，也会跟在颜色创建后调用。C200 已确认
+它是 draw context `+0x20` slot setter：读取 `a0=context`、`a1=value`，
+返回旧 `context+0x20`，再写入新 value。常见形态：
 
 ```text
-GUI+0x35c(surface, color_or_resource)
+GUI+0x35c(context, resource_or_image_slot_value)
 ```
 
-`GUI +0x40c` is called with rectangular parameters:
+`GUI+0x40c` 的 C200 ABI 已确认是五参数 region draw/copy：
 
 ```text
-a0 = surface
+a0 = context
 a1 = x
 a2 = y
-a3 = width/height-like
-sp+0x10 = second dimension or style
+a3 = width
+sp+0x10 = height
 ```
 
-Examples show constant `a3 = 0xf0`, `sp+0x10 = 0xf7`, which looks like
-240x247-style canvas or panel refresh regions. Smaller calls use `0x13` and
-offset coordinates for tool/UI strips.
+示例中常见 `a3 = 0xf0`、`sp+0x10 = 0xf7`，接近 240x247 画布或面板刷新区域。
+较小调用使用 `0x13` 和偏移坐标，可能用于工具条/UI 条带。C200 会叠加
+context origin/scaling，并经过 `context+0xb0` clipping 后提交 clipped region；
+它不是独立 fill-rect API。
 
-`GUI +0x418` appears as a larger-region draw or update helper:
+`GUI+0x418` 表现为更大区域绘制或 update helper：
 
 ```text
-a0 = surface
+a0 = context_a
 a1 = x
 a2 = y
-a3 = 0x13
-sp+0x10 = 0x15
-sp+0x14 = pointer/handle
-sp+0x18 = x2/width-like
-sp+0x1c = y2/height-like
-sp+0x20 = 0
+a3 = width_or_x2_like
+sp+0x10 = height_or_y2_like
+sp+0x14 = context_b
+sp+0x18 = rect_b_x
+sp+0x1c = rect_b_y
+sp+0x20 = backend_arg
 ```
 
-Most `GUI+0x418` calls are immediately followed by:
+C200 会把 `a0` 和 `stack+0x14` 归一化成两个 context，分别叠加 origin/scaling，
+遍历 `context_b+0xc0` 子区域链，并把 `stack+0x20` 转发给 backend `+0x94`。
+
+大多数 `GUI+0x418` 调用后立刻跟着：
 
 ```text
-GUI+0x314(surface)
+GUI+0x314(context)
 ```
 
-That makes `GUI +0x314` a strong flush/present/update candidate for a drawing
-surface.
+因此 `GUI+0x314` 是绘图 surface/canvas flush-and-free 路径的一部分。C200 已确认
+它调用 backend `+0x34(context+0x10)`，清理 `context+0x94/+0xb0`，随后释放
+context；它不是单纯 invalidate。
 
-## File behavior
+## 文件行为
 
-The app uses very little FS compared with its GUI workload:
+与 GUI 工作量相比，该应用 FS 调用很少：
 
 ```text
-FS +0x000  fopen-like
-FS +0x004  fclose-like
-FS +0x010  fseek-like
-FS +0x014  ftell-like
-FS +0x02c  directory exists/chdir-like
-FS +0x030  mkdir-like
-FS +0x03c  findfirst-like
-FS +0x044  findclose-like
-FS +0x048  disk-info-like
+FS +0x000  fopen 类
+FS +0x004  fclose 类
+FS +0x010  fseek 类
+FS +0x014  ftell 类
+FS +0x02c  目录存在检查/chdir 类
+FS +0x030  mkdir 类
+FS +0x03c  findfirst 类
+FS +0x044  findclose 类
+FS +0x048  disk-info 类
 ```
 
-The picture load/save path checks file size:
+图片读取/保存路径会检查文件大小：
 
 ```text
 fopen(path, mode)
@@ -197,24 +201,17 @@ fclose(file)
 if size > 0x400000: reject
 ```
 
-That is the same `0x400000` image-size guard observed in the Album
-`LoaderPicture` path.
+这与相册 `LoaderPicture` 路径中观察到的 `0x400000` 图片大小上限一致。
 
-## Cross-checks
+## 交叉验证
 
-- With Album: confirms the picture extension set `.jpg/.bmp/bmp;jpg` and the
-  `0x400000` maximum image size guard.
-- With Picture notes: strengthens `GUI +0x35c/+0x40c/+0x410/+0x418` as the
-  picture/canvas draw family.
-- With Text/Ebook/Notepad: confirms `GUI +0x4f0` text drawing appears even in
-  a canvas app for labels/tool UI.
-- With Settings: confirms `FS +0x048` disk-info use before storage-dependent
-  actions.
+- 与相册：确认图片扩展名集合 `.jpg/.bmp/bmp;jpg` 和 `0x400000` 最大图片大小限制。
+- 与图片笔记：强化 `GUI+0x35c/+0x40c/+0x410/+0x418` 属于图片/画布绘制族。
+- 与文字、电子图书、记事本：确认画布应用也使用 `GUI+0x4f0` 绘制标签/工具 UI。
+- 与系统设置：确认依赖存储的操作前会使用 `FS+0x048` disk-info。
 
-## Open questions
+## 未确认点
 
-- Exact signatures for `GUI +0x35c`, `GUI +0x40c`, and `GUI +0x418` still need
-  a controlled hardware probe.
-- Determine whether `GUI +0x314` is present/flush or invalidate.
-- Identify the bitmap/JPEG save path. The current scan sees extensions and
-  file-size checks but not enough direct context to name the encoder calls.
+1. `GUI+0x418` 的高层 source/destination 语义仍需结合原机调用点和硬件探针。
+2. BMP/JPEG 保存路径还未命名；当前扫描能看到扩展名和大小检查，但直接上下文
+   还不足以命名编码器调用。

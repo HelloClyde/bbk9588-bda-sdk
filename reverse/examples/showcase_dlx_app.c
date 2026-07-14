@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -12,21 +12,6 @@ static const char k_fallback_dlx_path[] =
     "\x41\x3a\x5c\xd3\xa6\xd3\xc3\x5c\xca\xfd\xbe\xdd\x5c"
     "\x73\x68\x65\x6c\x6c\x5c\x74\x65\x78\x74\x5f\x41\x2e\x64\x6c\x78";
 
-typedef struct bda_frame_desc_like {
-    u32 style;
-    u32 reserved04;
-    const char *title;
-    u32 reserved0c;
-    u32 reserved10;
-    u32 reserved14;
-    int (*proc)(bda_handle_t, u32, u32, u32);
-    u32 reserved1c;
-    u32 reserved20;
-    u32 height;
-    u32 width;
-    void *surface;
-    u32 reserved30;
-} bda_frame_desc_like_t;
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -52,7 +37,7 @@ static int read_full_vx_resource(const char *path, u32 index) {
     u8 *vx;
 
     f = bda_fs_fopen_raw(path, "rb");
-    if (f <= 0) {
+    if (!bda_fs_file_is_valid(f)) {
         return -1;
     }
     if (bda_fs_fread_raw(head, 1, sizeof(head), f) != (int)sizeof(head)) {
@@ -138,7 +123,7 @@ static void draw_showcase(void) {
         return;
     }
     if (!g_draw) {
-        g_draw = bda_gui_current_draw_like();
+        g_draw = bda_gui_current_draw_like(handle);
     }
     if (!g_draw) {
         return;
@@ -152,7 +137,7 @@ static void draw_showcase(void) {
         y = 0;
     }
     bda_gui_pump_present_arg_like(1);
-    bda_gui_draw_vx_like(g_draw, x, y, (s32)g_vx_width, (s32)g_vx_height, g_vx);
+    bda_gui_draw_vx_like(g_draw, x, y, g_vx);
     bda_gui_pump_present_arg_like(0);
 }
 
@@ -172,12 +157,12 @@ static int showcase_window_proc(bda_handle_t handle, u32 message, u32 wparam, u3
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_frame_desc_like_t desc;
-    u32 msg[14];
+    bda_gui_message_like_t msg;
     int err;
     int idle_draws;
 
     bda_memset(&desc, 0, sizeof(desc));
-    bda_memset(msg, 0, sizeof(msg));
+    bda_memset(&msg, 0, sizeof(msg));
     g_frame = 0;
     g_draw = 0;
     g_exit = 0;
@@ -191,10 +176,10 @@ int bda_main(void) {
 
     desc.style = 0x08000000u;
     desc.title = "Showcase";
-    desc.proc = showcase_window_proc;
+    desc.wndproc = showcase_window_proc;
     desc.height = SCREEN_H;
     desc.width = SCREEN_W;
-    desc.surface = bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_frame_surface_like(15);
 
     g_frame = (bda_handle_t)bda_gui_register_frame_like(&desc);
     if ((s32)g_frame == -1 || !g_frame) {
@@ -204,9 +189,9 @@ int bda_main(void) {
     }
 
     while (!g_exit) {
-        if (bda_gui_event_poll_like(msg, 0)) {
-            bda_gui_event_step_like();
-            bda_gui_event_dispatch_like(msg);
+        if (bda_gui_event_poll_like(&msg, 0)) {
+            bda_gui_event_step_like(&msg);
+            bda_gui_event_dispatch_like(&msg);
             idle_draws = 0;
         } else {
             draw_showcase();

@@ -39,6 +39,8 @@ typedef int (*bda_wndproc_t)(bda_handle_t, u32, u32, u32);
 #define BDA_MSG_DRAW_CONTEXT_ATTACH 0x0060u
 #define BDA_MSG_DRAW_CONTEXT_DETACH 0x0066u
 #define BDA_MSG_REDRAW_INPUT        0x00b1u
+#define BDA_MSG_TOUCH_COORDINATE    0x0001u
+#define BDA_MSG_TOUCH_RELEASE       0x0002u
 
 typedef struct bda_frame_desc {
     u32 style;
@@ -85,6 +87,7 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_FRAME_STOP        0x088u
 #define BDA_SDK_INTERNAL_GUI_DEFAULT_PROC      0x08cu
 #define BDA_SDK_INTERNAL_GUI_FRAME_ACTIVATE    0x098u
+#define BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu
 #define BDA_SDK_INTERNAL_GUI_DRAW_OBJECT       0x2fcu
 #define BDA_SDK_INTERNAL_GUI_CURRENT_DRAW      0x304u
 #define BDA_SDK_INTERNAL_GUI_SET_TEXT_MODE     0x338u
@@ -312,7 +315,7 @@ static inline void bda_sys_delay(u32 delay_units) {
     );
 }
 
-/* Verified frame lifecycle and event pump used by the graphics BDA. */
+/* Verified frame lifecycle and event pump; full hardware path is in the V11 doc. */
 static inline bda_handle_t bda_gui_register_frame_desc(
     bda_frame_desc_t *descriptor
 ) {
@@ -341,6 +344,16 @@ static inline int bda_gui_frame_stop(bda_handle_t handle) {
 static inline int bda_gui_frame_release(bda_handle_t handle) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_FRAME_RELEASE, (u32)handle
+    );
+}
+
+/*
+ * Final owner-side teardown after stop/release has made the event pump end.
+ * GUI+0x17c has no stable return value, so the public wrapper is void.
+ */
+static inline void bda_gui_close_frame(bda_handle_t handle) {
+    (void)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_CLOSE_FRAME, (u32)handle
     );
 }
 

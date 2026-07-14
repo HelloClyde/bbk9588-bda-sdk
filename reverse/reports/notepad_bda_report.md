@@ -1,35 +1,35 @@
-# 记事本.bda Analysis Report
+# 记事本.bda 逆向报告
 
-## Status
+## 状态
 
-First static report. Evidence comes from:
+首版静态报告。证据来自：
 
 ```text
 应用/程序/记事本.bda
 reverse/reports/bda_inventory.json
 reverse/reports/notepad_calls.txt
-reverse/sdk/text_notes.md
-reverse/sdk/window_notes.md
-reverse/sdk/fs_notes.md
+sdk/doc/text_notes.md
+sdk/doc/window_notes.md
+sdk/doc/fs_notes.md
 ```
 
-This report is not yet function-complete. It is the first pass that anchors
-layout, resource files, and SDK/API usage for cross-checking.
+这份报告还不是完整函数级逆向；当前阶段先固定布局、资源文件和
+SDK/API 使用证据，供后续交叉验证。
 
-## Header And Layout
+## 头部和布局
 
 ```text
-file size          138,460 bytes
-menu title         记事本
-category           0x09
-entry file offset  0x95f8
-runtime entry VA   0x81c00020
-runtime file base  0x81bf6a28
+文件大小          138,460 bytes
+菜单标题         记事本
+分类           0x09
+入口文件偏移  0x95f8
+运行时入口 VA   0x81c00020
+运行时文件基址  0x81bf6a28
 BSS                0x81c18700..0x81c32801
-header checksum    ok
+头部 checksum    ok
 ```
 
-Cached runtime table globals:
+缓存的运行时表全局变量：
 
 ```text
 RES  0x81c18700
@@ -39,13 +39,13 @@ FS   0x81c1870c
 MEM  0x81c18710
 ```
 
-This layout matches the common native-BDA model used by `元素周期表.bda`: startup
-copies runtime table pointers from `0x81c00004..0x81c00014` into app-local BSS
-globals, then all SDK calls go through those globals.
+这个布局符合 `元素周期表.bda` 使用的常见原生 BDA 模型：启动代码会把
+`0x81c00004..0x81c00014` 的运行时表指针复制到应用自己的 BSS 全局变量，
+之后所有 SDK 调用都通过这些全局变量间接完成。
 
-## External Resources
+## 外部资源
 
-Static DLX references:
+静态 DLX 引用：
 
 ```text
 \shell\FP_PIC_BLUE.dlx
@@ -57,87 +57,85 @@ Static DLX references:
 \shell\enote_corner.dlx
 ```
 
-Interpretation:
+解释：
 
-- `text_A.dlx` / `text_B.dlx` are shared text UI resources. This cross-checks
-  the earlier text/image experiments that used `text_A.dlx`.
-- `EnoteBlueSearch.dlx`, `enote_black_add.dlx`, and `enote_corner.dlx` are
-  notepad-specific skins or UI fragments.
-- The `_BLUE`/`_BLACK` pairs suggest the app supports at least two shell themes.
+- `text_A.dlx` / `text_B.dlx` 是共享文字 UI 资源。这与早期使用
+  `text_A.dlx` 的文字/图片实验互相印证。
+- `EnoteBlueSearch.dlx`、`enote_black_add.dlx`、`enote_corner.dlx`
+  更像是记事本专用皮肤或 UI 片段。
+- `_BLUE`/`_BLACK` 成对出现，说明应用至少支持两套 shell 主题。
 
-## API Usage Summary
+## API 使用概览
 
-`记事本.bda` has 955 classified indirect runtime-table calls in the current
-scanner. The strongest groups:
-
-```text
-GUI +0x040  184 calls  send/message-like
-GUI +0x074  139 calls  draw/present state guard
-GUI +0x308   77 calls  begin draw
-GUI +0x30c   62 calls  end draw
-GUI +0x03c   53 calls  notify/message-like
-GUI +0x2b8   46 calls  message box
-GUI +0x084   12 calls  register frame
-GUI +0x030   12 calls  event poll
-GUI +0x050   12 calls  event step
-GUI +0x054   12 calls  event dispatch
-GUI +0x17c   12 calls  close/release frame
-
-FS  +0x000   22 calls  open/fopen-like
-FS  +0x004   23 calls  close/fclose-like
-FS  +0x024   32 calls  remove/delete-like
-FS  +0x03c   10 calls  findfirst-like
-FS  +0x040    1 call   findnext-like
-FS  +0x044    1 call   findclose-like
-
-SYS +0x080   38 calls  delay/sleep-like
-RES +0x094   17 calls  trace/log-like
-```
-
-The GUI event loop count is notable: 12 frame registrations and 12 matching
-`GUI+0x030/+0x050/+0x054/+0x17c` groups. Unlike `元素周期表`, which has a small
-number of windows, Notepad appears to create several modal screens/dialogs.
-
-## Text Rendering Cross-Checks
-
-Text-related calls are present:
+`记事本.bda` 当前扫描器分类出 955 个运行时表间接调用。最强的调用组：
 
 ```text
-GUI +0x338  set text mode-like      6 calls
-GUI +0x33c  set text color-like     8 calls
-GUI +0x378  RGB/color helper-like   8 calls
-GUI +0x4f0  draw text-like         11 calls
+GUI +0x040  184 次  send/message-like
+GUI +0x074  139 次  draw/present state guard
+GUI +0x308   77 次  begin draw
+GUI +0x30c   62 次  end draw
+GUI +0x03c   53 次  notify/message-like
+GUI +0x2b8   46 次  message box
+GUI +0x084   12 次  register frame
+GUI +0x030   12 次  event poll
+GUI +0x050   12 次  event step
+GUI +0x054   12 次  event dispatch
+GUI +0x17c   12 次  close/release frame
+
+FS  +0x000   22 次  open/fopen-like
+FS  +0x004   23 次  close/fclose-like
+FS  +0x024   32 次  remove/delete-like
+FS  +0x03c   10 次  findfirst-like
+FS  +0x040    1 次   findnext-like
+FS  +0x044    1 次   findclose-like
+
+SYS +0x080   38 次  delay/sleep-like
+RES +0x094   17 次  trace/log-like
 ```
 
-This supports the earlier hardware observation that patching Notepad window text
-can display `NAME-OK` and `BODY-OK`. It also gives a safer source for the text
-SDK than the standalone text probes that crashed: Notepad uses text drawing as
-part of a normal window/control lifecycle.
+GUI 事件循环数量值得注意：共有 12 次 frame 注册，并有 12 组匹配的
+`GUI+0x030/+0x050/+0x054/+0x17c` 调用。不同于窗口数量较少的
+`元素周期表`，记事本看起来会创建多个模态页面或对话框。
 
-Working hypothesis:
+## 文字绘制交叉验证
 
-- `GUI+0x4f0` is valid for text rendering.
-- The unstable probes likely used the wrong lifecycle, wrong handle, or exited
-  while GUI dispatch/draw state was still active.
-- Future text probes should copy a Notepad call context rather than call
-  `draw_text` against arbitrary handles.
+已出现文字相关调用：
 
-## File-System Behavior
+```text
+GUI +0x338  设置文字模式候选        6 次
+GUI +0x33c  设置文字颜色候选        8 次
+GUI +0x378  RGB/颜色辅助候选        8 次
+GUI +0x4f0  绘制文字候选           11 次
+```
 
-Notepad is currently one of the best samples for completing native FS APIs:
+这支持早期硬件观察：修改记事本窗口文字可以显示 `NAME-OK` 和 `BODY-OK`。
+它也比曾经崩溃的独立文字探针更适合作为文字 SDK 的依据，因为记事本是在
+正常窗口/控件生命周期内执行文字绘制。
 
-- Open/close/read/write/seek/tell all appear.
-- `FS+0x024` has 32 calls and is likely delete/remove.
-- `FS+0x03c/+0x040/+0x044` appears as the directory listing group.
-- Directory setup uses `FS+0x02c/+0x030`.
+当前假设：
 
-This cross-checks `fs_notes.md` and should be used before writing more
-directory-listing probes. Important correction from Showcase still applies:
-file-open failure must be treated as `handle <= 0`, not only `handle == 0`.
+- `GUI+0x4f0` 可以用于文字渲染。
+- 不稳定探针可能使用了错误生命周期、错误句柄，或者在 GUI 分发/绘制状态
+  仍活动时退出。
+- 后续文字探针应复制记事本的调用上下文，而不是对任意句柄直接调用
+  `draw_text`。
 
-## Window/Event Behavior
+## 文件系统行为
 
-Notepad uses the same broad window model as Element:
+记事本目前是补全原生 FS API 的最佳样本之一：
+
+- open/close/read/write/seek/tell 都已出现。
+- `FS+0x024` 有 32 次调用，很可能是 delete/remove。
+- `FS+0x03c/+0x040/+0x044` 形成目录枚举调用组。
+- 目录准备使用 `FS+0x02c/+0x030`。
+
+这与 `fs_notes.md` 互相印证，继续写目录枚举探针前应优先参考这里的上下文。
+Showcase 中得到的重要修正仍然适用：成功 handle 是高地址 pointer，signed 值通常为负数；
+必须用 `bda_fs_file_is_valid(handle)` 排除 `0` 和 `0xffffffff` 两个失败哨兵。
+
+## 窗口和事件行为
+
+记事本使用与 Element 相同的大体窗口模型：
 
 ```text
 GUI+0x2fc  surface/object creation
@@ -148,30 +146,24 @@ GUI+0x054  dispatch
 GUI+0x17c  final close/release
 ```
 
-It also uses many `GUI+0x040` and `GUI+0x03c` calls, supporting the idea that
-`0x040` and `0x03c` are distinct send/notify routes. Element uses these routes
-for close/back-style commands such as `0x66`; Notepad should be inspected next
-for the same command constants.
+它还大量使用 `GUI+0x040` 和 `GUI+0x03c`，支持 `0x040` 与 `0x03c`
+是不同 send/notify 路径的判断。Element 会通过这些路径处理 `0x66` 这类
+关闭/返回命令，下一步应检查记事本是否使用相同命令常量。
 
-## Unknowns
+## 未确认点
 
-1. Exact Notepad document path format and extension filters.
-2. Which window procedures correspond to list, edit, search, and confirm
-   dialogs.
-3. The argument layout for `GUI+0x134`, `+0x138`, `+0x46c`, and bitmap/control
-   helper calls.
-4. Whether Notepad uses the same `0x00b1` redraw/input message semantics as
-   Element.
-5. Exact text-control lifecycle needed for stable custom text rendering.
+1. 记事本文档路径格式和扩展名过滤规则。
+2. 列表、编辑、搜索、确认对话框分别对应哪些窗口过程。
+3. `GUI+0x134`、`+0x138`、`+0x46c` 以及 bitmap/control 辅助调用的参数布局。
+4. 记事本是否使用与 Element 相同的 `0x00b1` 重绘/输入消息语义。
+5. 稳定自定义文字渲染所需的文字控件生命周期。
 
-## Next Static Tasks
+## 后续静态任务
 
-1. Disassemble `记事本.bda` with function labels around all 12 `GUI+0x084`
-   frame registrations.
-2. Extract context for `GUI+0x4f0` text calls and compare with
-   `text_notes.md`.
-3. Extract context for `FS+0x03c/+0x040/+0x044` and update `fs_notes.md` with
-   the notepad find-data layout.
-4. Compare command constants against `元素周期表.bda` (`0x66`, `0x7fd`, `0x083e`,
-   `0x0844`, `0x00b1`).
+1. 反汇编 `记事本.bda`，并在全部 12 处 `GUI+0x084` frame 注册附近建立函数标签。
+2. 提取 `GUI+0x4f0` 文字调用上下文，并与 `text_notes.md` 对比。
+3. 提取 `FS+0x03c/+0x040/+0x044` 上下文，用记事本 find-data 布局更新
+   `fs_notes.md`。
+4. 与 `元素周期表.bda` 对比命令常量（`0x66`、`0x7fd`、`0x083e`、`0x0844`、
+   `0x00b1`）。
 

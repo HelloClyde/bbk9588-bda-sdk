@@ -1,24 +1,23 @@
-# KeChengBiao / Schedule.bda Report
+# 课程表.bda 逆向报告
 
-`课程表.bda` is a category-0x09 tool/content app. It is a useful cross-check
-for the window/event lifecycle used by non-game display apps: it opens external
-DLX skin files, creates GUI objects, uses the normal event pump, and draws text
-and resource images from inside that lifecycle.
+`课程表.bda` 是分类 `0x09` 的工具/内容应用。它是非游戏显示应用窗口/事件
+生命周期的有用交叉验证样本：应用会打开外部 DLX 皮肤文件、创建 GUI 对象、
+使用正常事件 pump，并在生命周期内部绘制文字和资源图片。
 
-## Identity and Layout
+## 头部和布局
 
 ```text
-file size      83,020 bytes
-menu title     课程表
-category       0x09
-entry offset   0x95f8
-entry VA       0x81c00020
-image base     0x81bf6a28
-BSS range      0x81c0ae70..0x81c0b001
-checksum       ok
+文件大小         83,020 bytes
+菜单标题         课程表
+分类             0x09
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS 范围         0x81c0ae70..0x81c0b001
+checksum          ok
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES  0x81c0ae70
@@ -28,9 +27,9 @@ FS   0x81c0ae7c
 MEM  0x81c0ae80
 ```
 
-## External Resources
+## 外部资源
 
-Visible resource paths:
+可见资源路径：
 
 ```text
 \Shell\KeChengBiao.dlx
@@ -39,7 +38,7 @@ rb
 wb+
 ```
 
-It also embeds the four common shell VX resources directly in the BDA image:
+应用还在 BDA image 中直接内嵌四个通用 shell VX 资源：
 
 ```text
 0x000088  80x80
@@ -48,40 +47,40 @@ It also embeds the four common shell VX resources directly in the BDA image:
 0x007b98  58x58
 ```
 
-The `HeiSeTuPian` resource name mirrors other normal apps and probably means a
-black/dark image variant, not a separate executable module.
+`HeiSeTuPian` 资源名与其他普通应用一致，很可能表示黑色/暗色图片变体，而不是
+独立可执行模块。
 
-## API Use
+## API 使用概览
 
-The current indirect-call scan finds 304 runtime table calls:
+当前间接调用扫描共发现 304 个运行时表调用：
 
 ```text
-FS  +0x000  4   fopen-like
-FS  +0x004  6   fclose-like
-FS  +0x008  6   fread-like
-FS  +0x00c  1   fwrite-like
-FS  +0x010  3   fseek-like
-FS  +0x02c  1   directory-exists/chdir-like
-FS  +0x030  1   mkdir-like
-FS  +0x048  1   disk info-like
+FS  +0x000   4  fopen 类
+FS  +0x004   6  fclose 类
+FS  +0x008   6  fread 类
+FS  +0x00c   1  fwrite 类
+FS  +0x010   3  fseek 类
+FS  +0x02c   1  目录存在检查/chdir 类
+FS  +0x030   1  mkdir 类
+FS  +0x048   1  磁盘信息类
 
-GUI +0x030/+0x050/+0x054  event poll/step/dispatch
-GUI +0x084/+0x088/+0x08c/+0x17c  frame lifecycle
-GUI +0x1a4/+0x1a8  control/window create and destroy
+GUI +0x030/+0x050/+0x054  事件 poll/step/dispatch
+GUI +0x084/+0x088/+0x08c/+0x17c  frame 生命周期
+GUI +0x1a4/+0x1a8  控件/window 创建和销毁
 GUI +0x308/+0x30c  begin/end draw
-GUI +0x338/+0x33c/+0x378/+0x4f0  text mode, color, draw text
-GUI +0x430/+0x46c  rectangle/resource helper family
-GUI +0x35c/+0x40c  image/region helper family
+GUI +0x338/+0x33c/+0x378/+0x4f0  文字模式、颜色、文字绘制
+GUI +0x430/+0x46c  rect prepare / rect contains 调用对
+GUI +0x35c/+0x40c  图片/区域辅助族
 
-SYS +0x080  22  delay/sleep-like
-RES +0x090   2  resource state/helper-like
-RES +0x094   5  trace/log-like
-MEM +0x008/+0x00c allocation/free-like
+SYS +0x080  22  delay/sleep 类
+RES +0x090   2  资源状态辅助类
+RES +0x094   5  trace/log 类
+MEM +0x008/+0x00c allocation/free 类
 ```
 
-## Window and Event Flow
+## 窗口和事件流程
 
-`课程表.bda` uses the normal app event pump:
+`课程表.bda` 使用正常应用事件 pump：
 
 ```text
 GUI+0x030(message, frame_or_context)
@@ -91,70 +90,68 @@ GUI+0x054(message)
 GUI+0x17c(frame)
 ```
 
-This matches Element, BBVM, Time, Notepad, and other full apps. A custom display
-program that only performs a one-shot draw from startup is missing this
-lifecycle, which explains why the current Showcase experiments can display in
-one narrow Element-style case but cannot close or can reboot in fuller variants.
+这与 Element、BBVM、时间、记事本等完整应用一致。只在启动阶段做一次绘制的
+自定义显示程序缺少这个生命周期，因此当前 Showcase 实验只能在很窄的
+Element 风格场景中显示，复杂变体会无法关闭或重启。
 
-The app creates at least one GUI object through `GUI+0x1a4`. The call shape is
-consistent with the existing create-window/control ABI:
+应用至少通过 `GUI+0x1a4` 创建一个 GUI 对象。调用形态与现有
+create-window/control ABI 一致：
 
 ```text
 a0 = class/name pointer
-a1 = title/caption or 0
-a2 = style, observed high bits in the 0x08000000 family
-a3 = flags/extra, often 0
+a1 = title/caption 或 0
+a2 = style，已见高位属于 0x08000000 家族
+a3 = flags/extra，常为 0
 stack fields = id, x, y, width, height, parent, extra
 ```
 
-## Drawing Behavior
+## 绘制行为
 
-The draw path combines:
+绘制路径组合：
 
 ```text
-GUI+0x308 / GUI+0x30c       drawing handle lifetime
+GUI+0x308 / GUI+0x30c       drawing handle 生命周期
 GUI+0x074                  draw/present guard
-GUI+0x430                  rectangle setup/helper-like
-GUI+0x46c                  resource/image helper-like
-GUI+0x4f0                  text draw-like
+GUI+0x430                  rect prepare；写 x0/y0/x1/y1
+GUI+0x46c                  rect contains；判断点是否在 rect 内
+GUI+0x4f0                  文字绘制类
 ```
 
-`GUI+0x430` is called with stack-backed records and rectangle-like arguments
-such as x/y/width/height. Several `GUI+0x46c` calls immediately follow these
-records, with `a1`/`a2` coming from calculated coordinates. This strengthens the
-interpretation that `GUI+0x46c` is a resource/image lookup or draw helper used
-by normal apps, not a generic DLX loader.
+`GUI+0x430` 使用栈上记录写入 `x0/y0/x1/y1` rect。多处 `GUI+0x46c`
+紧跟这些记录调用，且 `a1/a2` 来自计算坐标。C200 已确认 `GUI+0x46c`
+等价于 `rect[0] <= x && x < rect[2] && rect[1] <= y && y < rect[3]`；
+因此这里应解释为内容 UI 的 hit-test/rect 判断，而不是资源/图片绘制 API 或
+通用 DLX loader。
 
-## File Flow
+## 文件流程
 
-The FS pattern is standard:
+FS 模式标准：
 
 ```text
-open DLX or data file with "rb"
-read fixed records
-seek as needed
-write/update with "wb+"
-close handles
-prepare app data directory with FS+0x02c / FS+0x030
+用 "rb" 打开 DLX 或数据文件
+读取固定记录
+按需 seek
+用 "wb+" 写入/更新
+关闭 handle
+通过 FS+0x02c / FS+0x030 准备应用数据目录
 ```
 
-No evidence suggests `RES+0x094` loads these DLX files. Hardware probes showed
-`RES+0x094` path-style calls returning without visible resource effects, while
-this app plainly uses FS calls for the resource/data path.
+没有证据表明 `RES+0x094` 会加载这些 DLX 文件。硬件探针显示 `RES+0x094`
+传路径风格字符串会返回但没有可见资源效果；而该应用明确使用 FS 调用处理资源/
+数据路径。
 
-## SDK Implications
+## 对 SDK 的含义
 
-1. Showcase-style custom apps should use the full frame/control event lifecycle,
-   not just the one-shot `GUI+0x540` image draw path.
-2. `GUI+0x430` should be tracked as a rectangle/paint helper candidate.
-3. `GUI+0x46c` remains resource/image helper-like, with Schedule adding more
-   evidence alongside Ebook.
-4. `RES+0x094` should stay named trace/log-like.
+1. Showcase 风格自定义应用应使用完整 frame/control 事件生命周期，而不是只走
+   一次性 `GUI+0x540` 图片绘制路径。
+2. `GUI+0x430` 已可按 rect prepare 使用；调用方必须提供至少 16 byte 可写 rect。
+3. `GUI+0x46c` 已可按 rect contains 使用；课程表为电子图书之外提供了更多
+   内容 UI hit-test 证据。
+4. `RES+0x094` 应保持 trace/log 类命名。
 
-## Open Items
+## 未确认点
 
-1. Exact struct passed to `GUI+0x430`.
-2. Exact object/class string used by the `GUI+0x1a4` call.
-3. The persistent file format for the timetable data.
-4. Whether the black-image DLX is chosen by theme, display mode, or a resource
-   fallback path.
+1. `GUI+0x430/+0x46c` 周围的高层 UI record 与资源索引关系。
+2. `GUI+0x1a4` 调用使用的准确 object/class 字符串。
+3. 课程表持久数据文件格式。
+4. 黑色图片 DLX 是按主题、显示模式，还是资源回退路径选择。

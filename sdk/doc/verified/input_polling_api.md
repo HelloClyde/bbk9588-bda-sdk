@@ -117,8 +117,12 @@ do {
 4. 分别注入 Right、Down、Left、Up、Enter、Esc，画面依次显示对应键名。
 5. 测试结束后删除运行 worker/checkpoint，不修改原版 NAND。
 
-六个键均已形成可见闭环。初版 packet 索引曾把 Right 和 Down 对调，动态测试出现
+六个键均已在模拟器形成可见闭环。初版 packet 索引曾把 Right 和 Down 对调，动态测试出现
 “按 Right 显示 DOWN”，修正为本文布局后六键逐项通过。
+
+`TouchStageV11.bda` 又在真机使用同一 packet 的 `packet[4]` 检测 Esc，等待抬起后启动
+完整 frame 退出链并返回主菜单。因此 Esc 映射和电平去抖方式同时具有真机证据；其余
+五个键的本文证据仍来自模拟器，不自动扩张为真机验证。
 
 ## 未覆盖边界
 

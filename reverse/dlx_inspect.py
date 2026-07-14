@@ -60,7 +60,7 @@ def bmp_info(blob: bytes) -> dict[str, int] | None:
 def parse_dlx(path: Path) -> dict[str, object]:
     data = path.read_bytes()
     if len(data) < 0x24 or data[:3] != b"DLX":
-        raise ValueError(f"{path} is not a recognized DLX file")
+        raise ValueError(f"{path} 不是可识别的 DLX 文件")
 
     count = data[3]
     major = data[4]
@@ -122,9 +122,15 @@ def parse_dlx(path: Path) -> dict[str, object]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Inspect BBK DLX resource containers.")
-    ap.add_argument("dlx", type=Path, nargs="+")
-    ap.add_argument("--json", action="store_true")
+    ap = argparse.ArgumentParser(
+        description="检查 BBK DLX 资源容器。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("dlx", type=Path, nargs="+", help="要检查的 DLX 文件")
+    ap.add_argument("--json", action="store_true", help="输出 JSON 报告")
     ns = ap.parse_args()
 
     reports = [parse_dlx(path) for path in ns.dlx]

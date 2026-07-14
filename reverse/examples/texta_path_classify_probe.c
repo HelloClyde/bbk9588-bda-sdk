@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static const char p0[] = "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\shell\\text_A.dlx";
 static const char p1[] = "a:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\shell\\text_A.dlx";

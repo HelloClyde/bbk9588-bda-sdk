@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -9,21 +9,6 @@ static const char k_dlx_path[] =
     "\x41\x3a\x5c\xd3\xa6\xd3\xc3\x5c\xca\xfd\xbe\xdd\x5c"
     "\x73\x68\x65\x6c\x6c\x5c\x74\x65\x78\x74\x5f\x41\x2e\x64\x6c\x78";
 
-typedef struct bda_frame_desc_like {
-    u32 style;
-    u32 reserved04;
-    const char *title;
-    u32 reserved0c;
-    u32 reserved10;
-    u32 reserved14;
-    int (*proc)(bda_handle_t, u32, u32, u32);
-    u32 reserved1c;
-    u32 reserved20;
-    u32 height;
-    u32 width;
-    void *surface;
-    u32 reserved30;
-} bda_frame_desc_like_t;
 
 typedef struct image_state {
     u16 *pixels;
@@ -181,7 +166,7 @@ static void show_framebuffer(void) {
     if (g_framebuffer) {
         bda_gui_pump_present_arg_like(1);
         bda_gui_blit_like(0, 0, SCREEN_H, SCREEN_W, g_framebuffer);
-        if (bda_gui_blit_state_like()) {
+        if (bda_gui_game_display_pump_like()) {
             bda_gui_blit_alt_like(0, 0, SCREEN_H, SCREEN_W, g_framebuffer);
         }
         bda_gui_pump_present_arg_like(0);
@@ -193,7 +178,7 @@ static int probe_window_proc(bda_handle_t handle, u32 message, u32 wparam, u32 l
     (void)lparam;
     if (message == BDA_MSG_KEYDOWN_LIKE ||
         message == BDA_MSG_TOUCH_A_LIKE ||
-        message == BDA_MSG_TOUCH_B_LIKE ||
+        message == BDA_MSG_REDRAW_INPUT_LIKE ||
         message == 0x66) {
         g_exit = 1;
         return 1;
@@ -204,20 +189,20 @@ static int probe_window_proc(bda_handle_t handle, u32 message, u32 wparam, u32 l
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_frame_desc_like_t desc;
-    u32 msg[14];
+    bda_gui_message_like_t msg;
     int err;
     u16 *fallback;
 
     bda_memset(&desc, 0, sizeof(desc));
-    bda_memset(msg, 0, sizeof(msg));
+    bda_memset(&msg, 0, sizeof(msg));
     g_exit = 0;
 
     desc.style = 0x08000000u;
     desc.title = "DLXImg";
-    desc.proc = probe_window_proc;
+    desc.wndproc = probe_window_proc;
     desc.height = SCREEN_H;
     desc.width = SCREEN_W;
-    desc.surface = bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_frame_surface_like(15);
 
     g_frame = (bda_handle_t)bda_gui_register_frame_like(&desc);
     if ((s32)g_frame != -1 && g_frame) {
@@ -247,9 +232,9 @@ int bda_main(void) {
     g_exit = 1;
 #endif
     while (!g_exit) {
-        if (g_frame && bda_gui_event_poll_like(msg, g_frame)) {
-            bda_gui_event_step_like();
-            bda_gui_event_dispatch_like(msg);
+        if (g_frame && bda_gui_event_poll_like(&msg, g_frame)) {
+            bda_gui_event_step_like(&msg);
+            bda_gui_event_dispatch_like(&msg);
         } else {
             bda_sys_delay_like(10000);
         }

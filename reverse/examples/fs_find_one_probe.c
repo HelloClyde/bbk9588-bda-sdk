@@ -1,7 +1,7 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static char g_message[256];
-static unsigned char g_find_data[512];
+static bda_fs_find_data_like_t g_find_data;
 
 static void append_char(char **out, char value) {
     **out = value;
@@ -33,16 +33,19 @@ static void append_hex32(char **out, unsigned int value) {
 
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
-    bda_memset(g_find_data, 0, sizeof(g_find_data));
-    int ret = bda_fs_findfirst_like("\\*.*", 0x00, g_find_data);
+    bda_fs_find_data_init_like(&g_find_data);
+    int ret = bda_fs_findfirst_like("\\*.*", 0x00, &g_find_data);
 
     char *out = g_message;
     append_text(&out, "ret=");
     append_hex32(&out, (unsigned int)ret);
     append_text(&out, "\ndata=");
     for (int i = 0; i < 16; ++i) {
-        append_hex8(&out, g_find_data[i]);
+        append_hex8(&out, ((const unsigned char *)&g_find_data)[i]);
         append_char(&out, ' ');
+    }
+    if (ret != -1) {
+        bda_fs_findclose_like(&g_find_data);
     }
     append_char(&out, 0);
     bda_msgbox("FSFindOne", g_message);

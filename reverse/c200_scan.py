@@ -44,7 +44,7 @@ def disasm_window(data: bytes, off: int, base: int, before: int, after: int) -> 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Scan C200.bin for native BDA loader/menu evidence.")
     ap.add_argument("bin", type=Path)
-    ap.add_argument("--base", type=lambda x: int(x, 0), default=0x80000000)
+    ap.add_argument("--base", type=lambda x: int(x, 0), default=0x80004000)
     ap.add_argument("--disasm", action="store_true")
     ns = ap.parse_args()
 

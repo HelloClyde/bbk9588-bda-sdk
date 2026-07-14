@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 static char g_message[320];
 
@@ -39,7 +39,7 @@ static void append_line(char **out, const char *name, unsigned int value) {
 
 static void short_wait(void) {
     for (int i = 0; i < 40; ++i) {
-        bda_gui_pump_present_like();
+        bda_gui_draw_guard_end_like();
         bda_sys_delay_like(0xc350);
     }
 }
@@ -70,7 +70,7 @@ int bda_main(void) {
     int set_edit = bda_gui_set_text_color_like(edit, color_edit);
     int draw_edit = bda_gui_draw_text_like(edit, 20, 110, "draw_text edit handle", -1);
 
-    bda_gui_pump_present_like();
+    bda_gui_draw_guard_end_like();
     short_wait();
 
     char *out = g_message;

@@ -43,10 +43,16 @@ def rgb565_to_rgb(data: bytes, width: int, height: int, endian: str = "little") 
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Extract BBK DLX resources.")
-    ap.add_argument("dlx", type=Path)
-    ap.add_argument("-o", "--out-dir", type=Path, default=Path("build/dlx_extract"))
-    ap.add_argument("--vx-endian", choices=["little", "big"], default="little")
+    ap = argparse.ArgumentParser(
+        description="导出 BBK DLX 资源。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("dlx", type=Path, help="要导出的 DLX 文件")
+    ap.add_argument("-o", "--out-dir", type=Path, default=Path("build/dlx_extract"), help="输出目录")
+    ap.add_argument("--vx-endian", choices=["little", "big"], default="little", help="VX RGB565 像素字节序")
     ns = ap.parse_args()
 
     report = parse_dlx(ns.dlx)
@@ -70,7 +76,7 @@ def main() -> None:
             suffix = ".gz"
         raw_path = out_dir / f"res{int(r['index']):02d}_{kind}_type{int(r['type'])}{suffix}"
         raw_path.write_bytes(blob)
-        print(f"raw {raw_path}")
+        print(f"原始资源: {raw_path}")
 
         if kind == "vx" and "vx" in r:
             vx = r["vx"]
@@ -80,7 +86,7 @@ def main() -> None:
             if len(pixels) == width * height * 2:
                 png_path = out_dir / f"res{int(r['index']):02d}_vx_{width}x{height}.png"
                 write_png(png_path, width, height, rgb565_to_rgb(pixels, width, height, ns.vx_endian))
-                print(f"png {png_path}")
+                print(f"PNG 预览: {png_path}")
 
 
 if __name__ == "__main__":

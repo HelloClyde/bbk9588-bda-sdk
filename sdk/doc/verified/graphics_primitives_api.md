@@ -1,7 +1,8 @@
 # 图形图元 API
 
-本文只记录已经通过独立 BDA 动态验证的 frame 绘制链和图元接口。验证对象是当前
-C200 固件与模拟器显示后端，测试画面实际显示了彩色像素块、文字、线、圆和矩形轮廓。
+本文只记录已经通过独立 BDA 动态验证的 frame 绘制链和图元接口。图元集合最初在当前
+C200 固件与模拟器显示后端验证；其中 V11 使用的画点、矩形和文字子集后来又在真机的
+完整窗口生命周期内通过。真机证据和退出顺序见 `touch_window_lifecycle_api.md`。
 
 ## 已验证接口
 
@@ -80,8 +81,9 @@ GUI +0x4f0  draw text                 C200 0x800c0d40
 ```
 
 同一个动态验证 BDA 还实际执行了 `GUI+0x030/+0x050/+0x054` 事件泵、
-`GUI+0x08c` 默认窗口过程以及 `GUI+0x088/+0x04c` frame 收尾链。这些接口只按本文
-示例中的组合和参数使用；不要把其中任一表项推断成更广泛的窗口管理 API。
+`GUI+0x08c` 默认窗口过程以及 `GUI+0x088/+0x04c` frame 收尾链。V11 真机进一步确认
+收尾链之后必须等待 event poll 结束，再调用 `GUI+0x17c`。这些接口只按已验证组合和
+参数使用；不要把其中任一表项推断成更广泛的窗口管理 API。
 
 `GUI+0x36c` 的 ABI 是六参数 `context,x,y,r,g,b`。`r/g/b` 只使用低 8 位，
 第五、第六参数按 MIPS o32 ABI 放在 caller `stack+0x10/+0x14`。固件将 RGB 转成当前
@@ -198,5 +200,6 @@ bda_gui_draw_guard_end();
   本文不承诺可直接把该流程当双缓冲游戏循环。
 - `GUI+0x334` 不等于已验证的 fill-rectangle API。
 - `GUI+0x3f8/+0x400` 裸 framebuffer blit 仍属于失败 probe，不能由本文推导为稳定 API。
-- bitmap、VX、离屏 compatible context 和 frame 的完整关闭/释放顺序仍需单独验证。
+- bitmap、VX 和离屏 compatible context 仍需单独验证；普通顶层 frame 的完整关闭顺序
+  已由 V11 真机闭环。
 - bare `bda_main()` 中传 `context=0` 不在验证范围；必须先建立有效 frame/draw context。

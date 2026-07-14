@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "bda_sdk.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -25,22 +25,6 @@ static const char ok4[] = "open ok path 4";
 static const char ok5[] = "open ok path 5";
 static const char ok6[] = "open ok path 6";
 static const char ok7[] = "open ok path 7";
-
-typedef struct bda_frame_desc_like {
-    u32 style;
-    u32 reserved04;
-    const char *title;
-    u32 reserved0c;
-    u32 reserved10;
-    u32 reserved14;
-    int (*proc)(bda_handle_t, u32, u32, u32);
-    u32 reserved1c;
-    u32 reserved20;
-    u32 height;
-    u32 width;
-    void *surface;
-    u32 reserved30;
-} bda_frame_desc_like_t;
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -97,17 +81,17 @@ static const char *ok_text_at(int index) {
 
 static int proc_passthrough(bda_handle_t handle, u32 message, u32 wparam, u32 lparam) {
     if (message == 0x60 || message == 0x10) {
-        g_draw = bda_gui_current_draw_like();
+        g_draw = bda_gui_current_draw_like(handle);
     }
     if (message == 1 || message == 0x10 || message == 0x60 || message == 0xb1 || message == 0x844 || message == 0x7fd) {
         if (g_vx) {
             if (!g_draw) {
-                g_draw = bda_gui_current_draw_like();
+                g_draw = bda_gui_current_draw_like(handle);
             }
         }
         if (g_vx && g_draw) {
             bda_gui_pump_present_arg_like(1);
-            bda_gui_draw_vx_like(g_draw, 0, 40, (s32)g_vx_width, (s32)g_vx_height, g_vx);
+            bda_gui_draw_vx_like(g_draw, 0, 40, g_vx);
             bda_gui_pump_present_arg_like(0);
         }
     }
@@ -208,10 +192,10 @@ static int create_stage_frame(void) {
     bda_memset(&desc, 0, sizeof(desc));
     desc.style = 0x08000000u;
     desc.title = "Stage";
-    desc.proc = proc_passthrough;
+    desc.wndproc = proc_passthrough;
     desc.height = SCREEN_H;
     desc.width = SCREEN_W;
-    desc.surface = bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_frame_surface_like(15);
     bda_msgbox("STAGE", "register frame");
     g_frame = (bda_handle_t)bda_gui_register_frame_like(&desc);
     if ((s32)g_frame == -1 || !g_frame) {
@@ -223,37 +207,37 @@ static int create_stage_frame(void) {
 }
 
 static void draw_once(void) {
-    g_draw = bda_gui_current_draw_like();
+    g_draw = bda_gui_current_draw_like(g_frame);
     if (!g_draw) {
         bda_msgbox("STAGE", "draw handle null");
         return;
     }
     bda_msgbox("STAGE", "draw begin");
     bda_gui_pump_present_arg_like(1);
-    bda_gui_draw_vx_like(g_draw, 0, 40, (s32)g_vx_width, (s32)g_vx_height, g_vx);
+    bda_gui_draw_vx_like(g_draw, 0, 40, g_vx);
     bda_gui_pump_present_arg_like(0);
     bda_msgbox("STAGE", "draw returned");
 }
 
 static void run_event_loop_limited(void) {
-    u32 msg[14];
+    bda_gui_message_like_t msg;
     int idle = 0;
 
-    bda_memset(msg, 0, sizeof(msg));
+    bda_memset(&msg, 0, sizeof(msg));
     g_exit = 0;
     bda_gui_frame_activate_like(g_frame, 0x100);
     bda_gui_send(g_frame, 0x60, 0, 0);
 
     while (!g_exit && idle < SHOWCASE_IDLE_LIMIT) {
-        if (bda_gui_event_poll_like(msg, 0)) {
+        if (bda_gui_event_poll_like(&msg, 0)) {
             idle = 0;
-            bda_gui_event_step_like();
-            bda_gui_event_dispatch_like(msg);
+            bda_gui_event_step_like(&msg);
+            bda_gui_event_dispatch_like(&msg);
         } else {
             ++idle;
             if (g_vx && g_draw) {
                 bda_gui_pump_present_arg_like(1);
-                bda_gui_draw_vx_like(g_draw, 0, 40, (s32)g_vx_width, (s32)g_vx_height, g_vx);
+                bda_gui_draw_vx_like(g_draw, 0, 40, g_vx);
                 bda_gui_pump_present_arg_like(0);
             }
             bda_sys_delay_like(10000);
