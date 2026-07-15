@@ -25,7 +25,7 @@ doc/    中文 API 文档、C200 表项说明和开发笔记
 - `api/examples/res_state_demo.c`：RES state snapshot 示例。
 - `api/examples/key_msgbox_demo.c`：轮询六字节实体键 packet 并用 MsgBox 显示键名。
 - `api/examples/touch_press_demo.c`：已验证的触摸按下、抬起轮询和 NAND 日志示例。
-- `api/examples/touch_crosshair_demo.c`：已按真机 V11 生命周期修正的触摸坐标与十字定位程序。
+- `api/examples/touch_crosshair_demo.c`：真机 V23 两阶段绘制的触摸坐标与无闪烁十字定位程序。
 - `api/examples/graphics_primitives_demo.c`：已验证的 frame 图元绘制和彩色像素示例。
 - `api/examples/tile_blit_probe.c`：tile framebuffer blit ABI/build probe；真机已确认逐块 flip 后死机，不能作为游戏绘图示例。
 - `api/examples/minesweeper_bda.c`：8x8 图形扫雷源码和 standalone 编译 smoke；绘图 lifecycle 尚未通过独立 BDA 动态验证，不能视为可运行游戏。

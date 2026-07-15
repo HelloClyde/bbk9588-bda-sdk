@@ -1143,6 +1143,18 @@ class SdkDocsTest(unittest.TestCase):
         sdk_readme = read("sdk/README.md")
         doc_readme = read("sdk/doc/README.md")
         source = read("reverse/examples/touch_input_stage_probe.c")
+        v12_source = read("reverse/examples/touch_input_stage_probe_v12.c")
+        v13_source = read("reverse/examples/touch_input_stage_probe_v13.c")
+        v14_source = read("reverse/examples/touch_input_stage_probe_v14.c")
+        v15_source = read("reverse/examples/touch_input_stage_probe_v15.c")
+        v16_source = read("reverse/examples/touch_input_stage_probe_v16.c")
+        v17_source = read("reverse/examples/touch_input_stage_probe_v17.c")
+        v18_source = read("reverse/examples/touch_input_stage_probe_v18.c")
+        v19_source = read("reverse/examples/touch_input_stage_probe_v19.c")
+        v20_source = read("reverse/examples/touch_input_stage_probe_v20.c")
+        v21_source = read("reverse/examples/touch_input_stage_probe_v21.c")
+        v22_source = read("reverse/examples/touch_input_stage_probe_v22.c")
+        v23_source = read("reverse/examples/touch_input_stage_probe_v23.c")
         public_example = read("sdk/api/examples/touch_crosshair_demo.c")
 
         self.assertIn("BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu", stable_header)
@@ -1150,6 +1162,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("GUI+0x17c has no stable return value", stable_header)
         self.assertIn("BDA_MSG_TOUCH_COORDINATE    0x0001u", stable_header)
         self.assertIn("BDA_MSG_TOUCH_RELEASE       0x0002u", stable_header)
+        self.assertIn("BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_BEGIN 0x0e4u", stable_header)
+        self.assertIn("BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_END   0x0e8u", stable_header)
+        self.assertIn("bda_gui_object_draw_begin(bda_handle_t object)", stable_header)
+        self.assertIn("bda_gui_object_draw_end(", stable_header)
         self.assertIn("无稳定返回值", candidate_header)
 
         for phrase in [
@@ -1161,6 +1177,21 @@ class SdkDocsTest(unittest.TestCase):
             "void bda_gui_close_frame()",
             "`ab`",
             "6362f946fbd84c74937e75290c082df36be7356dc10a30aa9044e96680da9aa6",
+            "WAITING MESSAGE 1/2` 会被绘制三次",
+            "V12 尚未完成真机闭环",
+            "V13 的文字仍逐字出现在屏幕上",
+            "2052d02bcc11f2db8378190fa7cf93435dcee3a796b2b0e7f4c158f39fb73f7a",
+            "V14/V15 离屏复制反例",
+            "a0          source_context",
+            "V15 把两个 context 对调后",
+            "首帧 `WAITING MESSAGE` 已显示为黑色",
+            "V17 尚未完成真机验证",
+            "V18 真机结果",
+            "V20 真机",
+            "V21 真机日志",
+            "V22 真机日志",
+            "V23 已在同一 BBK 9588 真机验证通过",
+            "9d872884482e8539487cdead9f293d70ba5038572a43a2562c63cc197cbb4aee",
         ]:
             self.assertIn(phrase, verified)
 
@@ -1172,6 +1203,56 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("bda_gui_close_frame(g_frame);", source)
         self.assertNotIn("probe_close_frame", source)
         self.assertNotIn("0x13cu", source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 12", v12_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 13", v13_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 14", v14_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 15", v15_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 16", v16_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 17", v17_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 18", v18_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 19", v19_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 20", v20_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 21", v21_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 22", v22_source)
+        self.assertIn("#define TOUCH_STAGE_VERSION 23", v23_source)
+        self.assertIn("TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1", source)
+        self.assertIn("TOUCH_STAGE_USE_OBJECT_PAINT 1", source)
+        self.assertIn("bda_gui_object_draw_begin(g_frame)", source)
+        self.assertIn("bda_gui_object_draw_end(g_frame, object_draw)", source)
+        self.assertIn("bda_sdk_internal_gui(), 0x310u", source)
+        self.assertIn("bda_sdk_internal_gui(), 0x418u", source)
+        self.assertIn("bda_sdk_internal_gui(), 0x314u", source)
+        self.assertIn("TOUCH_STAGE_COPY_DESTINATION_FIRST 1", source)
+        self.assertIn("TOUCH_STAGE_COMPAT_WHITE_SURFACE 1", source)
+        self.assertIn("TOUCH_STAGE_SKIP_OLD_ERASE 1", source)
+        self.assertIn("NO OLD ERASE", source)
+        self.assertIn("TOUCH_STAGE_USE_DRAW_GUARD 0", source)
+        self.assertIn("NO DRAW GUARD", source)
+        self.assertIn("TOUCH_STAGE_DRAW_IN_WNDPROC 1", source)
+        self.assertIn("TOUCH_STAGE_REQUEST_OBJECT_REDRAW 1", source)
+        self.assertIn("TOUCH_STAGE_DIRECT_REDRAW_NOTIFY 1", source)
+        self.assertIn("bda_sdk_internal_gui(), 0x0e0u", source)
+        self.assertIn("bda_sdk_internal_gui(), 0x03cu", source)
+        self.assertIn("REDRAW REQUEST=", source)
+        self.assertIn("BEFORE REDRAW NOTIFY", source)
+        self.assertIn("REDRAW NOTIFY=", source)
+        self.assertIn("REDRAW CALLBACK", source)
+        self.assertIn("TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT 1", source)
+        self.assertIn("BEFORE DYNAMIC PRESENT", source)
+        self.assertIn("DYNAMIC PRESENT=", source)
+        self.assertIn("TOUCH_STAGE_VECTOR_DYNAMIC_STATUS 1", source)
+        self.assertIn("VECTOR DYNAMIC DRAW", source)
+        self.assertIn("touch_stage_draw_bitmap_text", source)
+        self.assertIn("draw_initial_scene", public_example)
+        self.assertIn("draw_dynamic_scene", public_example)
+        self.assertIn("draw_bitmap_text", public_example)
+        self.assertIn("bda_gui_object_draw_begin(g_frame)", public_example)
+        self.assertIn("bda_gui_draw_guard_begin();", public_example)
+        self.assertNotIn("WAITING FOR TOUCH", public_example)
+        self.assertIn("draw_scene();", source)
+        self.assertIn("foreground = (u32)bda_gui_rgb(g_draw, 0, 0, 0);", source)
+        self.assertIn("g_initial_redraw_suppressed", source)
+        self.assertIn("g_need_draw = 0;", source)
 
         stop_at = public_example.index("bda_gui_frame_stop(g_frame)")
         release_at = public_example.index("bda_gui_frame_release(g_frame)")
@@ -1182,6 +1263,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("queue_touch_event(message, lparam)", public_example)
         self.assertIn("message == BDA_MSG_TOUCH_COORDINATE", public_example)
         self.assertIn("message == BDA_MSG_TOUCH_RELEASE", public_example)
+        self.assertIn("g_initial_redraw_suppressed", public_example)
+        self.assertIn("g_need_draw = 0;", public_example)
 
     def test_gui_draw_object_create_is_single_index_table_lookup(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -1444,9 +1527,18 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_draw_text_extra_parameter_matches_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         text_notes = read("sdk/doc/text_notes.md")
+        window_notes = read("sdk/doc/window_notes.md")
+        notepad_report = read("reverse/reports/notepad_bda_report.md")
         c200_notes = read("sdk/doc/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        combined = header + "\n" + text_notes + "\n" + c200_notes + "\n" + catalog_tool
+        combined = "\n".join([
+            header,
+            text_notes,
+            window_notes,
+            notepad_report,
+            c200_notes,
+            catalog_tool,
+        ])
         self.assertIn("bda_gui_draw_text_like(bda_handle_t handle, s32 x, s32 y, const char *text, s32 extra)", header)
         self.assertIn("GUI +0x4f0: `BDA_GUI_DRAW_TEXT_LIKE`", c200_notes)
         self.assertIn("system function VA：`0x800c0d40`", c200_notes)
@@ -1464,6 +1556,15 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("`handle=0`", c200_notes)
         self.assertIn("调用可能重启", c200_notes)
         self.assertIn("extra<0 时按 strlen", catalog_tool)
+        self.assertIn("0x81c01878..0x81c019e8", notepad_report + text_notes)
+        self.assertIn("GUI+0x0e4(frame)", notepad_report + text_notes)
+        self.assertIn("GUI+0x0e8(frame, draw)", notepad_report + text_notes)
+        self.assertIn("局部调用链中没有 `GUI+0x074", notepad_report)
+        self.assertIn('create("medit", "", 0x08083001', notepad_report)
+        self.assertIn("GUI+0x040(body_medit, 0x0134, 0, 0x81c197a0)", notepad_report)
+        self.assertIn("GUI+0x040(body_medit, 0x0133, 0x19000, output_buffer)", notepad_report)
+        self.assertIn("control message id，不是 GUI table offset", text_notes)
+        self.assertIn("`0x0134` 不是\nGUI table 的 `GUI+0x134`", window_notes)
 
     def test_gui_draw_vx_uses_vx_header_dimensions_not_public_width_height(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")

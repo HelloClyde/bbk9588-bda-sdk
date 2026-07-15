@@ -1,5 +1,191 @@
 #include "bda_sdk.h"
 
+#ifndef TOUCH_STAGE_VERSION
+#define TOUCH_STAGE_VERSION 11
+#endif
+
+#if TOUCH_STAGE_VERSION == 23
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V23"
+#define TOUCH_STAGE_START_LOG "START V23"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_REQUEST_OBJECT_REDRAW 0
+#define TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT 0
+#define TOUCH_STAGE_VECTOR_DYNAMIC_STATUS 1
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 22
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V22"
+#define TOUCH_STAGE_START_LOG "START V22"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_REQUEST_OBJECT_REDRAW 0
+#define TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT 1
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 21
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V21"
+#define TOUCH_STAGE_START_LOG "START V21"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 1
+#define TOUCH_STAGE_REQUEST_OBJECT_REDRAW 1
+#define TOUCH_STAGE_DIRECT_REDRAW_NOTIFY 1
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 20
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V20"
+#define TOUCH_STAGE_START_LOG "START V20"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 1
+#define TOUCH_STAGE_REQUEST_OBJECT_REDRAW 1
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 19
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V19"
+#define TOUCH_STAGE_START_LOG "START V19"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 1
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 18
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V18"
+#define TOUCH_STAGE_START_LOG "START V18"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 0
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 17
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V17"
+#define TOUCH_STAGE_START_LOG "START V17"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 1
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 1
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 1
+#elif TOUCH_STAGE_VERSION == 16
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V16"
+#define TOUCH_STAGE_START_LOG "START V16"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 1
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 1
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 15
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V15"
+#define TOUCH_STAGE_START_LOG "START V15"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 1
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 1
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 1
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 14
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V14"
+#define TOUCH_STAGE_START_LOG "START V14"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 1
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 1
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 13
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V13"
+#define TOUCH_STAGE_START_LOG "START V13"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 1
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#elif TOUCH_STAGE_VERSION == 12
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V12"
+#define TOUCH_STAGE_START_LOG "START V12"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 1
+#define TOUCH_STAGE_USE_OBJECT_PAINT 0
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#else
+#define TOUCH_STAGE_WINDOW_TITLE "TOUCH V11"
+#define TOUCH_STAGE_START_LOG "START V11"
+#define TOUCH_STAGE_COALESCE_STARTUP_REDRAWS 0
+#define TOUCH_STAGE_USE_OBJECT_PAINT 0
+#define TOUCH_STAGE_USE_COMPAT_PAINT 0
+#define TOUCH_STAGE_USE_DRAW_GUARD 1
+#define TOUCH_STAGE_DRAW_IN_WNDPROC 0
+#define TOUCH_STAGE_COMPAT_COPY_IN 0
+#define TOUCH_STAGE_COMPAT_WHITE_SURFACE 0
+#define TOUCH_STAGE_COPY_DESTINATION_FIRST 0
+#define TOUCH_STAGE_SKIP_OLD_ERASE 0
+#endif
+
+#ifndef TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+#define TOUCH_STAGE_REQUEST_OBJECT_REDRAW 0
+#endif
+
+#ifndef TOUCH_STAGE_DIRECT_REDRAW_NOTIFY
+#define TOUCH_STAGE_DIRECT_REDRAW_NOTIFY 0
+#endif
+
+#ifndef TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT
+#define TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT 0
+#endif
+
+#ifndef TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
+#define TOUCH_STAGE_VECTOR_DYNAMIC_STATUS 0
+#endif
+
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320
 #define EVENT_QUEUE_SIZE 16u
@@ -15,7 +201,7 @@ static const char k_log_path_a[] =
     "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\\xd3\xce\xcf\xb7\\TOUCHDBG.TXT";
 static const char k_log_path_root[] =
     "\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\\xd3\xce\xcf\xb7\\TOUCHDBG.TXT";
-static const char k_window_title[] = "TOUCH V11";
+static const char k_window_title[] = TOUCH_STAGE_WINDOW_TITLE;
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
@@ -39,6 +225,83 @@ static s32 g_painted_x;
 static s32 g_painted_y;
 static int g_has_painted_status;
 static char g_painted_status[32];
+#if TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+static int g_redraw_request_logged;
+static volatile int g_redraw_callback_seen;
+static int g_redraw_callback_logged;
+
+static int touch_stage_request_object_redraw(void) {
+#if TOUCH_STAGE_DIRECT_REDRAW_NOTIFY
+    return bda_sdk_internal_call4(
+        bda_sdk_internal_gui(), 0x03cu,
+        (u32)g_frame, BDA_MSG_REDRAW_INPUT, 0, 0
+    );
+#else
+    return bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), 0x0e0u, (u32)g_frame
+    );
+#endif
+}
+#endif
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+static int g_object_paint_logged;
+#endif
+#if TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT
+static int g_trailing_present_logged;
+#endif
+#if TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
+static int g_vector_draw_logged;
+#endif
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+static bda_handle_t touch_stage_compat_context_create(
+    bda_handle_t source_context
+) {
+    return (bda_handle_t)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), 0x310u, (u32)source_context
+    );
+}
+
+static int touch_stage_context_copy(
+    bda_handle_t source_context,
+    s32 source_x,
+    s32 source_y,
+    s32 width,
+    s32 height,
+    bda_handle_t destination_context,
+    s32 destination_x,
+    s32 destination_y,
+    u32 backend_arg
+) {
+    typedef int (*copy_fn_t)(
+        u32, u32, u32, u32, u32, u32, u32, u32, u32
+    );
+    copy_fn_t fn = (copy_fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), 0x418u
+    );
+
+    return fn(
+        (u32)source_context,
+        (u32)source_x,
+        (u32)source_y,
+        (u32)width,
+        (u32)height,
+        (u32)destination_context,
+        (u32)destination_x,
+        (u32)destination_y,
+        backend_arg
+    );
+}
+
+static void touch_stage_compat_context_free(bda_handle_t context) {
+    (void)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), 0x314u, (u32)context
+    );
+}
+#endif
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+static int g_initial_scene_drawn;
+static int g_initial_redraw_suppressed;
+#endif
 
 static char *append_char(char *out, char *end, char value) {
     if (out < end) {
@@ -252,7 +515,35 @@ static void drain_events(void) {
             g_touch_x = x;
             g_touch_y = y;
             g_has_coordinate = 1;
+#if TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+            {
+                int redraw_result;
+
+                if (!g_redraw_request_logged) {
+                    log_text(
+#if TOUCH_STAGE_DIRECT_REDRAW_NOTIFY
+                        "BEFORE REDRAW NOTIFY"
+#else
+                        "BEFORE REDRAW REQUEST"
+#endif
+                    );
+                }
+                redraw_result = touch_stage_request_object_redraw();
+                if (!g_redraw_request_logged) {
+                    log_value(
+#if TOUCH_STAGE_DIRECT_REDRAW_NOTIFY
+                        "REDRAW NOTIFY="
+#else
+                        "REDRAW REQUEST="
+#endif
+                        , (u32)redraw_result
+                    );
+                    g_redraw_request_logged = 1;
+                }
+            }
+#elif !TOUCH_STAGE_DRAW_IN_WNDPROC
             g_need_draw = 1;
+#endif
         }
     }
 }
@@ -277,6 +568,123 @@ static void build_status(char *status) {
     }
     *out = 0;
 }
+
+#if TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
+static void draw_cross(s32 x, s32 y, u32 color);
+
+static u8 touch_stage_glyph_row(char value, int row) {
+    static const u8 digits[10][7] = {
+        {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e},
+        {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e},
+        {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f},
+        {0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e},
+        {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02},
+        {0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e},
+        {0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e},
+        {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+        {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e},
+        {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e},
+    };
+    static const u8 glyph_x[7] = {
+        0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11
+    };
+    static const u8 glyph_y[7] = {
+        0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04
+    };
+    static const u8 glyph_equal[7] = {
+        0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00
+    };
+
+    if (value >= '0' && value <= '9') {
+        return digits[(int)(value - '0')][row];
+    }
+    if (value == 'X') {
+        return glyph_x[row];
+    }
+    if (value == 'Y') {
+        return glyph_y[row];
+    }
+    if (value == '=') {
+        return glyph_equal[row];
+    }
+    return 0;
+}
+
+static void touch_stage_draw_bitmap_text(
+    s32 x, s32 y, const char *text, u32 color
+) {
+    while (*text) {
+        int row;
+
+        for (row = 0; row < 7; ++row) {
+            u8 bits = touch_stage_glyph_row(*text, row);
+            int column;
+
+            for (column = 0; column < 5; ++column) {
+                if (bits & (u8)(0x10u >> column)) {
+                    (void)bda_gui_put_pixel(
+                        g_draw, x + column, y + row, color
+                    );
+                }
+            }
+        }
+        x += 6;
+        ++text;
+    }
+}
+
+static void touch_stage_build_coordinate_status(
+    char *status, s32 x, s32 y
+) {
+    char *out = status;
+    char *end = status + 15;
+
+    out = append_text(out, end, "X=");
+    out = append_coord3(out, end, x);
+    out = append_text(out, end, " Y=");
+    out = append_coord3(out, end, y);
+    *out = 0;
+}
+
+static void touch_stage_draw_dynamic_vector_scene(void) {
+    char status[16];
+    void *old_object;
+    u32 background;
+    u32 foreground;
+    u32 cyan;
+
+    if (!g_draw || !g_draw_object || !g_has_coordinate) {
+        return;
+    }
+    if (!g_vector_draw_logged) {
+        log_text("VECTOR DYNAMIC DRAW");
+        g_vector_draw_logged = 1;
+    }
+    background = (u32)bda_gui_rgb(g_draw, 0, 0, 0);
+    foreground = (u32)bda_gui_rgb(g_draw, 245, 248, 250);
+    cyan = (u32)bda_gui_rgb(g_draw, 35, 210, 225);
+    (void)bda_gui_draw_guard_begin();
+    old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
+    if (g_has_painted_cross) {
+        draw_cross(g_painted_x, g_painted_y, background);
+    }
+    if (g_has_painted_status) {
+        touch_stage_build_coordinate_status(
+            status, g_painted_x, g_painted_y
+        );
+        touch_stage_draw_bitmap_text(42, 29, status, background);
+    }
+    touch_stage_build_coordinate_status(status, g_touch_x, g_touch_y);
+    touch_stage_draw_bitmap_text(42, 29, status, foreground);
+    draw_cross(g_touch_x, g_touch_y, cyan);
+    g_painted_x = g_touch_x;
+    g_painted_y = g_touch_y;
+    g_has_painted_cross = 1;
+    g_has_painted_status = 1;
+    (void)bda_gui_select_draw_object(g_draw, old_object);
+    (void)bda_gui_draw_guard_end();
+}
+#endif
 
 static void draw_cross(s32 x, s32 y, u32 color) {
     int delta;
@@ -306,18 +714,96 @@ static void draw_scene(void) {
     char status[32];
     void *old_object;
     u32 background;
-    u32 white;
+    u32 foreground;
     u32 cyan;
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+    bda_handle_t base_draw;
+    bda_handle_t object_draw;
+    int object_draw_active;
+#endif
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+    bda_handle_t visible_draw;
+    bda_handle_t compat_draw;
+    int compat_draw_active;
+    int copy_in_result;
+    int copy_out_result;
+#endif
 
     if (!g_draw || !g_draw_object) {
         return;
     }
+#if TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
+    if (g_initial_scene_drawn && g_has_coordinate) {
+        touch_stage_draw_dynamic_vector_scene();
+        return;
+    }
+#endif
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+    base_draw = g_draw;
+    if (!g_object_paint_logged) {
+        log_text("BEFORE PAINT BEGIN");
+    }
+    object_draw = bda_gui_object_draw_begin(g_frame);
+    object_draw_active = object_draw && (s32)(u32)object_draw != -1;
+    if (!g_object_paint_logged) {
+        log_value("PAINT BEGIN=", (u32)object_draw);
+    }
+    if (object_draw_active) {
+        g_draw = object_draw;
+    }
+#endif
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+    visible_draw = g_draw;
+    if (!g_object_paint_logged) {
+        log_text("BEFORE COMPAT CREATE");
+    }
+    compat_draw = touch_stage_compat_context_create(visible_draw);
+    compat_draw_active = compat_draw && (s32)(u32)compat_draw != -1;
+    if (!g_object_paint_logged) {
+        log_value("COMPAT=", (u32)compat_draw);
+    }
+    copy_in_result = 0;
+    copy_out_result = 0;
+    if (compat_draw_active) {
+        g_draw = compat_draw;
+    }
+#endif
     build_status(status);
+#if TOUCH_STAGE_COMPAT_WHITE_SURFACE
+    background = (u32)bda_gui_rgb(g_draw, 255, 255, 255);
+    foreground = (u32)bda_gui_rgb(g_draw, 0, 0, 0);
+#else
     background = (u32)bda_gui_rgb(g_draw, 0, 0, 0);
-    white = (u32)bda_gui_rgb(g_draw, 245, 248, 250);
+    foreground = (u32)bda_gui_rgb(g_draw, 245, 248, 250);
+#endif
     cyan = (u32)bda_gui_rgb(g_draw, 35, 210, 225);
+#if TOUCH_STAGE_USE_DRAW_GUARD
     (void)bda_gui_draw_guard_begin();
+#endif
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+    if (compat_draw_active) {
+#if TOUCH_STAGE_COMPAT_COPY_IN
+        if (!g_object_paint_logged) {
+            log_text("BEFORE COPY IN");
+        }
+#if TOUCH_STAGE_COPY_DESTINATION_FIRST
+        copy_in_result = touch_stage_context_copy(
+            compat_draw, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+            visible_draw, 0, 0, 0
+        );
+#else
+        copy_in_result = touch_stage_context_copy(
+            visible_draw, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+            compat_draw, 0, 0, 0
+        );
+#endif
+#endif
+    }
+#endif
     old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
+#if TOUCH_STAGE_SKIP_OLD_ERASE
+    if (!compat_draw_active) {
+#endif
     if (g_has_painted_cross) {
         draw_cross(g_painted_x, g_painted_y, background);
     }
@@ -326,11 +812,16 @@ static void draw_scene(void) {
         (void)bda_gui_set_text_color(g_draw, background);
         (void)bda_gui_draw_text(g_draw, 42, 29, g_painted_status, -1);
     }
+#if TOUCH_STAGE_SKIP_OLD_ERASE
+    }
+#endif
     bda_gui_rectangle(g_draw, 7, 50, 232, 276);
     (void)bda_gui_set_text_mode(g_draw, 1);
-    (void)bda_gui_set_text_color(g_draw, white);
+    (void)bda_gui_set_text_color(g_draw, foreground);
     (void)bda_gui_draw_text(g_draw, 42, 6, "TOUCH SCREEN TEST", -1);
+#if !TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
     (void)bda_gui_draw_text(g_draw, 42, 29, status, -1);
+#endif
     (void)bda_gui_draw_text(g_draw, 82, 303, "ESC EXIT", -1);
     if (g_has_coordinate) {
         draw_cross(g_touch_x, g_touch_y, cyan);
@@ -338,9 +829,81 @@ static void draw_scene(void) {
         g_painted_y = g_touch_y;
         g_has_painted_cross = 1;
     }
+#if !TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
     remember_status(status);
+#endif
     (void)bda_gui_select_draw_object(g_draw, old_object);
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+    if (compat_draw_active) {
+        if (!g_object_paint_logged) {
+            log_text("BEFORE COPY OUT");
+        }
+#if TOUCH_STAGE_COPY_DESTINATION_FIRST
+        copy_out_result = touch_stage_context_copy(
+            visible_draw, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+            compat_draw, 0, 0, 0
+        );
+#else
+        copy_out_result = touch_stage_context_copy(
+            compat_draw, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+            visible_draw, 0, 0, 0
+        );
+#endif
+        g_draw = visible_draw;
+        if (!g_object_paint_logged) {
+            log_text("BEFORE COMPAT FREE");
+        }
+        touch_stage_compat_context_free(compat_draw);
+    }
+#endif
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+    if (object_draw_active) {
+        bda_gui_object_draw_end(g_frame, object_draw);
+        g_draw = base_draw;
+    }
+#endif
+#if TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT
+    if (g_initial_scene_drawn) {
+        int present_result;
+
+        if (!g_trailing_present_logged) {
+            log_text("BEFORE DYNAMIC PRESENT");
+        }
+        present_result = bda_gui_draw_guard_end();
+        if (!g_trailing_present_logged) {
+            log_value("DYNAMIC PRESENT=", (u32)present_result);
+            g_trailing_present_logged = 1;
+        }
+    }
+#endif
+#if TOUCH_STAGE_USE_DRAW_GUARD
     (void)bda_gui_draw_guard_end();
+#endif
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+    if (!g_object_paint_logged) {
+#if TOUCH_STAGE_USE_COMPAT_PAINT
+        if (compat_draw_active) {
+#if TOUCH_STAGE_COMPAT_COPY_IN
+            log_value("COPY IN=", (u32)copy_in_result);
+#else
+            log_text("NO COPY IN");
+#endif
+#if TOUCH_STAGE_SKIP_OLD_ERASE
+            log_text("NO OLD ERASE");
+#endif
+            log_value("COPY OUT=", (u32)copy_out_result);
+            log_text("COMPAT FREED");
+        } else {
+            log_text("COMPAT FALLBACK");
+        }
+#endif
+        log_text(object_draw_active ? "PAINT END" : "PAINT FALLBACK");
+#if !TOUCH_STAGE_USE_DRAW_GUARD
+        log_text("NO DRAW GUARD");
+#endif
+        g_object_paint_logged = 1;
+    }
+#endif
 }
 
 static int touch_window_proc(
@@ -351,20 +914,61 @@ static int touch_window_proc(
 ) {
     queue_event(message, wparam, lparam);
     if (message == BDA_MSG_DRAW_CONTEXT_ATTACH) {
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+        bda_handle_t previous_draw = g_draw;
+#endif
         g_frame = handle;
         g_draw = bda_gui_current_draw(handle);
         if (!g_draw_object) {
             g_draw_object = bda_gui_draw_object_create(7);
         }
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+        if (!g_initial_scene_drawn || g_draw != previous_draw) {
+            g_need_draw = 1;
+        }
+#else
         g_need_draw = 1;
+#endif
     } else if (message == BDA_MSG_REDRAW_INPUT) {
+#if TOUCH_STAGE_DRAW_IN_WNDPROC
+        draw_scene();
+        g_need_draw = 0;
+#if TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+        if (g_has_coordinate) {
+            g_redraw_callback_seen = 1;
+        }
+#endif
+#else
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+        if (g_initial_scene_drawn &&
+            !g_initial_redraw_suppressed &&
+            !g_has_coordinate) {
+            g_initial_redraw_suppressed = 1;
+        } else {
+            g_need_draw = 1;
+        }
+#else
         g_need_draw = 1;
+#endif
+#endif
     } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
         g_draw = 0;
         g_exit = 1;
     }
     if (message == BDA_MSG_TOUCH_COORDINATE ||
         message == BDA_MSG_TOUCH_RELEASE) {
+#if TOUCH_STAGE_DRAW_IN_WNDPROC && !TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+        s32 x = event_x(lparam);
+        s32 y = event_y(lparam);
+
+        if (coordinate_valid(x, y)) {
+            g_touch_x = x;
+            g_touch_y = y;
+            g_has_coordinate = 1;
+            draw_scene();
+            g_need_draw = 0;
+        }
+#endif
         return 1;
     }
     return bda_gui_default_proc(handle, message, wparam, lparam);
@@ -407,11 +1011,29 @@ int bda_main(void) {
     g_has_painted_cross = 0;
     g_has_painted_status = 0;
     bda_memset(g_painted_status, 0, sizeof(g_painted_status));
+#if TOUCH_STAGE_USE_OBJECT_PAINT
+    g_object_paint_logged = 0;
+#endif
+#if TOUCH_STAGE_PRESENT_AFTER_OBJECT_PAINT
+    g_trailing_present_logged = 0;
+#endif
+#if TOUCH_STAGE_VECTOR_DYNAMIC_STATUS
+    g_vector_draw_logged = 0;
+#endif
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+    g_initial_scene_drawn = 0;
+    g_initial_redraw_suppressed = 0;
+#endif
+#if TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+    g_redraw_request_logged = 0;
+    g_redraw_callback_seen = 0;
+    g_redraw_callback_logged = 0;
+#endif
     first_loop = 1;
     close_requested = 0;
     close_wait = 0;
     reset_log_file();
-    log_text("START V11");
+    log_text(TOUCH_STAGE_START_LOG);
 
     descriptor.style = 0;
     descriptor.title = k_window_title;
@@ -445,6 +1067,10 @@ int bda_main(void) {
     }
     log_text("BEFORE DRAW");
     draw_scene();
+#if TOUCH_STAGE_COALESCE_STARTUP_REDRAWS
+    g_initial_scene_drawn = 1;
+    g_need_draw = 0;
+#endif
     log_text("DRAW OK");
     log_text("ENTER LOOP");
 
@@ -454,6 +1080,12 @@ int bda_main(void) {
 
         pump_result = bda_gui_event_pump_frame_once(&message, g_frame);
         drain_events();
+#if TOUCH_STAGE_REQUEST_OBJECT_REDRAW
+        if (g_redraw_callback_seen && !g_redraw_callback_logged) {
+            log_text("REDRAW CALLBACK");
+            g_redraw_callback_logged = 1;
+        }
+#endif
         if (first_loop) {
             log_text("DRAIN OK");
         }

@@ -1093,6 +1093,9 @@ system function VA：`0x800ccf64`
   与 C200 table entry 不符，`op/arg` 不会被读取。
 - 它适合复刻 BBVM/窗口绘制路径中“绘制后通知对象刷新”的调用；不要把它当作通用
   object command API。
+- TouchStageV20 在 BBK 9588 真机把 standalone 顶层 frame 传给该入口，日志在首个
+  触摸事件后、wrapper 返回前停止并死机。`0x800ccc58(object)` 需要原机认可的可刷新
+  child object；顶层 frame 应直接走已确认的 frame notify 路径，而不是套用 `+0x0e0`。
 
 ### GUI +0x304 / +0x308 / +0x30c: draw context 生命周期
 
@@ -1249,9 +1252,10 @@ GUI+0x418 -> 0x800b3d90
 - `GUI+0x414` 会调用全局 draw backend `0x80474030` 的 `+0x80/+0x88/+0x8c`
   callback，具体路径取决于 descriptor 字段和裁剪结果；结束路径会释放临时
   buffer。
-- `GUI+0x418` 也是多参数 render helper。它读取 `a0=context_a`、`a1=x`、
-  `a2=y`、`a3=width_or_x2_like`，并把调用者 `stack+0x14` 作为第二个 context
-  处理；`stack+0x10/+0x18/+0x1c/+0x20` 参与目标/来源矩形和 backend 参数。
+- `GUI+0x418` 是多参数 context copy helper。V14/V15 真机动态结果结合 C200
+  控制流确认 `a0=source_context`、`a1/a2=source_x/y`、`a3=width`，调用者
+  `stack+0x10=height`、`stack+0x14=destination_context`、
+  `stack+0x18/+0x1c=destination_x/y`，`stack+0x20` 是转发给 backend 的附加参数。
 - 具体 stack slot 已能从 C200 固定：`stack+0x10` 参与第一矩形的
   `y+height_or_y2`，`stack+0x14` 是 `context_b`，`stack+0x18/+0x1c`
   作为第二矩形 origin，`stack+0x20` 会原样转发给 backend `+0x94`。
@@ -1259,7 +1263,8 @@ GUI+0x418 -> 0x800b3d90
   context；二者为 0 时都退回 default context `0x80825690`，并且类型 word
   `+0x04 == 0x82` 会进入特殊 context 处理路径。
 - `GUI+0x418` 会分别按两个 context 的 origin/缩放字段换算坐标，构造 clipping
-  rect，并遍历 `context_b+0xc0` 子区域链。
+  rect，并遍历作为 destination 的 `context_b+0xc0` 子区域链。`GUI+0x310`
+  新建的独立兼容 context 没有这条可见目标区域链，因此不能作为该入口的复制目标。
 - 命中子区域时，`GUI+0x418` 会先调用 backend `+0x44` 准备区域，再调用 backend
   `+0x94` 提交一次 source/destination 矩形类操作。
 
@@ -1331,7 +1336,10 @@ system function VA：`0x800d48a8`
 - 不要使用无参数调用；C200 明确读取 `a0`。
 - SDK 提供 `bda_gui_draw_guard_begin_like()` 和
   `bda_gui_draw_guard_end_like()`，分别对应原机常见的 `GUI+0x074(1/0)`。
-- `draw_guard_end_like()` 是 present/update 边界，不是 tile-level flip API；不要放在
+- `draw_guard_end_like()` 是配对 guard 的 present/update 边界，不是 tile-level flip API，
+  也不是独立 present。TouchStageV22 真机确认只调用 `GUI+0x074(0)` 即使返回 `0`
+  也不会显示动态图元；TouchStageV23 则确认完整 `1 -> draw -> 0` 可以无闪烁更新。
+  不要把 end 放在
   方块/像素循环内部。`TileBlit` 真机反馈显示，循环外只调用一次也不能弥补缺失的
   game surface/context 生命周期。
 - 雷霆战机/决战坦克的 object render 链路显示，`GUI+0x074(0)` 通常接在

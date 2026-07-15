@@ -51,7 +51,7 @@ C200 中该 entry 目标为 `0x800ccfac`，函数会读取这些 stack 参数并
 "listbox"    记事本
 "ListBox"    记事本中作为 caption/string 使用
 "edit"       系统设置
-"medit"      记事本，多行 edit 可能性高
+"medit"      记事本，多行 edit；TXT 正文由该系统控件渲染
 "EB_SCROLL"  电子书滚动条
 ```
 
@@ -59,6 +59,7 @@ C200 中该 entry 目标为 `0x800ccfac`，函数会读取这些 stack 参数并
 
 ```text
 create("medit", 0, 0x08000000, 0, 0x6e, 0x3c, 0x1b, 0xa8, 0x14, parent, 0)
+create("medit", "", 0x08083001, 0, 0x65, 0, 0x46, 0xf0, 0x82, parent, 0)
 create("listbox", "ListBox", 0x08090001, 0, 0x6a, 0, 0xda, 0xf0, 0x109, parent, 0)
 create("EB_SCROLL", 0, 0x08000000, 0, 0x400, 0x0b, 0x7a, 0xa0, 0x12, parent, 0)
 create("edit", caption, 1, 0, 2, 0, 0, 0, 0, parent, 0)
@@ -280,6 +281,18 @@ a3 = value
 
 `GUI+0x040` 高频用于 edit control 属性和 command message。已见 id 包括 `0xf184`、
 `0xf186`、`0xf0dd`、`0xf0df`、`0xf1b5`、`0x864`。
+
+记事本已固定的 `medit` 文本消息：
+
+```text
+GUI+0x040(control, 0x0133, capacity, output_buffer)  get text
+GUI+0x040(control, 0x0134, 0, text_buffer)           set text
+GUI+0x040(control, 0xf0c5, max_length, 0)            set max length
+```
+
+正文容量/上限为 `0x19000`，标题 get-text 容量为 `0x14`，标题上限为 `0x16`。
+这些数字是 `GUI+0x040` 的第二参数，即 control message id；`0x0134` 不是
+GUI table 的 `GUI+0x134` active-frame setter。
 
 `GUI+0x03c` 像相关的 notify/post/send 路径，常见 message 有 `0x66`、`0x10`、
 `0x120`、`0x805`、`0x806`。若没有确认，不要把 `0x66` 当 standard refresh message；多个

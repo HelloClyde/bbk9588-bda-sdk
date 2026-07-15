@@ -415,11 +415,22 @@ sdk/api/examples/fs_status_demo.c            storage ready + path stat/access
 sdk/api/examples/res_state_demo.c            RES state snapshot struct
 sdk/api/examples/key_msgbox_demo.c           已验证的六键 packet 轮询
 sdk/api/examples/touch_press_demo.c          固件绑定的触摸按下/抬起轮询
-sdk/api/examples/touch_crosshair_demo.c      真机 V11 生命周期的触摸坐标与十字定位测试
+sdk/api/examples/touch_crosshair_demo.c      真机 V23 两阶段绘制的无闪烁触摸定位测试
 sdk/api/examples/graphics_primitives_demo.c  已验证的 frame 图元和彩色像素绘制
 sdk/api/examples/tile_blit_probe.c           tile blit ABI/build probe；真机已确认逐块 flip 后死机
 sdk/api/examples/minesweeper_bda.c           未完成的图形扫雷实验，不属于 verified API 示例
 reverse/examples/time_probe.c                delay/timer/alarm 只读 probe
+reverse/examples/touch_input_stage_probe_v13.c  object draw scope 真机回归
+reverse/examples/touch_input_stage_probe_v14.c  compatible context 方向实验
+reverse/examples/touch_input_stage_probe_v15.c  compatible context 反向对照
+reverse/examples/touch_input_stage_probe_v16.c  白底黑字临时 context 实验
+reverse/examples/touch_input_stage_probe_v17.c  跳过旧状态擦除实验
+reverse/examples/touch_input_stage_probe_v18.c  记事本短标签无 +0x074 对照
+reverse/examples/touch_input_stage_probe_v19.c  wndproc 内 object draw 动态提交实验
+reverse/examples/touch_input_stage_probe_v20.c  +0x0e0 请求 0xb1 重绘实验
+reverse/examples/touch_input_stage_probe_v21.c  直接 +0x03c(frame,0xb1) 重绘实验
+reverse/examples/touch_input_stage_probe_v22.c  object draw 后单独 +0x074(0) 提交
+reverse/examples/touch_input_stage_probe_v23.c  真机无闪烁的完整 guard 十字与 5x7 坐标字
 reverse/examples/window_text_bbvm_black_probe.c  BBVM 风格 text draw lifecycle probe
 reverse/examples/showcase_stage_probe.c      Element 风格 display 回归链路
 reverse/examples/file_selector_probe.c       file selector open/update smoke

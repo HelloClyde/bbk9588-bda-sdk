@@ -103,7 +103,7 @@ typedef unsigned long long u64;
  */
 #define BDA_GUI_RENDER_COPY_LIKE    0x410u
 #define BDA_GUI_RENDER_HELPER_LIKE  0x414u
-#define BDA_GUI_RENDER_FINISH_LIKE  0x418u
+#define BDA_GUI_RENDER_FINISH_LIKE  0x418u /* source context first; visible destination at stack arg 6 */
 /*
  * low-level rect writer。C200 的 +0x430 是 5 参数 ABI：rect,x0,y0,x1,y1；
  * 第五参数从 stack+0x10 读取；wrapper 已用 bda_call5 封装。
@@ -761,7 +761,9 @@ static inline int bda_gui_blit_alt_like(s32 x, s32 y, s32 height, s32 width, con
 
 /*
  * GUI+0x074 会把 a0 写入全局绘图/present guard 状态。原机常用
- * 1 -> draw -> 0 包围 draw 调用；a0==0 时 C200 还会尝试触发一次 present/update。
+ * 1 -> draw -> 0 包围 draw 调用；a0==0 时 C200 还可能触发一次内部 present/update。
+ * TouchStageV22 真机确认单独调用 a0=0 即使返回 0 也不会提交动态图元；V23 确认完整
+ * 1/0 区间可以可靠提交十字与点阵坐标。因此 begin/end 必须作为一对使用。
  * 不要把 draw_guard_end_like() 放在逐 tile 循环中。当前真机 TileBlit 结果还显示：
  * 即使循环外只调用一次，缺少原机 surface/context 时也可能逐块刷新、白屏或死机。
  * 原机 game shell 中常见的是 GUI+0x414 render helper -> GUI+0x0e8 object draw end
@@ -776,7 +778,7 @@ static inline int bda_gui_draw_guard_begin_like(void) {
 }
 
 /*
- * draw_guard_end 会用 a0=0 调 GUI+0x074，C200 可能触发一次 present/update。
+ * draw_guard_end 会用 a0=0 调 GUI+0x074。它只结束配对的 guard，不是独立 present API。
  */
 static inline int bda_gui_draw_guard_end_like(void) {
     return bda_gui_pump_present_arg_like(0);
@@ -922,17 +924,19 @@ static inline int bda_gui_close_frame_like(bda_handle_t handle) {
 }
 
 /*
- * object refresh/notify wrapper。C200 只读取 a0=object，随后发送内部 0xb1 message；
- * 旧的 op/arg 参数不会被该 table entry 读取。
+ * object refresh/notify wrapper。C200 先执行 object-specific prepare，再发送内部
+ * 0xb1 message；旧的 op/arg 参数不会被该 table entry 读取。TouchStageV20 真机把
+ * standalone 顶层 frame 传入后在 prepare 内死机，因此这里只能传原机已确认可刷新的
+ * child object，不能作为通用 frame invalidate API。
  */
 static inline int bda_gui_object_op_like(bda_handle_t object) {
     return bda_call1(bda_gui_table(), BDA_GUI_OBJECT_OP_LIKE, (u32)object);
 }
 
 /*
- * Rockchip GUI source calls this behavior WindowInvalidateWindow(). The table
- * entry sends the internal 0xb1 refresh message; it does not synchronously
- * repaint or present a framebuffer.
+ * Rockchip GUI source calls this behavior WindowInvalidateWindow(). This alias
+ * has the same child-object restriction as bda_gui_object_op_like(); it is not
+ * safe for a standalone top-level frame and does not synchronously present.
  */
 static inline int bda_gui_invalidate_window_like(bda_handle_t window) {
     return bda_gui_object_op_like(window);

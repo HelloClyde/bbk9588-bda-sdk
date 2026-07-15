@@ -83,6 +83,66 @@ class SdkExamplesTest(unittest.TestCase):
             "sdk/api/examples/touch_crosshair_demo.c", "TouchXY"
         )
 
+    def test_touch_stage_v12_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v12.c", "TouchV12"
+        )
+
+    def test_touch_stage_v13_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v13.c", "TouchV13"
+        )
+
+    def test_touch_stage_v14_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v14.c", "TouchV14"
+        )
+
+    def test_touch_stage_v15_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v15.c", "TouchV15"
+        )
+
+    def test_touch_stage_v16_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v16.c", "TouchV16"
+        )
+
+    def test_touch_stage_v17_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v17.c", "TouchV17"
+        )
+
+    def test_touch_stage_v18_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v18.c", "TouchV18"
+        )
+
+    def test_touch_stage_v19_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v19.c", "TouchV19"
+        )
+
+    def test_touch_stage_v20_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v20.c", "TouchV20"
+        )
+
+    def test_touch_stage_v21_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v21.c", "TouchV21"
+        )
+
+    def test_touch_stage_v22_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v22.c", "TouchV22"
+        )
+
+    def test_touch_stage_v23_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/touch_input_stage_probe_v23.c", "TouchV23"
+        )
+
     def test_graphics_primitives_example_builds(self) -> None:
         self.build_and_validate("sdk/api/examples/graphics_primitives_demo.c", "Graphics")
 

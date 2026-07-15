@@ -2,7 +2,7 @@
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320
-#define CROSS_RADIUS 12
+#define CROSS_RADIUS 10
 #define EVENT_QUEUE_SIZE 16u
 
 typedef struct touch_event {
@@ -23,11 +23,12 @@ static touch_event_t g_events[EVENT_QUEUE_SIZE];
 static int g_has_touch;
 static int g_has_painted_cross;
 static int g_has_painted_status;
+static int g_initial_scene_drawn;
+static int g_initial_redraw_suppressed;
 static s32 g_touch_x;
 static s32 g_touch_y;
 static s32 g_painted_x;
 static s32 g_painted_y;
-static char g_painted_status[32];
 
 static s32 touch_x_from_lparam(u32 lparam) {
     return (s32)(short)(lparam & 0xffffu);
@@ -51,18 +52,73 @@ static char *append_coord(char *out, s32 value) {
     return out;
 }
 
-static void build_status(char *status) {
+static void build_coordinate_status(char *status, s32 x, s32 y) {
     char *out = status;
 
-    if (!g_has_touch) {
-        out = append_text(out, "WAITING FOR TOUCH");
-    } else {
-        out = append_text(out, "TOUCH X=");
-        out = append_coord(out, g_touch_x);
-        out = append_text(out, " Y=");
-        out = append_coord(out, g_touch_y);
-    }
+    out = append_text(out, "X=");
+    out = append_coord(out, x);
+    out = append_text(out, " Y=");
+    out = append_coord(out, y);
     *out = 0;
+}
+
+static u8 glyph_row(char value, int row) {
+    static const u8 digits[10][7] = {
+        {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e},
+        {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e},
+        {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f},
+        {0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e},
+        {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02},
+        {0x1f, 0x10, 0x10, 0x1e, 0x01, 0x01, 0x1e},
+        {0x0e, 0x10, 0x10, 0x1e, 0x11, 0x11, 0x0e},
+        {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+        {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e},
+        {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x01, 0x0e},
+    };
+    static const u8 glyph_x[7] = {
+        0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11
+    };
+    static const u8 glyph_y[7] = {
+        0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04
+    };
+    static const u8 glyph_equal[7] = {
+        0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00
+    };
+
+    if (value >= '0' && value <= '9') {
+        return digits[(int)(value - '0')][row];
+    }
+    if (value == 'X') {
+        return glyph_x[row];
+    }
+    if (value == 'Y') {
+        return glyph_y[row];
+    }
+    if (value == '=') {
+        return glyph_equal[row];
+    }
+    return 0;
+}
+
+static void draw_bitmap_text(s32 x, s32 y, const char *text, u32 color) {
+    while (*text) {
+        int row;
+
+        for (row = 0; row < 7; ++row) {
+            u8 bits = glyph_row(*text, row);
+            int column;
+
+            for (column = 0; column < 5; ++column) {
+                if (bits & (u8)(0x10u >> column)) {
+                    (void)bda_gui_put_pixel(
+                        g_draw, x + column, y + row, color
+                    );
+                }
+            }
+        }
+        x += 6;
+        ++text;
+    }
 }
 
 static void queue_touch_event(u32 message, u32 lparam) {
@@ -97,73 +153,89 @@ static void draw_cross(s32 x, s32 y, u32 color) {
     s32 delta;
 
     for (delta = -CROSS_RADIUS; delta <= CROSS_RADIUS; ++delta) {
-        if (x + delta >= 0 && x + delta < SCREEN_WIDTH &&
-            y >= 0 && y < SCREEN_HEIGHT) {
+        if (x + delta >= 0 && x + delta < SCREEN_WIDTH) {
             (void)bda_gui_put_pixel(g_draw, x + delta, y, color);
         }
-        if (x >= 0 && x < SCREEN_WIDTH &&
-            y + delta >= 0 && y + delta < SCREEN_HEIGHT) {
+        if (y + delta >= 0 && y + delta < SCREEN_HEIGHT) {
             (void)bda_gui_put_pixel(g_draw, x, y + delta, color);
         }
     }
 }
 
-static void remember_status(const char *status) {
-    char *out = g_painted_status;
-    char *end = g_painted_status + sizeof(g_painted_status) - 1;
+/* Static labels are atomic only in the firmware object-paint scope. */
+static void draw_initial_scene(void) {
+    bda_handle_t base_draw;
+    bda_handle_t object_draw;
+    int object_draw_active;
+    void *old_object;
+    u32 foreground;
 
-    while (*status && out < end) {
-        *out++ = *status++;
+    if (!g_draw || !g_draw_object) {
+        return;
     }
-    *out = 0;
-    g_has_painted_status = 1;
+    base_draw = g_draw;
+    object_draw = bda_gui_object_draw_begin(g_frame);
+    object_draw_active = object_draw && (s32)(u32)object_draw != -1;
+    if (object_draw_active) {
+        g_draw = object_draw;
+    }
+
+    foreground = (u32)bda_gui_rgb(g_draw, 245, 248, 250);
+    old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
+    bda_gui_rectangle(g_draw, 7, 50, 232, 276);
+    (void)bda_gui_set_text_mode(g_draw, 1);
+    (void)bda_gui_set_text_color(g_draw, foreground);
+    (void)bda_gui_draw_text(g_draw, 42, 6, "TOUCH SCREEN TEST", -1);
+    (void)bda_gui_draw_text(g_draw, 82, 303, "ESC EXIT", -1);
+    (void)bda_gui_select_draw_object(g_draw, old_object);
+
+    if (object_draw_active) {
+        bda_gui_object_draw_end(g_frame, object_draw);
+        g_draw = base_draw;
+    }
 }
 
-static void draw_scene(void) {
-    char status[32];
+/* Runtime pixels need the complete +0x074(1/0) guard to become visible. */
+static void draw_dynamic_scene(void) {
+    char status[16];
     void *old_object;
     u32 background;
     u32 foreground;
     u32 cross_color;
 
-    if (!g_draw || !g_draw_object) {
+    if (!g_draw || !g_draw_object || !g_has_touch) {
         return;
     }
-
     background = (u32)bda_gui_rgb(g_draw, 0, 0, 0);
     foreground = (u32)bda_gui_rgb(g_draw, 245, 248, 250);
     cross_color = (u32)bda_gui_rgb(g_draw, 35, 210, 225);
-    build_status(status);
 
     (void)bda_gui_draw_guard_begin();
     old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
-
     if (g_has_painted_cross) {
         draw_cross(g_painted_x, g_painted_y, background);
     }
     if (g_has_painted_status) {
-        (void)bda_gui_set_text_mode(g_draw, 1);
-        (void)bda_gui_set_text_color(g_draw, background);
-        (void)bda_gui_draw_text(g_draw, 43, 28, g_painted_status, -1);
+        build_coordinate_status(status, g_painted_x, g_painted_y);
+        draw_bitmap_text(42, 29, status, background);
     }
-
-    bda_gui_rectangle(g_draw, 7, 50, 232, 287);
-    (void)bda_gui_set_text_mode(g_draw, 1);
-    (void)bda_gui_set_text_color(g_draw, foreground);
-    (void)bda_gui_draw_text(g_draw, 47, 6, "TOUCH SCREEN TEST", -1);
-    (void)bda_gui_draw_text(g_draw, 43, 28, status, -1);
-    (void)bda_gui_draw_text(g_draw, 82, 298, "ESC EXIT", -1);
-
-    if (g_has_touch) {
-        draw_cross(g_touch_x, g_touch_y, cross_color);
-        g_painted_x = g_touch_x;
-        g_painted_y = g_touch_y;
-        g_has_painted_cross = 1;
-    }
-    remember_status(status);
-
+    build_coordinate_status(status, g_touch_x, g_touch_y);
+    draw_bitmap_text(42, 29, status, foreground);
+    draw_cross(g_touch_x, g_touch_y, cross_color);
+    g_painted_x = g_touch_x;
+    g_painted_y = g_touch_y;
+    g_has_painted_cross = 1;
+    g_has_painted_status = 1;
     (void)bda_gui_select_draw_object(g_draw, old_object);
     (void)bda_gui_draw_guard_end();
+}
+
+static void draw_scene(void) {
+    if (g_initial_scene_drawn && g_has_touch) {
+        draw_dynamic_scene();
+    } else {
+        draw_initial_scene();
+    }
 }
 
 static int touch_window_proc(
@@ -173,14 +245,24 @@ static int touch_window_proc(
     u32 lparam
 ) {
     if (message == BDA_MSG_DRAW_CONTEXT_ATTACH) {
+        bda_handle_t previous_draw = g_draw;
+
         g_frame = handle;
         g_draw = bda_gui_current_draw(handle);
         if (!g_draw_object) {
             g_draw_object = bda_gui_draw_object_create(7);
         }
-        g_need_draw = 1;
+        if (!g_initial_scene_drawn || g_draw != previous_draw) {
+            g_need_draw = 1;
+        }
     } else if (message == BDA_MSG_REDRAW_INPUT) {
-        g_need_draw = 1;
+        if (g_initial_scene_drawn &&
+            !g_initial_redraw_suppressed &&
+            !g_has_touch) {
+            g_initial_redraw_suppressed = 1;
+        } else {
+            g_need_draw = 1;
+        }
     } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
         g_draw = 0;
         g_exit = 1;
@@ -207,6 +289,7 @@ int bda_main(void) {
     bda_frame_desc_t descriptor;
     bda_gui_message_t message;
     int close_requested;
+    u32 close_wait;
 
     bda_memset(&descriptor, 0, sizeof(descriptor));
     bda_memset(&message, 0, sizeof(message));
@@ -220,8 +303,10 @@ int bda_main(void) {
     g_has_touch = 0;
     g_has_painted_cross = 0;
     g_has_painted_status = 0;
-    bda_memset(g_painted_status, 0, sizeof(g_painted_status));
+    g_initial_scene_drawn = 0;
+    g_initial_redraw_suppressed = 0;
     close_requested = 0;
+    close_wait = 0;
 
     descriptor.style = 0;
     descriptor.title = k_window_title;
@@ -236,7 +321,6 @@ int bda_main(void) {
         return 1;
     }
     (void)bda_gui_frame_activate(g_frame, 0x100);
-
     if (!g_draw) {
         g_draw = bda_gui_current_draw(g_frame);
     }
@@ -247,7 +331,9 @@ int bda_main(void) {
         bda_msgbox("Touch", "draw context failed");
         return 2;
     }
-    draw_scene();
+    draw_initial_scene();
+    g_initial_scene_drawn = 1;
+    g_need_draw = 0;
 
     for (;;) {
         bda_gui_input_packet_t packet;
@@ -262,7 +348,8 @@ int bda_main(void) {
         (void)bda_gui_input_packet(&packet);
         bda_sys_delay(1);
         if (close_requested) {
-            if (!pump_result || g_exit) {
+            ++close_wait;
+            if (!pump_result || g_exit || close_wait >= 128u) {
                 break;
             }
             continue;

@@ -87,6 +87,8 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_FRAME_STOP        0x088u
 #define BDA_SDK_INTERNAL_GUI_DEFAULT_PROC      0x08cu
 #define BDA_SDK_INTERNAL_GUI_FRAME_ACTIVATE    0x098u
+#define BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_BEGIN 0x0e4u
+#define BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_END   0x0e8u
 #define BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu
 #define BDA_SDK_INTERNAL_GUI_DRAW_OBJECT       0x2fcu
 #define BDA_SDK_INTERNAL_GUI_CURRENT_DRAW      0x304u
@@ -348,6 +350,29 @@ static inline int bda_gui_frame_release(bda_handle_t handle) {
 }
 
 /*
+ * Verified object paint scope. The begin result must be returned to end with
+ * the same object. This scope shares the visible backend and is not a buffer.
+ */
+static inline bda_handle_t bda_gui_object_draw_begin(bda_handle_t object) {
+    return (bda_handle_t)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_BEGIN,
+        (u32)object
+    );
+}
+
+static inline void bda_gui_object_draw_end(
+    bda_handle_t object, bda_handle_t draw
+) {
+    (void)bda_sdk_internal_call2(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_END,
+        (u32)object,
+        (u32)draw
+    );
+}
+
+/*
  * Final owner-side teardown after stop/release has made the event pump end.
  * GUI+0x17c has no stable return value, so the public wrapper is void.
  */
@@ -394,7 +419,10 @@ static inline int bda_gui_event_pump_frame_once(
     return 1;
 }
 
-/* Verified graphics primitives. A registered and active frame is required. */
+/*
+ * Verified dynamic draw guard. Use begin -> draw -> end as one complete pair
+ * on an active frame. TouchStageV22 proved that end alone is not a present API.
+ */
 static inline int bda_gui_draw_guard_begin(void) {
     return bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_DRAW_GUARD, 1u
