@@ -562,7 +562,7 @@ int bda_main(void) {
     desc.wndproc = mines_window_proc;
     desc.height = 240;
     desc.width = 320;
-    desc.surface = (u32)bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_draw_object_create_like(15);
 
     g_frame = bda_gui_register_frame_desc_like(&desc);
     if ((s32)g_frame == -1 || !g_frame) {

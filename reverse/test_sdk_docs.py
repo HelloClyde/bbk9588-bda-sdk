@@ -352,7 +352,7 @@ class SdkDocsTest(unittest.TestCase):
             "在 bare bda_main()、硬编码时间入口替换或 create callback 早期阶段直接 begin_draw",
             "可能白屏、逐块刷新、重启或死机",
             "不是 frame handle",
-            "不要把 bda_gui_frame_surface_like(15)+register_frame 当成最小绘图 demo",
+            "不要把 bda_gui_draw_object_create_like(15)+register_frame 当成最小绘图 demo",
             "## Wrapper 使用边界",
             "低风险 smoke",
             "需要真实 lifecycle",
@@ -1268,12 +1268,14 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_draw_object_create_is_single_index_table_lookup(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
+        stable_header = read("sdk/include/bda_sdk.h")
         c200_notes = read("sdk/doc/c200_api_function_notes.md")
         game_notes = read("sdk/doc/game_framework_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + c200_notes + "\n" + game_notes + "\n" + catalog_tool
         self.assertIn("bda_gui_draw_object_create_like(u32 kind)", header)
-        self.assertIn("bda_gui_frame_surface_like(u32 kind)", header)
+        self.assertIn("bda_gui_draw_object_create(u32 kind)", stable_header)
+        self.assertNotIn("bda_gui_frame_surface", header + stable_header)
         self.assertNotIn("bda_gui_draw_object_create_like(u32 a0, u32 a1, u32 a2, u32 a3)", header)
         self.assertIn("GUI +0x2fc: `BDA_GUI_DRAW_OBJECT_CREATE_LIKE`", c200_notes)
         self.assertIn("system function VA：`0x800bd36c`", c200_notes)
@@ -1287,7 +1289,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("surface 或 context handle", c200_notes + "\n" + header)
         self.assertIn("frame/control lifecycle 已经建立", c200_notes)
         self.assertIn("不是 framebuffer allocator 或最小绘图入口", c200_notes)
-        self.assertIn("不要把 `bda_gui_frame_surface_like(15)+register_frame`", c200_notes)
+        self.assertIn("不要把 `bda_gui_draw_object_create_like(15)+register_frame`", c200_notes)
         self.assertIn("不是 framebuffer allocator", game_notes)
         self.assertIn("不是 no-template BDA 的 framebuffer allocator", game_notes)
         self.assertIn("surface=0", game_notes)
@@ -2322,7 +2324,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("internal28/internal44/internal48/helper_arg14/aux30", window_notes)
         self.assertIn("desc.height = SCREEN_H", stage_probe)
         self.assertIn("desc.width = SCREEN_W", stage_probe)
-        self.assertIn("desc.surface = (u32)bda_gui_frame_surface_like(15)", stage_probe)
+        self.assertIn("desc.surface = (u32)bda_gui_draw_object_create_like(15)", stage_probe)
         self.assertNotIn("rect_or_state1c", header + stage_probe + window_notes)
         self.assertNotIn("arg2c", header + stage_probe + combined)
         self.assertNotIn("arg04", header + window_notes + api_offsets)

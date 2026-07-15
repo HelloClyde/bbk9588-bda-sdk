@@ -1146,16 +1146,12 @@ static inline bda_handle_t bda_gui_compat_context_create_like(bda_handle_t sourc
 /*
  * 查询 low-level draw object/surface table。C200 只读取 kind/index；kind >= 0x11 返回 -1。
  * 原机 window descriptor 常用 kind=15 作为 surface/object，但该 object 仍依赖完整
- * frame lifecycle；不要把 bda_gui_frame_surface_like(15)+register_frame 当成最小绘图 demo。
+ * frame lifecycle；不要把 bda_gui_draw_object_create_like(15)+register_frame 当成最小绘图 demo。
  * Thunder/Tank 还会查询 kind=7/8/15/0x10；其中 kind=0x10 的返回值会传给
  * set_fill/text_color，不是 game surface 或 context handle。
  */
 static inline void *bda_gui_draw_object_create_like(u32 kind) {
     return (void *)bda_call1(bda_gui_table(), BDA_GUI_DRAW_OBJECT_CREATE_LIKE, kind);
-}
-
-static inline void *bda_gui_frame_surface_like(u32 kind) {
-    return bda_gui_draw_object_create_like(kind);
 }
 
 /*

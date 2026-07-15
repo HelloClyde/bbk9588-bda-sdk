@@ -445,7 +445,7 @@ int bda_main(void) {
     descriptor.wndproc = touch_window_proc;
     descriptor.height = SCREEN_WIDTH;
     descriptor.width = SCREEN_HEIGHT;
-    descriptor.surface = (u32)bda_gui_frame_surface_like(15);
+    descriptor.surface = (u32)bda_gui_draw_object_create_like(15);
 
     g_frame = bda_gui_register_frame_desc_like(&descriptor);
     if (!g_frame || (s32)g_frame == -1) {

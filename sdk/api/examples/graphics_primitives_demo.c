@@ -159,7 +159,7 @@ int bda_main(void) {
     descriptor.wndproc = graphics_window_proc;
     descriptor.height = SCREEN_WIDTH;
     descriptor.width = SCREEN_HEIGHT;
-    descriptor.surface = (u32)bda_gui_frame_surface(15);
+    descriptor.surface = (u32)bda_gui_draw_object_create(15);
 
     g_frame = bda_gui_register_frame_desc(&descriptor);
     if (!g_frame || (s32)g_frame == -1) {

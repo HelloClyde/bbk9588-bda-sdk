@@ -435,14 +435,11 @@ static inline int bda_gui_draw_guard_end(void) {
     );
 }
 
+/* GUI+0x2fc is a kind-indexed firmware object-table lookup, not a heap alloc. */
 static inline void *bda_gui_draw_object_create(u32 kind) {
     return (void *)bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_DRAW_OBJECT, kind
     );
-}
-
-static inline void *bda_gui_frame_surface(u32 kind) {
-    return bda_gui_draw_object_create(kind);
 }
 
 static inline bda_handle_t bda_gui_current_draw(bda_handle_t handle) {

@@ -195,7 +195,7 @@ static int create_stage_frame(void) {
     desc.wndproc = proc_passthrough;
     desc.height = SCREEN_H;
     desc.width = SCREEN_W;
-    desc.surface = (u32)bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_draw_object_create_like(15);
     bda_msgbox("STAGE", "register frame");
     g_frame = (bda_handle_t)bda_gui_register_frame_like(&desc);
     if ((s32)g_frame == -1 || !g_frame) {

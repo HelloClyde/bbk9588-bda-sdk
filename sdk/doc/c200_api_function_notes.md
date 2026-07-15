@@ -1818,8 +1818,8 @@ system function VA：`0x800bd36c`
 
 开发建议：
 
-- SDK 暴露 `bda_gui_draw_object_create_like(kind)`；`bda_gui_frame_surface_like(kind)`
-  只是同一入口的别名。
+- SDK 只暴露 `bda_gui_draw_object_create_like(kind)`，不再为早期
+  `frame_surface` 误名保留同义 wrapper。
 - 原机 frame/window descriptor 中常见 `kind=15`，可作为 `descriptor+0x2c` 的
   surface/object 候选值；但它只有在原机 frame/control lifecycle 已经建立时才有意义。
 - 雷霆战机/决战坦克还会查询 `kind=7`、`kind=8`、`kind=15` 和 `kind=0x10`。
@@ -1829,7 +1829,7 @@ system function VA：`0x800bd36c`
 - 该入口更像 draw object/surface 表查询，不是通用对象构造器；返回 `-1` 时不要
   当作有效 pointer 传给 frame 注册或 draw API。
 - 它不是 framebuffer allocator 或最小绘图入口。no-template BDA 开发先用
-  `surface=0`，不要把 `bda_gui_frame_surface_like(15)+register_frame` 当成
+  `surface=0`，不要把 `bda_gui_draw_object_create_like(15)+register_frame` 当成
   standalone UI template。
 
 ### GUI +0x46c: `BDA_GUI_RECT_CONTAINS_LIKE`
