@@ -70,9 +70,9 @@
 | GUI | +0x2b8 | `BDA_GUI_MSGBOX` | 382 | 44 | 较高 | message box，hardware probe 已确认可用于简单 BDA demo。 |
 | GUI | +0x2fc | `BDA_GUI_DRAW_OBJECT_CREATE_LIKE` | 780 | 46 | 中 | draw/resource object table 查询；C200 只读取 kind/index，范围为 0..16。 |
 | GUI | +0x300 | `BDA_GUI_DISPLAY_METRIC_LIKE` | 14 | 9 | 中 | display backend metric 查询；C200 使用 context,metric，metric 范围 0..6；Thunder 用 metric=6 作为 framebuffer 像素字节因子。 |
-| GUI | +0x304 | `BDA_GUI_CURRENT_DRAW_LIKE` | 13 | 10 | 中 | current draw context；C200 读取 handle，从 6 个 slot 取/初始化 context，并以 mode=0 调内部 helper。 |
-| GUI | +0x308 | `BDA_GUI_BEGIN_DRAW_LIKE` | 1174 | 37 | 中 | begin draw context；C200 读取 handle，从 6 个 slot 取/初始化 context，并以 mode=1 调内部 helper。 |
-| GUI | +0x30c | `BDA_GUI_END_DRAW_LIKE` | 1063 | 45 | 中 | 结束 draw；C200 清理 draw context 状态，无稳定 return value。 |
+| GUI | +0x304 | `BDA_GUI_CURRENT_DRAW_LIKE` | 13 | 10 | 中 | current draw context；C200 读取 handle，从 5 个普通 slot 取/初始化 context，并以 mode=0 调内部 helper；满池扫描存在越界缺陷。 |
+| GUI | +0x308 | `BDA_GUI_BEGIN_DRAW_LIKE` | 1174 | 37 | 中 | begin draw context；C200 读取 handle，从 5 个普通 slot 取/初始化 context，并以 mode=1 调内部 helper；满池扫描存在越界缺陷。 |
+| GUI | +0x30c | `BDA_GUI_END_DRAW_LIKE` | 1063 | 45 | 中 | 结束 draw 并归还 fixed context slot；无稳定 return value，必须与 +0x304/+0x308 配对。 |
 | GUI | +0x310 | `BDA_GUI_COMPAT_CONTEXT_CREATE_LIKE` | 37 | 13 | 中 | compatible draw context create；C200 分配 0xd4 byte context 并复制 source context 的 drawable bounds/backend；V19 验证可同时创建两块。 |
 | GUI | +0x314 | `BDA_GUI_SURFACE_FLUSH_LIKE` | 57 | 13 | 中 | surface/canvas flush 并释放 context；C200 调 backend +0x34 后释放 object；V19 验证两块 compatible surface 可分别释放。 |
 | GUI | +0x334 | `BDA_GUI_SET_FILL_COLOR_LIKE` | 57 | 14 | 中 | 设置 fill color；C200 写 context+0x14 并返回旧值。 |

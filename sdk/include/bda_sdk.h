@@ -92,6 +92,7 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu
 #define BDA_SDK_INTERNAL_GUI_DRAW_OBJECT       0x2fcu
 #define BDA_SDK_INTERNAL_GUI_CURRENT_DRAW      0x304u
+#define BDA_SDK_INTERNAL_GUI_END_DRAW          0x30cu
 #define BDA_SDK_INTERNAL_GUI_COMPAT_CREATE     0x310u
 #define BDA_SDK_INTERNAL_GUI_COMPAT_FREE       0x314u
 #define BDA_SDK_INTERNAL_GUI_SET_TEXT_MODE     0x338u
@@ -471,6 +472,17 @@ static inline void *bda_gui_draw_object_create(u32 kind) {
 static inline bda_handle_t bda_gui_current_draw(bda_handle_t handle) {
     return (bda_handle_t)bda_sdk_internal_call1(
         bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_CURRENT_DRAW, (u32)handle
+    );
+}
+
+/*
+ * Release one fixed draw slot returned by bda_gui_current_draw(). Call this
+ * exactly once on detach or before discarding the context handle. The target
+ * firmware has only five ordinary slots and does not handle exhaustion safely.
+ */
+static inline void bda_gui_end_draw(bda_handle_t draw_context) {
+    (void)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_END_DRAW, (u32)draw_context
     );
 }
 

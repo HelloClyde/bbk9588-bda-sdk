@@ -232,11 +232,14 @@ GUI+0x30c(draw)
 
 C200 中：
 
-- `GUI+0x308` 目标 `0x800bce50`，从一组 6 个 draw context slot 中取/初始化
-  draw context，并以 mode=1 调用内部 helper。
+- `GUI+0x308` 目标 `0x800bce50`，从一组 5 个普通 draw context slot 中取/初始化
+  draw context，并以 mode=1 调用内部 helper。紧邻第 6 个 `0xd4` 区域是保留 context，
+  不是普通槽；固件扫描会检查它，满池后还会计算越界地址。
 - `GUI+0x304` 目标 `0x800bceec`，使用同一组 draw context slot，但以 mode=0
   调用内部 helper。它不是无参数 getter，也不是创建 frame/window 生命周期的入口。
 - `GUI+0x30c` 目标 `0x800bd4b0`，释放/刷新 draw context，并清理部分状态。
+- 每次 `GUI+0x304/+0x308` 成功返回都必须有且仅有一次 `GUI+0x30c`。只释放
+  `GUI+0x310` 创建的 compatible context 不能归还 fixed draw slot。
 - `GUI+0x074` 目标 `0x800d48a8` 会把 `a0` 写入全局状态；`a0==0` 时若内部
   present/update object 存在，会继续调用 `0x8012c8f0`。SDK 因此删除无参数
   wrapper，只保留显式 `bda_gui_pump_present_arg_like(draw_guard_enabled)` 和

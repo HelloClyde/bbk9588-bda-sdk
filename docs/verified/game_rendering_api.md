@@ -13,6 +13,7 @@
 |---|---:|---|
 | `bda_gui_compatible_context_create()` | GUI `+0x310` | 创建与可见 draw context 兼容的离屏 context |
 | `bda_gui_compatible_context_free()` | GUI `+0x314` | flush 并释放 compatible context |
+| `bda_gui_end_draw()` | GUI `+0x30c` | 归还 `bda_gui_current_draw()` 占用的 fixed draw slot |
 | `bda_gui_draw_vx()` | GUI `+0x540` | 按 VX 原始尺寸绘制 RGB565 图片 |
 | `bda_gui_context_copy()` | GUI `+0x418` | 在 compatible 或 visible context 之间复制矩形 |
 | `bda_gui_tick_count_25ms()` | GUI `+0x6d8` | 读取 32-bit 单调 25 ms tick |
@@ -56,6 +57,9 @@ if (!g_back || (s32)g_back == -1) {
     /* 创建失败，不能继续绘图。 */
 }
 ```
+
+visible draw 和 compatible context 是两种独立所有权：前者必须用 `bda_gui_end_draw()`
+归还 fixed slot，后者必须用 `bda_gui_compatible_context_free()` 释放。两者不能替代。
 
 每个成功创建的 compatible context 必须且只能释放一次：
 
@@ -206,9 +210,10 @@ flowchart TD
     E --> F["ESC: frame stop"]
     F --> G["frame release"]
     G --> H["event pump ends or detach arrives"]
-    H --> I["close frame"]
-    I --> J["free compatible contexts"]
-    J --> K["bda_main return"]
+    H --> I["free compatible contexts"]
+    I --> J["end visible draw slot if still owned"]
+    J --> K["close frame"]
+    K --> L["bda_main return"]
 ```
 
 不要在收到 ESC 后直接 `return`，也不要把 `close_frame` 放在 `stop/release` 之前。
@@ -226,11 +231,11 @@ python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
 
 ![使用公开 API 完成的扫雷](assets/game_rendering_minesweeper.png)
 
-2026-07-16 又从默认公开头重新构建并在 8013 回归一次，构建命令没有添加研究
+2026-07-17 又从默认公开头重新构建并在 8013 回归，构建命令没有添加研究
 include 路径。本次产物 SHA-256 为：
 
 ```text
-ea450c6cb3c622eb4da274e41901c935fc1adfa85990a50803c0879fa0705298
+91543ecfe746079b380215882128b312a3ffea2ee345057a11dea8c7d90188c5
 ```
 
 启动后触摸未打开格子，画面立即更新；实体 ESC 随后正常返回固件菜单：
@@ -246,9 +251,14 @@ FIRST PRESENT=0x00000000
 STOP=0x00000001
 RELEASE=0x00000000
 BACK FREED
+DRAW ACQUIRES=0x00000001
+DRAW RELEASES=0x00000001
 FAILURES=0x00000000
 RESULT=PASS
 ```
+
+draw slot 回归在同一个 8013 QEMU 进程中连续运行 6 轮。每轮运行时恰有 1 个普通槽
+占用，退出后 5 个普通槽全部为空；第 6 轮仍正常启动和退出，没有出现满池越界。
 
 ## 已知边界
 
@@ -258,3 +268,4 @@ RESULT=PASS
 - visible present 必须位于完整动态 draw guard 中；compatible 之间的合成不需要 guard。
 - 不要用 `GUI+0x3f8/+0x400` 替代本文链路；裸 tile blit 在真机曾逐块翻转后死机。
 - 每个 compatible context 都占用固件资源，创建失败必须立即降级或退出，退出时必须释放。
+- fixed draw pool 只有 5 个普通槽；每个 `current_draw` 必须与一次 `end_draw` 配对。

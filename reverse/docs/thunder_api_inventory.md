@@ -6,14 +6,14 @@
 - BDA：`fly-src-api\雷霆战机.bda`
 - SHA-256：`75e389c5409360ae47fe4e04c20b6856c2d6d72016e3100c0da54373fcb14534`
 - runtime file base：`0x81bf6a28`
-- C200：`build\mine_as_time_snapshot\系统\数据\C200.bin`
-- 间接调用总数：291
-- 唯一 table entry：75
+- C200：`build\minesweeper_snapshot\系统\数据\C200.bin`
+- 间接调用总数：295
+- 唯一 table entry：78
 
 生成命令：
 
 ```powershell
-python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "docs\thunder_api_inventory.md"
+python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "reverse\docs\thunder_api_inventory.md"
 ```
 
 ## Table 汇总
@@ -21,7 +21,7 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "docs\thunder_
 | Table | 调用数 | 唯一 entry | BDA table global | C200 table VA |
 | --- | ---: | ---: | ---: | ---: |
 | RES | 14 | 2 | `0x81c16ba0` | `0x80280d30` |
-| GUI | 139 | 45 | `0x81c16ba4` | `0x80280e60` |
+| GUI | 143 | 48 | `0x81c16ba4` | `0x80280e60` |
 | SYS | 23 | 10 | `0x81c16ba8` | `0x80280c60` |
 | FS | 72 | 16 | `0x81c16bac` | `0x80280dd0` |
 | MEM | 43 | 2 | `0x81c16bb0` | `0x8028169c` |
@@ -48,17 +48,17 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "docs\thunder_
 | GUI | +0x0e4 | 4 | `BDA_GUI_OBJECT_DRAW_BEGIN_LIKE` | `0x800ce928` | `addiu $sp, $sp, -0x28` | object draw begin wrapper；C200 检查 object kind，调用 GUI+0x308 取得 draw context 并递增 draw 计数。 |
 | GUI | +0x0e8 | 2 | `BDA_GUI_OBJECT_DRAW_END_LIKE` | `0x800ce9f0` | `addiu $sp, $sp, -0x28` | object draw end wrapper；C200 递减 draw 计数并调用 GUI+0x30c(draw_context)，无稳定 return value。 |
 | GUI | +0x134 | 1 | `BDA_GUI_ACTIVE_FRAME_SET_LIKE` | `0x800cad3c` | `addiu $sp, $sp, -0x20` | 设置/切换当前 active frame；C200 写内部 +0xd8，并向旧/新 frame 发 0x31/0x30。 |
-| GUI | +0x17c | 2 | `BDA_GUI_CLOSE_FRAME_LIKE` | `0x800cdffc` | `addiu $sp, $sp, -0x18` | 关闭并释放 frame/window；C200 只读取 handle，释放关联 object 并清空 active frame 全局 slot。 |
+| GUI | +0x17c | 2 | `BDA_GUI_CLOSE_FRAME_LIKE` | `0x800cdffc` | `addiu $sp, $sp, -0x18` | 关闭并释放 frame/window；V11 真机确认应在 stop/release 和 event poll 结束后调用，且无稳定返回值。 |
 | GUI | +0x1a8 | 1 | `BDA_GUI_DESTROY_LIKE` | `0x800cd41c` | `addiu $sp, $sp, -0x30` | destroy control/object；C200 要求 kind=1 subtype=0x12，先发内部 0x64 再摘链释放。 |
 | GUI | +0x1ac | 1 | `BDA_GUI_OBJECT_UPDATE3_LIKE` | `0x800de150` | `addiu $sp, $sp, -0x28` | object update/layout；C200 构造 stack message packet 并同步发送内部 0x162。 |
 | GUI | +0x1b0 | 1 | `BDA_GUI_OBJECT_UPDATE2_LIKE` | `0x800de190` | `addiu $sp, $sp, -0x28` | object update/layout；C200 构造 stack message packet 并同步发送内部 0x163。 |
 | GUI | +0x2b8 | 1 | `BDA_GUI_MSGBOX` | `0x800c6544` | `addiu $sp, $sp, -0x28` | message box，hardware probe 已确认可用于简单 BDA demo。 |
 | GUI | +0x2fc | 7 | `BDA_GUI_DRAW_OBJECT_CREATE_LIKE` | `0x800bd36c` | `sll $v1, $a0, 2` | draw/resource object table 查询；C200 只读取 kind/index，范围为 0..16。 |
 | GUI | +0x300 | 3 | `BDA_GUI_DISPLAY_METRIC_LIKE` | `0x800bc8fc` | `addiu $sp, $sp, -0x18` | display backend metric 查询；C200 使用 context,metric，metric 范围 0..6；Thunder 用 metric=6 作为 framebuffer 像素字节因子。 |
-| GUI | +0x304 | 1 | `BDA_GUI_CURRENT_DRAW_LIKE` | `0x800bceec` | `addiu $sp, $sp, -0x18` | current draw context；C200 读取 handle，从 6 个 slot 取/初始化 context，并以 mode=0 调内部 helper。 |
-| GUI | +0x30c | 1 | `BDA_GUI_END_DRAW_LIKE` | `0x800bd4b0` | `addiu $sp, $sp, -0x20` | 结束 draw；C200 清理 draw context 状态，无稳定 return value。 |
-| GUI | +0x310 | 2 | `BDA_GUI_COMPAT_CONTEXT_CREATE_LIKE` | `0x800bd100` | `addiu $sp, $sp, -0x30` | compatible draw context create；C200 分配 0xd4 byte context 并复制 source context 的 drawable bounds/backend。 |
-| GUI | +0x314 | 2 | `BDA_GUI_SURFACE_FLUSH_LIKE` | `0x800bd584` | `addiu $sp, $sp, -0x18` | surface/canvas flush 并释放 context；C200 调 backend +0x34 后释放 object。 |
+| GUI | +0x304 | 1 | `BDA_GUI_CURRENT_DRAW_LIKE` | `0x800bceec` | `addiu $sp, $sp, -0x18` | current draw context；C200 读取 handle，从 5 个普通 slot 取/初始化 context，并以 mode=0 调内部 helper；满池扫描存在越界缺陷。 |
+| GUI | +0x30c | 1 | `BDA_GUI_END_DRAW_LIKE` | `0x800bd4b0` | `addiu $sp, $sp, -0x20` | 结束 draw 并归还 fixed context slot；无稳定 return value，必须与 +0x304/+0x308 配对。 |
+| GUI | +0x310 | 2 | `BDA_GUI_COMPAT_CONTEXT_CREATE_LIKE` | `0x800bd100` | `addiu $sp, $sp, -0x30` | compatible draw context create；C200 分配 0xd4 byte context 并复制 source context 的 drawable bounds/backend；V19 验证可同时创建两块。 |
+| GUI | +0x314 | 2 | `BDA_GUI_SURFACE_FLUSH_LIKE` | `0x800bd584` | `addiu $sp, $sp, -0x18` | surface/canvas flush 并释放 context；C200 调 backend +0x34 后释放 object；V19 验证两块 compatible surface 可分别释放。 |
 | GUI | +0x334 | 2 | `BDA_GUI_SET_FILL_COLOR_LIKE` | `0x800b2c7c` | `lui $v1, 0x8082` | 设置 fill color；C200 写 context+0x14 并返回旧值。 |
 | GUI | +0x338 | 6 | `BDA_GUI_SET_TEXT_MODE_LIKE` | `0x800b2c94` | `lui $v1, 0x8082` | 设置文本模式/背景模式；C200 写 context+0x18 并返回旧值。 |
 | GUI | +0x33c | 2 | `BDA_GUI_SET_TEXT_COLOR_LIKE` | `0x800b2cac` | `lui $v1, 0x8082` | 设置文本颜色；C200 写 context+0x50 并返回旧值。 |
@@ -74,11 +74,14 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "docs\thunder_
 | GUI | +0x400 | 2 | `BDA_GUI_BLIT_ALT_LIKE` | `0x800c0c90` | `lui $v1, 0x8047` | 带全局 clip/prepare 的 blit；C200 使用 x,y,height,width,buffer 五参数，TileBlit 真机会逐块 flip 后死机。 |
 | GUI | +0x40c | 3 | `BDA_GUI_REGION_DRAW_LIKE` | `0x800b2e30` | `addiu $sp, $sp, -0x50` | region draw/copy；C200 使用 context,x,y,width,height 五参数。 |
 | GUI | +0x414 | 8 | `BDA_GUI_RENDER_HELPER_LIKE` | `0x800b34c0` | `lui $v1, 0x8047` | low-level render helper；C200 读取 descriptor、多个 stack 参数并可分配临时 buffer。 |
-| GUI | +0x418 | 6 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x800b3d90` | `addiu $sp, $sp, -0x60` | 双 context/双矩形 render helper；C200 使用 stack+0x14 的第二 context 并调用 backend +0x94。 |
+| GUI | +0x418 | 6 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x800b3d90` | `addiu $sp, $sp, -0x60` | 双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key_or_zero；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交。 |
 | GUI | +0x4a4 | 1 | `BDA_GUI_CURRENT_FONT_LIKE` | `0x800bf744` | `lui $v1, 0x8082` | current font pointer getter；C200 返回 context+0x54，context=0 时使用 default draw context。 |
 | GUI | +0x4d0 | 1 | `BDA_GUI_FONT_CELL_WIDTH_LIKE` | `0x800c1c68` | `lui $v0, 0x8082` | font cell width-like metric；C200 返回 current font descriptor +0x38。 |
 | GUI | +0x4d4 | 1 | `BDA_GUI_FONT_CELL_HEIGHT_LIKE` | `0x800c1c80` | `addiu $sp, $sp, -0x20` | font cell height-like metric；C200 查询 primary/fallback font callback 并返回较大值。 |
 | GUI | +0x4f0 | 4 | `BDA_GUI_DRAW_TEXT_LIKE` | `0x800c0d40` | `addiu $sp, $sp, -0x50` | draw GBK/ASCII text；C200 使用 handle,x,y,text,extra，extra<0 时按 strlen。 |
+| GUI | +0x5d4 | 1 | `BDA_GUI_INPUT_PACKET_LIKE` | `0x8001b518` | `addiu $sp, $sp, -0x18` | GAMEBOY/input 按键包 helper；C200 清 6 byte packet 后写入按键状态。 |
+| GUI | +0x6a8 | 1 | `BDA_GUI_FILE_SELECTOR_OPEN_LIKE` | `0x80021334` | `addiu $sp, $sp, -0x5e0` | file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。 |
+| GUI | +0x6e0 | 2 | `BDA_GUI_GAME_DISPLAY_PUMP_LIKE` | `0x8005b844` | `addiu $sp, $sp, -0x20` | 触摸长按驱动的 game state pump；C200 无参数，先查 pen GPIO，阈值 0x1068 后写全局状态；有副作用。 |
 | SYS | +0x040 | 3 | `BDA_SYS_PACKAGE_SOUND_OP40_LIKE` | `0x8018921c` | `slti $v0, $a0, 0` | 打包音效 low-level op40；C200 clamp a0 到 0..0x62，写 sound id 全局状态并置 pending flag。 |
 | SYS | +0x044 | 1 | `BDA_SYS_PACKAGE_SOUND_OP44_LIKE` | `0x80189248` | `addiu $sp, $sp, -0x18` | 打包音效 low-level op44；C200 不读取参数，只调用内部 helper，无稳定 return value。 |
 | SYS | +0x050 | 1 | 未公开 | `0x8018ef04` | `jr $ra` | C200 中是立即返回 1 的 stub，不公开 SDK wrapper。 |

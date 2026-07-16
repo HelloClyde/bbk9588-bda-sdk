@@ -1109,8 +1109,12 @@ GUI+0x30c -> 0x800bd4b0
 
 当前证据：
 
-- `GUI+0x304` 和 `GUI+0x308` 都会从一组 6 个 draw context 槽中取/初始化
-  context；两个入口都会读取 `a0=handle`。
+- `GUI+0x304` 和 `GUI+0x308` 都会从 `0x804a60c0` 开始按 `0xd4` 扫描 5 个普通
+  draw context 槽；两个入口都会读取 `a0=handle`。`0x804a64e4` 是另一条初始化路径
+  使用的保留 context，不是第 6 个普通槽。
+- 扫描循环的 `slti index,6` 会额外检查保留 context 的 `+0x08`；5 个普通槽全满且
+  保留 context 非空时，函数仍按 `index=6` 计算 `0x804a65b8`，没有返回 pool-full，
+  随后的 `0x800bd678` 会从越界结构 `+0x0c` 开始覆盖相邻全局内存。
 - `GUI+0x304` 调用内部 helper `0x800bd678(context_slot, handle, 0)`，即 mode=0。
 - `GUI+0x308` 调用同一内部 helper `0x800bd678(context_slot, handle, 1)`，即 mode=1。
 - `GUI+0x30c` 只读取 `a0=draw_context`；`a0 == 0` 时会落到默认 context
@@ -1118,6 +1122,8 @@ GUI+0x30c -> 0x800bd4b0
 - `GUI+0x30c` 会清理 `context+0x94` 和 `context+0xb0` 两组区域/子区域状态，并
   根据 `context+0x0c/+0xcc/+0xd0` 的关系决定是否继续调用内部更新 helper。
 - `GUI+0x30c` 没有稳定 return value；SDK 暴露为 `void bda_gui_end_draw_like(draw_context)`。
+- `GUI+0x30c` 还会把 fixed slot 的 `+0x08` 清零。每个 `GUI+0x304/+0x308` 返回值
+  必须恰好结束一次；`GUI+0x314` 只释放 compatible heap context，不能代替该配对。
 - 原机记事本使用 `begin_draw -> GUI+0x074(1) -> 绘制 -> GUI+0x074(0) -> end_draw`
   的模式。
 - BBVM 还使用 `GUI+0x304(frame_handle)` 获取 draw handle，再通过 `GUI+0x4f0` 绘制文字；

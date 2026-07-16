@@ -1128,8 +1128,10 @@ static inline int bda_gui_object_pair_exists_like(u32 a0, u32 a1) {
 }
 
 /*
- * frame 级 draw 生命周期。C200 从 6 个 draw context slot 中取/初始化 context，
- * 并用 mode=1 调内部 helper；begin 返回 draw/surface handle，end 只接收该 handle。
+ * frame 级 draw 生命周期。C200 从 5 个普通 draw context slot 中取/初始化 context；
+ * 紧邻的第 6 个 0xd4-byte 区域是保留 context，不是可分配槽。固件扫描上界会读到该
+ * 保留区域，满池后还会计算越界地址，因此每个 begin/current 必须与 end 配对。
+ * mode=1 的 begin 返回 draw/surface handle，end 只接收该 handle。
  * 与 object_draw_begin/object_draw_end 不是同一组 ABI。handle 应来自有效 frame/window；
  * 在 bare bda_main()、硬编码时间入口替换或 create callback 早期阶段直接 begin_draw
  * 可能白屏、逐块刷新、重启或死机。
@@ -1193,7 +1195,7 @@ static inline void *bda_gui_draw_object_create_like(u32 kind) {
 }
 
 /*
- * 取/初始化当前 draw handle。C200 会读取 a0=handle，从同一组 6 个 draw context
+ * 取/初始化当前 draw handle。C200 会读取 a0=handle，从同一组 5 个普通 draw context
  * slot 中取/初始化 context，并以 mode=0 调内部 draw helper。与
  * begin_draw_like(handle) 相邻；后者使用 mode=1。它不是无参数 getter，也不会
  * 创建 frame/window 生命周期。Thunder/Tank 是在

@@ -26,7 +26,7 @@ python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
 最终测试包 SHA-256：
 
 ```text
-ea450c6cb3c622eb4da274e41901c935fc1adfa85990a50803c0879fa0705298
+91543ecfe746079b380215882128b312a3ffea2ee345057a11dea8c7d90188c5
 ```
 
 ![Minesweeper menu icon](../example/games/minesweeper/minesweeper_icon.png)
@@ -56,9 +56,14 @@ compatible back context，再在一次 `GUI+0x074(1/0)` guard 中使用 `GUI+0x4
 顶层 frame 使用 `style=0`、`surface=0`。退出顺序为：
 
 ```text
-frame stop -> frame release -> event poll 结束 -> frame close
--> compatible context free -> bda_main return
+frame stop -> frame release -> event poll 结束/detach -> compatible context free
+-> visible draw end（若 detach 尚未归还）
+-> frame close -> bda_main return
 ```
+
+compatible context 与 visible fixed draw slot 是两种独立所有权。detach 可能先归还 visible
+slot；否则退出兜底路径先释放 compatible context，再归还 visible slot。两者都不能只清空
+本地 handle。
 
 ## 8013 结果
 
@@ -77,9 +82,15 @@ ESC UP
 STOP=0x00000001
 RELEASE=0x00000000
 BACK FREED
+DRAW ACQUIRES=0x00000001
+DRAW RELEASES=0x00000001
 FAILURES=0x00000000
 RESULT=PASS
 ```
+
+2026-07-17 又在同一个 8013 QEMU 进程、同一份 RAM 中连续执行 6 轮启动和退出。每轮
+运行时只有普通槽 0 被扫雷占用，退出后 5 个普通 draw slot 全部为空；第 6 轮没有触发
+固件满池扫描的越界缺陷。该回归直接覆盖了本次 draw context 泄漏修复。
 
 ![Minesweeper start](assets/minesweeper_v1_start.png)
 
