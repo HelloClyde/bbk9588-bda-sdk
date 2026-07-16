@@ -37,7 +37,12 @@ class StandalonePackerTest(unittest.TestCase):
     def test_public_header_enforces_dynamic_verification_boundary(self) -> None:
         include_dir = sdk_include_dir()
         header_text = (include_dir / "bda_sdk.h").read_text(encoding="utf-8")
-        policy_text = (include_dir / "README.md").read_text(encoding="utf-8")
+        policy_text = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "verified"
+            / "public_api_policy.md"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("Admission rule", header_text)
         self.assertIn("动态验证", policy_text)

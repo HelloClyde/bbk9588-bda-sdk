@@ -1,7 +1,7 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
-static unsigned char g_time_data[64];
-static unsigned char g_alarm_data[3][64];
+static bda_sys_alarm_record_like_t g_due_alarm_data;
+static bda_sys_alarm_record_like_t g_alarm_data[3];
 static char g_msg[760];
 
 static char *append_char(char *p, char c) {
@@ -55,34 +55,34 @@ int bda_main(void) {
     int ra2;
     char *p = g_msg;
 
-    bda_memset(g_time_data, 0, sizeof(g_time_data));
+    bda_memset(&g_due_alarm_data, 0, sizeof(g_due_alarm_data));
     bda_memset(g_alarm_data, 0, sizeof(g_alarm_data));
     bda_memset(g_msg, 0, sizeof(g_msg));
 
-    rt = bda_sys_time_get_like(g_time_data);
-    ra0 = bda_sys_alarm_get_like(g_alarm_data[0], 0);
-    ra1 = bda_sys_alarm_get_like(g_alarm_data[1], 1);
-    ra2 = bda_sys_alarm_get_like(g_alarm_data[2], 2);
+    rt = bda_sys_alarm_due_get_like(&g_due_alarm_data);
+    ra0 = bda_sys_alarm_get_like(&g_alarm_data[0], 0);
+    ra1 = bda_sys_alarm_get_like(&g_alarm_data[1], 1);
+    ra2 = bda_sys_alarm_get_like(&g_alarm_data[2], 2);
 
-    p = append_str(p, "time ret=");
+    p = append_str(p, "due ret=");
     p = append_hex32(p, (unsigned int)rt);
     p = append_char(p, '\n');
-    p = append_dump(p, g_time_data, 48);
+    p = append_dump(p, g_due_alarm_data.raw, 48);
 
     p = append_str(p, "\nA0 ret=");
     p = append_hex32(p, (unsigned int)ra0);
     p = append_char(p, '\n');
-    p = append_dump(p, g_alarm_data[0], 32);
+    p = append_dump(p, g_alarm_data[0].raw, 32);
 
     p = append_str(p, "\nA1 ret=");
     p = append_hex32(p, (unsigned int)ra1);
     p = append_char(p, '\n');
-    p = append_dump(p, g_alarm_data[1], 32);
+    p = append_dump(p, g_alarm_data[1].raw, 32);
 
     p = append_str(p, "\nA2 ret=");
     p = append_hex32(p, (unsigned int)ra2);
     p = append_char(p, '\n');
-    p = append_dump(p, g_alarm_data[2], 32);
+    p = append_dump(p, g_alarm_data[2].raw, 32);
 
     bda_msgbox("TimeProbe", g_msg);
     return 0;

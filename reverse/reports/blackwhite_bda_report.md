@@ -1,19 +1,19 @@
-# 黑白子.bda Report
+# 黑白子.bda 逆向报告
 
-`黑白子.bda` is a bundled category-0x04 game. It is another compact sample of
-the shared native game framework already seen in `Eros方块.bda` and `连连看.bda`.
+`黑白子.bda` 是内置分类 `0x04` 游戏。它是继 `Eros方块.bda` 和
+`连连看.bda` 之后，另一个紧凑的共享原生小游戏框架样本。
 
-## Identity and Layout
+## 头部和布局
 
 ```text
-file size      151276 bytes
-entry offset   0x95f8
-entry VA       0x81c00020
-image base     0x81bf6a28
-BSS range      0x81c1b910..0x81c27271
+文件大小         151276 bytes
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS 范围         0x81c1b910..0x81c27271
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES  0x81c1b910
@@ -23,9 +23,9 @@ FS   0x81c1b91c
 MEM  0x81c1b920
 ```
 
-## External Files
+## 外部文件
 
-Relevant strings:
+相关字符串：
 
 ```text
 \SysPet.yzj
@@ -36,12 +36,12 @@ rbf
 a:\
 ```
 
-`\BlackData.dat` is the app-specific data/save file. `\SysPet.yzj` is shared
-with the other small game framework samples.
+`\BlackData.dat` 是该应用专用数据/存档文件。`\SysPet.yzj` 与其他小游戏框架
+样本共用。
 
-## Embedded VX Resources
+## 内嵌 VX 资源
 
-The BDA embeds five VX images:
+BDA 内嵌五张 VX 图片：
 
 ```text
 0x000088  80x80
@@ -51,37 +51,33 @@ The BDA embeds five VX images:
 0x0194e4  240x95
 ```
 
-The first four match the common small-game shell resources. The extra 240x95
-resource is game-specific and likely part of the board/title/help UI.
+前四张与通用小游戏 shell 资源匹配。额外的 240x95 资源是游戏专用资源，很可能
+属于棋盘、标题或帮助 UI。
 
-## API Use
+## API 使用概览
 
-The raw call scan has 210 indirect calls. Its GUI/FS/MEM/RES distribution is
-very close to `Eros方块.bda` and `连连看.bda`, which makes this a good third
-confirmation that those apps share the same framework rather than coincidental
-code structure.
+原始调用扫描共有 210 个间接调用。GUI/FS/MEM/RES 分布非常接近
+`Eros方块.bda` 和 `连连看.bda`，因此它是第三个共享框架确认样本。
 
-Important families:
+重要调用族：
 
 ```text
-FS +0x000/+0x004/+0x008/+0x00c/+0x010/+0x014  stdio-like save/data I/O
-GUI +0x074/+0x0e0/+0x2fc/+0x35c/+0x40c/+0x414/+0x418  game render shell
+FS +0x000/+0x004/+0x008/+0x00c/+0x010/+0x014  stdio 类存档/数据 I/O
+GUI +0x074/+0x0e0/+0x2fc/+0x35c/+0x40c/+0x414/+0x418  游戏渲染 shell
 MEM +0x008/+0x00c  allocation/free
-RES +0x090/+0x094  resource-state and trace/log-like helpers
+RES +0x090/+0x094  资源状态和 trace/log 类辅助
 ```
 
-## Current Interpretation
+## 当前解释
 
-`黑白子.bda` should be treated as another baseline for the shared small-game
-shell. It reinforces these points:
+`黑白子.bda` 应作为共享小游戏 shell 的另一个基准样本。它强化了以下结论：
 
 ```text
-1. small games can embed VX resources directly in the BDA, without external DLX
-2. game save/data files are opened through the normal FS table
-3. GUI+0x414/+0x418 belong to the same render-helper family across many games
-4. RES+0x094 appearing here does not imply resource loading; hardware probes
-   already support trace/log semantics
+1. 小游戏可以把 VX 资源直接嵌入 BDA，不依赖外部 DLX
+2. 游戏存档/数据文件通过普通 FS 表打开
+3. GUI+0x414/+0x418 属于多个游戏共享的渲染辅助族
+4. RES+0x094 出现在这里不表示资源加载；硬件探针已经支持 trace/log 语义
 ```
 
-Follow-up value: compare the 240x95 resource use with the game's draw call
-sites to pin one more concrete signature for `GUI+0x414/+0x418`.
+后续价值：对比 240x95 资源的使用点和游戏绘制调用点，继续固定
+`GUI+0x414/+0x418` 的具体签名。

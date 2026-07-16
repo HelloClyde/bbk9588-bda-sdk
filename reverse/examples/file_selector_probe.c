@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static char g_message[512];
 static char g_path[260];
@@ -44,27 +44,26 @@ int bda_main(void) {
     selector.extensions = "gba";
     selector.dir_state = g_dir_state;
     selector.title = "Select game";
-    selector.reserved1c = -1;
-    selector.reserved20 = -1;
-    selector.reserved24 = -1;
+    selector.sentinel1c = -1;
+    selector.sentinel20 = -1;
+    selector.sentinel24 = -1;
 
     int r_open = bda_gui_file_selector_open_like(1);
     int r_update = 0;
     for (int i = 0; i < 16; ++i) {
-        r_update = bda_gui_file_selector_update_like(&selector);
+        r_update = bda_gui_file_selector_update_like();
         if (g_path[0] || r_update != 0) {
             break;
         }
         bda_sys_delay_like(0x1000);
     }
-    int r_get = bda_gui_file_selector_get_like();
-    int r_close = bda_gui_file_selector_close_like();
+    void *nth0 = bda_gui_list_nth_like(0, 0);
 
     char *out = g_message;
     append_result(&out, "open", r_open);
     append_result(&out, "update", r_update);
-    append_result(&out, "get", r_get);
-    append_result(&out, "close", r_close);
+    append_result(&out, "nth0", (int)nth0);
+    append_text(&out, "close=not-selector-close\n");
     append_text(&out, "path=");
     append_text(&out, g_path[0] ? g_path : "(empty)");
     append_char(&out, 0);

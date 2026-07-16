@@ -9,6 +9,29 @@ from pathlib import Path
 from bda_layout import ENTRY_SIG
 
 
+COMMON_API_TABLE_LIMIT = 0x500
+KNOWN_HIGH_API_TABLE_OFFSETS = frozenset(
+    {
+        0x50C,
+        0x540,
+        0x5D4,
+        0x670,
+        0x6A8,
+        0x6B0,
+        0x6B8,
+        0x6BC,
+        0x6C0,
+        0x6C8,
+        0x6D8,
+        0x6E0,
+        0x72C,
+        0x738,
+        0x750,
+        0x808,
+    }
+)
+
+
 def u32(data: bytes, off: int) -> int:
     return struct.unpack_from("<I", data, off)[0]
 
@@ -26,7 +49,10 @@ def scan_calls(data: bytes, start: int, end: int) -> list[dict[str, int]]:
         base = (word >> 21) & 31
         target = (word >> 16) & 31
         imm = word & 0xFFFF
-        if imm >= 0x500 or imm % 4:
+        if imm % 4 or (
+            imm >= COMMON_API_TABLE_LIMIT and
+            imm not in KNOWN_HIGH_API_TABLE_OFFSETS
+        ):
             continue
         for jalr_off in range(off + 4, min(off + 28, len(data) - 4), 4):
             if is_jalr_reg(u32(data, jalr_off), target):

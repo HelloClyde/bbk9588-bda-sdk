@@ -28,13 +28,13 @@ python -m bda_packer.validate build\HelloWorld.bda
 输入必须是定义 `bda_main()` 的 freestanding C 源码。打包器不读取已有 BDA，
 不提供 template、main patch、passthrough 或汇编打包模式。
 默认编译使用 `sdk/include/bda_sdk.h`。`sdk/include` 只公开已经由独立 BDA 动态验证的
-稳定 API；准入规则见 `sdk/include/README.md`。逆向候选接口不会自动暴露给打包器。
+稳定 API；准入规则见 `docs/verified/public_api_policy.md`。逆向候选接口不会自动暴露给打包器。
 
 测试候选 API 时，可显式增加 include 目录：
 
 ```powershell
 python -m bda_packer reverse\examples\probe.c `
-  --title Probe --category 4 -I sdk\api -o build\Probe.bda
+  --title Probe --category 4 -I reverse -o build\Probe.bda
 ```
 
 `-I/--include-dir` 可重复。自定义目录按命令行顺序搜索，并排在稳定的 `sdk/include`

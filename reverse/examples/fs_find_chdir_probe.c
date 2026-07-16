@@ -1,7 +1,7 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static char g_message[640];
-static unsigned char g_find_data[512];
+static bda_fs_find_data_like_t g_find_data;
 static const char g_app_program_dir[] = "\\\xd3\xa6\xd3\xc3\\\xb3\xcc\xd0\xf2";
 
 static void append_char(char **out, char value) {
@@ -34,11 +34,11 @@ static void append_line(char **out, const char *name, int value) {
 }
 
 static void try_find(char **out, const char *name, const char *pattern, u32 attr) {
-    bda_memset(g_find_data, 0, sizeof(g_find_data));
-    int ret = bda_fs_findfirst_like(pattern, attr, g_find_data);
+    bda_fs_find_data_init_like(&g_find_data);
+    int ret = bda_fs_findfirst_like(pattern, attr, &g_find_data);
     append_line(out, name, ret);
     if (ret != -1) {
-        bda_fs_findclose_like(g_find_data);
+        bda_fs_findclose_like(&g_find_data);
     }
 }
 

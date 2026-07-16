@@ -1,8 +1,8 @@
-# Link Game BDA report
+# 连连看.bda 逆向报告
 
-Target: `应用/程序/连连看.bda`
+目标：`应用/程序/连连看.bda`
 
-Generated evidence:
+证据：
 
 - `reverse/reports/linkgame_layout.json`
 - `reverse/reports/linkgame_calls.txt`
@@ -11,20 +11,20 @@ Generated evidence:
 - `reverse/reports/linkgame_media.txt`
 - `reverse/reports/linkgame_strings_vx.txt`
 
-## Header and layout
+## 头部和布局
 
 ```text
-title              连连看
-category           0x04
-file size          82732 bytes
-entry offset       0x95f8
-runtime entry VA   0x81c00020
-runtime file base  0x81bf6a28
-BSS/global range   0x81c0ad50..0x81c0ba91
-checksum           ok in inventory
+菜单标题         连连看
+分类             0x04
+文件大小         82732 bytes
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS/global 范围  0x81c0ad50..0x81c0ba91
+checksum          inventory 中为 ok
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES 0x81c0ad50
@@ -34,10 +34,10 @@ FS  0x81c0ad5c
 MEM 0x81c0ad60
 ```
 
-## Embedded resources and strings
+## 内嵌资源和字符串
 
-No external `\shell\*.dlx` resources are referenced. The app embeds the same
-four VX resources as `Eros方块.bda`:
+未引用外部 `\shell\*.dlx` 资源。应用内嵌了与 `Eros方块.bda` 相同的四个 VX
+资源：
 
 ```text
 0x000088  80x80
@@ -46,7 +46,7 @@ four VX resources as `Eros方块.bda`:
 0x007b98  58x58
 ```
 
-Relevant strings:
+相关字符串：
 
 ```text
 rb
@@ -57,12 +57,12 @@ a:\
 \LLKData.dat
 ```
 
-`LLKData.dat` is the game-specific save/high-score file. `SysPet.yzj` is shared
-with `Eros方块.bda`, confirming a common small-game framework dependency.
+`LLKData.dat` 是该游戏专用存档或高分文件。`SysPet.yzj` 与 `Eros方块.bda`
+共用，确认二者依赖同一个小游戏框架组件。
 
-## API usage summary
+## API 使用概览
 
-Classified indirect calls:
+已分类间接调用：
 
 ```text
 GUI   128
@@ -72,10 +72,10 @@ RES    12
 total 213
 ```
 
-The call table is almost identical to `Eros方块.bda`; the small differences are
-mostly `MEM +0x008/+0x00c` counts and app-specific data.
+调用表几乎与 `Eros方块.bda` 相同；小差异主要是 `MEM+0x008/+0x00c` 次数和
+应用专用数据。
 
-Hot offsets:
+高频偏移：
 
 ```text
 GUI +0x0e0  13
@@ -89,73 +89,74 @@ FS  +0x000/+0x004/+0x010
 RES +0x094   9
 ```
 
-## File/save behavior
+## 文件和存档行为
 
-The FS call set matches `Eros方块.bda` exactly:
-
-```text
-FS +0x000  fopen-like
-FS +0x004  fclose-like
-FS +0x008  fread-like
-FS +0x00c  fwrite-like
-FS +0x010  fseek-like
-FS +0x014  ftell-like
-FS +0x024  remove-like
-FS +0x02c  directory exists/chdir-like
-FS +0x030  mkdir-like
-FS +0x03c  findfirst-like
-FS +0x044  findclose-like
-FS +0x068  unknown helper
-```
-
-Contexts show the same pattern:
+FS 调用集合与 `Eros方块.bda` 完全匹配：
 
 ```text
-open shared/system data path with "rb"
-prepare directory if missing
-delete/recreate save file when needed
-copy/write fixed 0x44-byte records
+FS +0x000  fopen 类
+FS +0x004  fclose 类
+FS +0x008  fread 类
+FS +0x00c  fwrite 类
+FS +0x010  fseek 类
+FS +0x014  ftell 类
+FS +0x024  remove 类
+FS +0x02c  目录存在检查/chdir 类
+FS +0x030  mkdir 类
+FS +0x03c  findfirst 类
+FS +0x044  findclose 类
+FS +0x068  内部 file-object block read helper，不公开 SDK wrapper
 ```
 
-The record-copy loops and save helper are structurally the same as Eros, with
-different global offsets and the `LLKData.dat` filename.
-
-## GUI/game rendering
-
-The app uses the same standard event loop:
+上下文显示同一模式：
 
 ```text
-GUI +0x030  poll-like
-GUI +0x050  step-like
-GUI +0x054  dispatch-like
-GUI +0x17c  close/release-like
+用 "rb" 打开共享/系统数据路径
+缺失时准备目录
+需要时删除/重建存档文件
+复制/写入固定 0x44 字节记录
 ```
 
-`GUI +0x414` call contexts match Eros instruction-for-instruction except for
-global addresses. This is strong evidence that `+0x414` belongs to the shared
-game/render helper, not to Eros-specific game logic.
+记录复制循环和存档 helper 与 Eros 结构相同，只是全局偏移和 `LLKData.dat`
+文件名不同。
 
-It also uses:
+## GUI 和游戏渲染
+
+应用使用相同的标准事件循环：
 
 ```text
-GUI +0x418  region/render finish-like
-GUI +0x368  put-pixel-like, low count
-GUI +0x4f0  text draw-like
-GUI +0x2b8  message box-like
+GUI +0x030  poll 类
+GUI +0x050  step 类
+GUI +0x054  dispatch 类
+GUI +0x17c  close/release 类
 ```
 
-## Cross-checks
+除全局地址不同外，`GUI+0x414` 调用上下文与 Eros 逐指令匹配。这是强证据：
+`+0x414` 属于共享游戏/渲染 helper，而不是 Eros 专用游戏逻辑。
+C200 已确认该入口读取 `stack+0x1c` 指向的 descriptor，并使用
+`descriptor+0x04/+0x08/+0x14/+0x18`；`stack+0x14/+0x18` 是裁剪后的
+width/height gate。该 helper 可能分配临时 buffer，并按行复制裁剪后的区域。
 
-- With `Eros方块.bda`: confirms a shared small-game BDA framework and save-file
-  helper.
-- With `电子画板.bda`: confirms `GUI +0x368/+0x40c/+0x414/+0x418` are related to
-  rendering rather than text/window setup.
-- With `game_framework_notes.md`: these two apps should be treated as the
-  smallest known examples of that framework.
+应用还使用：
 
-## Open questions
+```text
+GUI +0x418  区域/渲染结束类
+GUI +0x368  put-pixel 类，次数较少
+GUI +0x4f0  文字绘制类
+GUI +0x2b8  消息框类
+```
 
-- `FS +0x068` appears once in both games and needs comparison with other game
-  BDAs before naming.
-- `GUI +0x414` stack layout is still unresolved.
-- Identify the exact structure of the 0x44-byte save/high-score record.
+## 交叉验证
+
+- 与 `Eros方块.bda`：确认共享小游戏 BDA 框架和存档 helper。
+- 与 `电子画板.bda`：确认 `GUI+0x368/+0x40c/+0x414/+0x418` 与渲染相关，
+  而不是文字/窗口建立逻辑。
+- 与 `game_framework_notes.md`：这两个应用应作为当前已知最小的小游戏框架样本。
+
+## 未确认点
+
+1. `FS+0x068` 在两个游戏中各出现一次；C200 已确认它读取内部 file object/descriptor，
+   不是公共存档 API，也不公开 SDK wrapper。
+2. `GUI+0x414` 的 stack slot 已有 C200 级别解释；高层 source/destination
+   语义仍需结合 Eros/连连看以外的原机调用点继续命名。
+3. 需要识别 `0x44` 字节存档/高分记录的准确结构。

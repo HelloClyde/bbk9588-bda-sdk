@@ -10,9 +10,15 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $archivePath = Join-Path $root $Archive
 $destPath = Join-Path $root $Destination
 $expectedDir = Join-Path $destPath "g++-mipsel-none-elf-15.2.0"
-$gcc = Join-Path $expectedDir "bin/mipsel-none-elf-gcc.exe"
+$gcc = Join-Path $destPath "bin/mipsel-none-elf-gcc.exe"
+$legacyGcc = Join-Path $expectedDir "bin/mipsel-none-elf-gcc.exe"
 
 if (Test-Path -LiteralPath $gcc) {
+    Write-Host "Toolchain already installed: $destPath"
+    exit 0
+}
+
+if (Test-Path -LiteralPath $legacyGcc) {
     Write-Host "Toolchain already installed: $expectedDir"
     exit 0
 }
@@ -27,8 +33,14 @@ New-Item -ItemType Directory -Force -Path $destPath | Out-Null
 Write-Host "Extracting $archivePath"
 Expand-Archive -LiteralPath $archivePath -DestinationPath $destPath -Force
 
-if (!(Test-Path -LiteralPath $gcc)) {
-    throw "Extraction finished, but gcc was not found at: $gcc"
+if (Test-Path -LiteralPath $gcc) {
+    Write-Host "Toolchain ready: $destPath"
+    exit 0
 }
 
-Write-Host "Toolchain ready: $expectedDir"
+if (Test-Path -LiteralPath $legacyGcc) {
+    Write-Host "Toolchain ready: $expectedDir"
+    exit 0
+}
+
+throw "Extraction finished, but gcc was not found at: $gcc or $legacyGcc"

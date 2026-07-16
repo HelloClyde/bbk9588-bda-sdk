@@ -1,20 +1,5 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
-typedef struct bda_frame_desc_like {
-    u32 style;
-    u32 reserved04;
-    const char *title;
-    u32 reserved0c;
-    u32 reserved10;
-    u32 reserved14;
-    int (*proc)(bda_handle_t, u32, u32, u32);
-    u32 reserved1c;
-    u32 reserved20;
-    u32 height;
-    u32 width;
-    void *surface;
-    u32 reserved30;
-} bda_frame_desc_like_t;
 
 static bda_handle_t g_window;
 
@@ -48,17 +33,17 @@ static int probe_window_proc(bda_handle_t handle, u32 message, u32 wparam, u32 l
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_frame_desc_like_t desc;
-    u32 msg[14];
+    bda_gui_message_like_t msg;
 
     bda_memset(&desc, 0, sizeof(desc));
-    bda_memset(msg, 0, sizeof(msg));
+    bda_memset(&msg, 0, sizeof(msg));
 
     desc.style = 0x08000000u;
     desc.title = "WinV4";
-    desc.proc = probe_window_proc;
+    desc.wndproc = probe_window_proc;
     desc.height = 240;
     desc.width = 320;
-    desc.surface = bda_gui_frame_surface_like(15);
+    desc.surface = (u32)bda_gui_draw_object_create_like(15);
 
     g_window = (bda_handle_t)bda_gui_register_frame_like(&desc);
     if ((s32)g_window == -1 || !g_window) {
@@ -69,9 +54,9 @@ int bda_main(void) {
     bda_gui_frame_activate_like(g_window, 0x100);
     bda_gui_send(g_window, 0x66, 0, 0);
 
-    while (bda_gui_event_poll_like(msg, g_window)) {
-        bda_gui_event_step_like();
-        bda_gui_event_dispatch_like(msg);
+    while (bda_gui_event_poll_like(&msg, g_window)) {
+        bda_gui_event_step_like(&msg);
+        bda_gui_event_dispatch_like(&msg);
     }
 
     return 0;

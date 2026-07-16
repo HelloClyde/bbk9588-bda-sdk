@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {

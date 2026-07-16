@@ -1,34 +1,34 @@
-# 闹钟.bda Analysis Report
+# 闹钟.bda 逆向报告
 
-## Status
+## 状态
 
-First static report focused on RTC/alarm APIs. This report cross-checks
-`时间.bda` and `time_notes.md`.
+首版静态报告，重点是 RTC/闹钟 API。本报告与 `时间.bda` 和
+`time_notes.md` 互相验证。
 
-Evidence:
+证据：
 
 ```text
 应用/程序/闹钟.bda
 reverse/reports/alarm_layout.json
 reverse/reports/alarm_calls.txt
-reverse/sdk/time_notes.md
-reverse/sdk/window_notes.md
+reverse/docs/time_notes.md
+reverse/docs/window_notes.md
 ```
 
-## Header And Layout
+## 头部和布局
 
 ```text
-file size          88,476 bytes
-menu title         闹钟
-category           0x09
-entry file offset  0x95f8
-runtime entry VA   0x81c00020
-runtime file base  0x81bf6a28
+文件大小          88,476 bytes
+菜单标题         闹钟
+分类           0x09
+入口文件偏移  0x95f8
+运行时入口 VA   0x81c00020
+运行时文件基址  0x81bf6a28
 BSS                0x81c0c3c0..0x81e0d301
-header checksum    ok
+头部 checksum    ok
 ```
 
-Cached runtime table globals:
+缓存的运行时表全局变量：
 
 ```text
 RES  0x81c0c3c0
@@ -38,63 +38,63 @@ FS   0x81c0c3cc
 MEM  0x81c0c3d0
 ```
 
-External resources:
+外部资源：
 
 ```text
 \shell\naoling_A.dlx
 \shell\naoling_B.dlx
 ```
 
-## API Usage Summary
+## API 使用概览
 
-`闹钟.bda` has 443 classified indirect runtime-table calls:
+`闹钟.bda` 包含 443 个已分类的运行时表间接调用：
 
 ```text
-SYS +0x080   6 calls  delay/sleep-like
-SYS +0x0a8   4 calls  alarm/time commit or refresh-like
-SYS +0x0ac   3 calls  alarm set-like
-SYS +0x0b0   3 calls  alarm get-like
-SYS +0x0b8   4 calls  time/RTC get-like
+SYS +0x080   6 次  delay/sleep-like
+SYS +0x0a8   4 次  C200 no-op stub 调用点记录
+SYS +0x0ac   3 次  alarm set-like
+SYS +0x0b0   3 次  alarm get-like
+SYS +0x0b8   4 次  alarm due record get-like
 
-GUI +0x074  42 calls  draw/present guard
-GUI +0x4f0  27 calls  draw text-like
-GUI +0x308  23 calls  begin draw
-GUI +0x30c  21 calls  end draw
-GUI +0x084   5 calls  register frame
-GUI +0x030   5 calls  event poll
-GUI +0x050   5 calls  event step
-GUI +0x054   5 calls  event dispatch
-GUI +0x17c   5 calls  frame close/release
+GUI +0x074  42 次  draw/present guard
+GUI +0x4f0  27 次  draw text-like
+GUI +0x308  23 次  begin draw
+GUI +0x30c  21 次  end draw
+GUI +0x084   5 次  register frame
+GUI +0x030   5 次  event poll
+GUI +0x050   5 次  event step
+GUI +0x054   5 次  event dispatch
+GUI +0x17c   5 次  frame close/release
 
-FS  +0x000  15 calls  open/fopen-like
-FS  +0x004  15 calls  close/fclose-like
-FS  +0x03c   2 calls  findfirst-like
-FS  +0x044   2 calls  findclose-like
-FS  +0x07c   2 calls  storage-ready-like
+FS  +0x000  15 次  open/fopen-like
+FS  +0x004  15 次  close/fclose-like
+FS  +0x03c   2 次  findfirst-like
+FS  +0x044   2 次  findclose-like
+FS  +0x07c   2 次  storage-ready-like
 ```
 
-## RTC And Alarm API Evidence
+## RTC 和闹钟 API 证据
 
-This app is the clearest sample for clock/alarm SDK calls:
+这个应用是时钟/闹钟 SDK 调用最清晰的样本：
 
 ```text
-SYS+0x0b8  time/RTC get-like
+SYS+0x0b8  alarm due record get-like
 SYS+0x0b0  alarm get-like
 SYS+0x0ac  alarm set-like
-SYS+0x0a8  alarm/time commit/refresh-like
+SYS+0x0a8  C200 no-op stub，旧 commit/refresh 猜测已废弃
 ```
 
-This cross-checks the earlier `time_probe.c` design: probes should read
-`SYS+0x0b8` and `SYS+0x0b0`, but avoid `SYS+0x0ac` and `SYS+0x0a8` unless the
-struct layout is fully known, because those likely write settings.
+这与早期 `time_probe.c` 设计互相印证：探针可以读取 `SYS+0x0b8` 的 due
+alarm record 和 `SYS+0x0b0`，但在结构体布局完全确认前应避免调用 `SYS+0x0ac`。后续 C200
+反汇编确认 `SYS+0x0a8 -> 0x8001415c` 只有 `jr ra; nop`，因此它不是已确认
+提交或持久化入口，SDK 也不再公开对应 wrapper。
 
-`时间.bda` uses many `SYS+0x080` delay calls but does not expose the direct
-`SYS+0x0b8` path in the current scanner. Therefore `闹钟.bda` should be treated
-as the authoritative sample for RTC/alarm function signatures.
+`时间.bda` 大量使用 `SYS+0x080` delay 调用，但当前扫描器没有暴露直接的
+`SYS+0x0b8` 路径。因此 `闹钟.bda` 应作为 alarm/RTC 相关函数签名的权威样本。
 
-## UI Behavior
+## UI 行为
 
-The app uses a normal native window lifecycle:
+该应用使用正常的原生窗口生命周期：
 
 ```text
 GUI+0x084  register frame
@@ -104,32 +104,29 @@ GUI+0x054  event dispatch
 GUI+0x17c  frame close/release
 ```
 
-It also uses the same text drawing cluster seen in `记事本.bda` and `时间.bda`:
+它也使用了与 `记事本.bda`、`时间.bda` 相同的文字绘制调用簇：
 
 ```text
-GUI+0x338  text mode-like
-GUI+0x378  RGB/color helper-like
-GUI+0x33c  set text color-like
-GUI+0x4f0  draw text-like
+GUI+0x338  文字模式候选
+GUI+0x378  RGB/颜色辅助候选
+GUI+0x33c  设置文字颜色候选
+GUI+0x4f0  绘制文字候选
 ```
 
-## File-System Behavior
+## 文件系统行为
 
-The FS calls are mostly configuration/resource related, not heavy media
-scanning. The presence of `FS+0x03c/+0x044` without much `FS+0x040` suggests
-short directory checks or one-shot scans.
+FS 调用主要与配置/资源有关，不像重型媒体扫描。`FS+0x03c/+0x044` 出现而
+`FS+0x040` 很少，说明这里可能是短目录检查或一次性扫描。
 
-## Unknowns
+## 未确认点
 
-1. Exact RTC struct layout returned by `SYS+0x0b8`.
-2. Exact alarm struct layout used by `SYS+0x0b0/+0x0ac`.
-3. Meaning of `SYS+0x0a8` arguments and whether it commits to persistent
-   storage or refreshes firmware alarm state.
-4. Alarm sound file/resource selection path.
+1. `SYS+0x0b8` 输出的 due alarm record 字段布局。
+2. `SYS+0x0b0/+0x0ac` 使用的闹钟结构体准确布局。
+3. 闹钟声音文件/资源选择路径。
 
-## Next Static Tasks
+## 后续静态任务
 
-1. Extract contexts around all `SYS+0x0b8/+0x0b0/+0x0ac/+0x0a8` calls.
-2. Compare with `系统设置.bda` for date/time setting UI.
-3. Update `time_probe.c` output interpretation after struct fields are mapped.
+1. 提取全部 `SYS+0x0b8/+0x0b0/+0x0ac` 调用上下文。
+2. 与 `系统设置.bda` 的日期/时间设置 UI 对比。
+3. 映射结构体字段后，更新 `time_probe.c` 输出解释。
 

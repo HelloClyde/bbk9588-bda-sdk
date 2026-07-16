@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 typedef int (*bda_system_printf_fn)(const char *fmt, ...);
 

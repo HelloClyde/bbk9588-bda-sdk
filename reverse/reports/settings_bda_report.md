@@ -1,8 +1,8 @@
-# Settings BDA report
+# 系统设置.bda 逆向报告
 
-Target: `应用/程序/系统设置.bda`
+目标：`应用/程序/系统设置.bda`
 
-Generated evidence:
+证据：
 
 - `reverse/reports/settings_layout.json`
 - `reverse/reports/settings_calls.txt`
@@ -12,20 +12,20 @@ Generated evidence:
 - `reverse/reports/settings_media.txt`
 - `reverse/reports/settings_dlx.txt`
 
-## Header and layout
+## 头部和布局
 
 ```text
-title              系统设置
-category           0x09
-file size          556140 bytes
-entry offset       0x95f8
-runtime entry VA   0x81c00020
-runtime file base  0x81bf6a28
-BSS/global range   0x81c7e690..0x81c7fa61
-checksum           ok in inventory
+菜单标题         系统设置
+分类             0x09
+文件大小         556140 bytes
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS/global 范围  0x81c7e690..0x81c7fa61
+checksum          inventory 中为 ok
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES 0x81c7e690
@@ -35,9 +35,9 @@ FS  0x81c7e69c
 MEM 0x81c7e6a0
 ```
 
-## External resources
+## 外部资源
 
-The BDA references five shell resources:
+该 BDA 引用五个 shell 资源：
 
 ```text
 \shell\SysSet.dlx
@@ -47,31 +47,30 @@ The BDA references five shell resources:
 \shell\sysset_add_black.dlx
 ```
 
-All are present under `应用/数据/shell`. `dlx_inspect.py` reports that every
-resource entry in these files is type 1 VX RGB565 image data.
+这些文件都存在于 `应用/数据/shell`。`dlx_inspect.py` 显示这些文件中的每个
+资源条目都是 type 1 VX RGB565 图片数据。
 
-Important packages:
+重要包：
 
 ```text
 SysSet.dlx / SysSetnew.dlx
-  29 VX images
-  includes 240x320 full-screen backgrounds, 197x153 panels, 139x59 buttons
+  29 张 VX 图片
+  包含 240x320 全屏背景、197x153 面板、139x59 按钮
 
 sysset_skin.dlx
-  2 VX images
-  both 240x320
+  2 张 VX 图片
+  都是 240x320
 
 sysset_add_blue.dlx / sysset_add_black.dlx
-  3 VX images
-  240x30 and 240x25 list/status strips
+  3 张 VX 图片
+  240x30 和 240x25 列表/状态条
 ```
 
-This strengthens the current DLX model: production UI skins are ordinary DLX
-containers full of VX images.
+这强化了当前 DLX 模型：量产 UI 皮肤是由 VX 图片组成的普通 DLX 容器。
 
-## API usage summary
+## API 使用概览
 
-Classified indirect calls:
+已分类间接调用：
 
 ```text
 GUI      777
@@ -83,7 +82,7 @@ UNKNOWN    5
 total   1001
 ```
 
-Hot offsets:
+高频偏移：
 
 ```text
 GUI +0x3f8  58
@@ -100,68 +99,64 @@ RES +0x090/+0x094
 SYS +0x080/+0x09c
 ```
 
-Settings is mostly a GUI/storage/configuration app. It does not provide strong
-audio/video ABI evidence, but it is one of the best current sources for storage
-status and skinned settings pages.
+系统设置主要是 GUI、存储和配置应用。它不能提供强音视频 ABI 证据，但它是当前
+研究存储状态和带皮肤设置页面的最佳样本之一。
 
-## Disk/storage information
+## 磁盘和存储信息
 
-`FS +0x048` is called 17 times. The call shape is stable:
+`FS+0x048` 被调用 17 次，调用形态稳定：
 
 ```text
 a0 = 0
-a1 = caller-owned info struct
-return = status-like
+a1 = 调用者持有的 info struct
+return = 状态类返回值
 ```
 
-Immediately after the call, the app multiplies three words:
+调用后应用立即把三个 word 相乘：
 
 ```text
 word(info+0x04) * word(info+0x08) * word(info+0x0c)
 ```
 
-Examples:
+示例：
 
 ```text
 0x81c00a6c: FS+0x048(0, sp+0x30)
-  uses sp+0x34, sp+0x38, sp+0x3c
+  使用 sp+0x34, sp+0x38, sp+0x3c
 
 0x81c02fa0: FS+0x048(0, sp+0x230)
-  uses sp+0x234, sp+0x238, sp+0x23c
-  compares total against 0x200000
+  使用 sp+0x234, sp+0x238, sp+0x23c
+  与 0x200000 比较
 
 0x81c03254: FS+0x048(0, sp+0x28)
-  uses sp+0x2c, sp+0x30, sp+0x34
+  使用 sp+0x2c, sp+0x30, sp+0x34
 ```
 
-This pins `FS +0x048` as a disk/storage information helper. The structure is
-probably FAT-like, with fields such as bytes-per-sector, sectors-per-cluster,
-and cluster count or free-cluster count. Exact field names still need a probe
-that prints the returned words on hardware.
+这把 `FS+0x048` 固定为磁盘/存储信息辅助。结合 C200 反汇编，SDK 已暴露
+`bda_fs_disk_info_like_t`，其中 `info+0x04/+0x08/+0x0c` 可用于计算剩余容量。
 
-## File-system behavior
+## 文件系统行为
 
-Settings uses the standard FS group:
+系统设置使用标准 FS 调用组：
 
 ```text
-FS +0x000  fopen-like
-FS +0x004  fclose-like
-FS +0x008  fread-like
-FS +0x00c  fwrite-like
-FS +0x010  fseek-like
-FS +0x014  ftell-like
-FS +0x024  remove-like
-FS +0x02c  directory exists/chdir-like
-FS +0x030  mkdir-like
-FS +0x03c  findfirst-like
-FS +0x040  findnext-like
-FS +0x044  findclose-like
-FS +0x048  disk-info-like
-FS +0x07c  storage-ready-like
+FS +0x000  fopen 类
+FS +0x004  fclose 类
+FS +0x008  fread 类
+FS +0x00c  fwrite 类
+FS +0x010  fseek 类
+FS +0x014  ftell 类
+FS +0x024  remove 类
+FS +0x02c  目录存在检查/chdir 类
+FS +0x030  mkdir 类
+FS +0x03c  findfirst 类
+FS +0x040  findnext 类
+FS +0x044  findclose 类
+FS +0x048  disk-info 类
+FS +0x07c  storage-ready 类
 ```
 
-The app uses file reads/writes for configuration data and scans files by
-extension:
+应用通过文件读写保存配置数据，并按扩展名扫描文件：
 
 ```text
 .bmp
@@ -171,51 +166,48 @@ extension:
 .mp3
 ```
 
-This cross-checks the file selector/media-extension behavior seen in Album,
-Music, Recorder, and Ebook.
+这与相册、音乐、录音和电子图书中的文件选择/媒体扩展名行为互相验证。
 
-## GUI behavior
+## GUI 行为
 
-Settings uses many complete event loops:
+系统设置使用许多完整事件循环：
 
 ```text
-GUI +0x030  poll-like
-GUI +0x050  step-like
-GUI +0x054  dispatch-like
-GUI +0x17c  destroy/close-like
+GUI +0x030  poll 类
+GUI +0x050  step 类
+GUI +0x054  dispatch 类
+GUI +0x17c  destroy/close 类
 ```
 
-`GUI +0x3f8` appears 58 times. Typical calls:
+`GUI+0x3f8` 出现 58 次。典型调用：
 
 ```text
 a0 = destination/surface
 a1 = source/resource pointer
-a2 = width-like, often 0x27 or 0x28
-a3 = height-like, often 0x10..0x12
+a2 = width 类，常见 0x27 或 0x28
+a3 = height 类，常见 0x10..0x12
 sp+0x10 = buffer/style pointer
 ```
 
-The caller often inverts a small output buffer byte-by-byte right after the
-call, suggesting `GUI +0x3f8` is an image/text-to-buffer or bitmap-copy helper
-used for highlighted/disabled settings items. It should stay provisional until
-compared with games and system code.
+调用者经常在调用后逐字节反转小输出缓冲，因此 `GUI+0x3f8` 可能是图片/文字到
+缓冲区或 bitmap-copy 辅助，用于高亮/禁用设置项。这个判断在与游戏和系统代码
+继续对比前仍应保持 provisional。
 
-The app also uses the established text and color helpers:
+应用还使用已建立的文字和颜色辅助：
 
 ```text
 GUI +0x338/+0x33c/+0x378/+0x4f0
 ```
 
-## Cross-checks
+## 交叉验证
 
-- Confirms `FS +0x048` disk-info semantics more strongly than previous apps.
-- Confirms `FS +0x03c/+0x040/+0x044` directory enumeration in a settings UI.
-- Confirms `RES +0x094` is logging/trace-like, not DLX loading.
-- Confirms DLX UI skins are VX-only packages.
+- 比其他应用更强地确认 `FS+0x048` disk-info 语义。
+- 确认设置 UI 中也使用 `FS+0x03c/+0x040/+0x044` 目录枚举。
+- 确认 `RES+0x094` 接近 logging/trace，不是 DLX 加载。
+- 确认 DLX UI 皮肤是纯 VX 图片包。
 
-## Open questions
+## 未确认点
 
-- Name each field returned by `FS +0x048`.
-- Determine whether `GUI +0x3f8/+0x400` are image buffer conversion, masked
-  blit, or disabled-item rendering helpers.
-- Map the configuration files/settings records written through `FS +0x00c`.
+1. `FS+0x048` 返回结构中每个字段的最终名称。
+2. `GUI+0x3f8/+0x400` 是图片缓冲转换、masked blit，还是禁用项渲染辅助。
+3. 通过 `FS+0x00c` 写入的配置文件和设置记录格式。

@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240

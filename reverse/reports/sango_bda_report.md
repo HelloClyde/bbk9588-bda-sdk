@@ -1,21 +1,20 @@
-# 三国霸业.bda Report
+# 三国霸业.bda 逆向报告
 
-`三国霸业.bda` is a bundled category-0x04 game. It shares the same native game
-shell and embedded VX header resources as the other games, but its external
-`\sango.lib` package is not handled through the `SYS+0x040..0x068` packed sound
-cluster. It is instead parsed by app code through FS and MEM helpers.
+`三国霸业.bda` 是内置分类 `0x04` 游戏。它与其他游戏共享原生游戏 shell 和
+内嵌 VX 头部资源，但外部 `\sango.lib` 包没有通过 `SYS+0x040..0x068` 打包
+音效调用簇处理，而是由应用代码通过 FS 和 MEM 辅助自行解析。
 
-## Identity and Layout
+## 头部和布局
 
 ```text
-file size      214700 bytes
-entry offset   0x95f8
-entry VA       0x81c00020
-image base     0x81bf6a28
-BSS range      0x81c2b0d0..0x81c2ba71
+文件大小         214700 bytes
+入口文件偏移     0x95f8
+运行时入口 VA    0x81c00020
+运行时文件基址   0x81bf6a28
+BSS 范围         0x81c2b0d0..0x81c2ba71
 ```
 
-Runtime table globals:
+运行时表全局变量：
 
 ```text
 RES  0x81c2b0d0
@@ -25,27 +24,26 @@ FS   0x81c2b0dc
 MEM  0x81c2b0e0
 ```
 
-## External Files
+## 外部文件
 
-Relevant strings:
+相关字符串：
 
 ```text
 \sango.lib
 rbf
 ```
 
-The string xref around `0x81c13d80` builds a path into a stack buffer, opens it
-through the FS wrapper, seeks to the end, takes the file size, allocates memory,
-and reads data back into app-owned buffers. Later code reopens numbered or
-derived package entries and copies fixed-size pieces into many BSS structures.
+`0x81c13d80` 附近的字符串交叉引用会在栈缓冲中构造路径，通过 FS wrapper
+打开文件、seek 到末尾、取得文件大小、分配内存，并把数据读回应用自有缓冲区。
+后续代码会重新打开编号或派生出的包条目，把固定大小片段复制到多个 BSS 结构。
 
-Unlike `雷霆战机.bda` and `决战坦克.bda`, there are no `SYS+0x040..0x068` calls in
-the raw scan. That makes `\sango.lib` a different kind of game data package, not
-currently evidence for the packed sound-effect system API.
+与 `雷霆战机.bda` 和 `决战坦克.bda` 不同，原始扫描中没有
+`SYS+0x040..0x068` 调用。因此 `\sango.lib` 属于另一类游戏数据包，当前不能
+作为打包音效系统 API 的证据。
 
-## Embedded VX Resources
+## 内嵌 VX 资源
 
-The app embeds the same four common small-game shell VX resources:
+应用内嵌相同的四个通用小游戏 shell VX 资源：
 
 ```text
 0x000088  80x80
@@ -54,41 +52,43 @@ The app embeds the same four common small-game shell VX resources:
 0x007b98  58x58
 ```
 
-## API Use
+## API 使用概览
 
-The raw call scan has 176 indirect calls:
+原始调用扫描共有 176 个间接调用：
 
 ```text
-FS +0x000/+0x004/+0x008/+0x00c/+0x010/+0x014  package I/O
-FS +0x018/+0x01c/+0x020/+0x028                 extra stdio-like helpers
-FS +0x030                                     mkdir-like helper
-FS +0x068/+0x06c                              stat/access-like helpers
+FS +0x000/+0x004/+0x008/+0x00c/+0x010/+0x014  包 I/O
+FS +0x018/+0x01c/+0x020/+0x028                 额外 stdio 类辅助
+FS +0x030                                      mkdir 类辅助
+FS +0x068                                      内部 file-object block read helper，不公开 SDK wrapper
+FS +0x06c                                      stat/access 类辅助
 
-GUI +0x030/+0x050/+0x054  event loop
-GUI +0x084/+0x088/+0x08c/+0x17c  frame lifecycle
-GUI +0x074  frequent pump/present/update-like call
-GUI +0x2fc/+0x35c/+0x40c/+0x414/+0x418  render-helper family
-GUI +0x3f8/+0x400  framebuffer/region blit-like pair
+GUI +0x030/+0x050/+0x054  事件循环
+GUI +0x084/+0x088/+0x08c/+0x17c  frame 生命周期
+GUI +0x074  高频 pump/present/update 类调用
+GUI +0x2fc/+0x35c/+0x40c/+0x414/+0x418  渲染辅助族
+GUI +0x3f8/+0x400  framebuffer/区域 blit 调用对
 
 MEM +0x008/+0x00c  allocation/free
-RES +0x094         trace/log-like helper
+RES +0x094         trace/log 类辅助
 ```
 
-FS contexts around `0x81c1653c`, `0x81c16754`, `0x81c16884`, and
-`0x81c16b20` repeatedly build small numbered paths, open package entries, read
-records, and copy them into globals. This looks like scenario/save/resource
-state rather than a generic system loader.
+`0x81c1653c`、`0x81c16754`、`0x81c16884`、`0x81c16b20` 附近的 FS 上下文会
+反复构造小编号路径、打开包条目、读取记录，并复制到全局变量。这更像剧情、
+存档或资源状态，而不是通用系统 loader。
 
-## Current Interpretation
+## 当前解释
 
-`三国霸业.bda` is useful precisely because it is a counterexample:
+`三国霸业.bda` 的价值在于它是一个反例：
 
 ```text
-1. it proves that not every game .lib file means SYS package sound
-2. it confirms the common game GUI/VX shell without the sound cluster
-3. it shows another app-owned package format built on plain FS/MEM calls
-4. it provides extra evidence for FS+0x068/+0x06c as access/stat-like helpers
+1. 不是每个游戏 .lib 文件都表示 SYS 打包音效
+2. 它确认了没有音效调用簇时仍可使用通用游戏 GUI/VX shell
+3. 它展示了另一种基于普通 FS/MEM 调用的应用私有包格式
+4. 它展示了内部 file-object block read helper 与 stat/access 类辅助会在私有包解析中相邻出现
 ```
 
-Practical SDK implication: expose the FS/MEM primitives and leave `sango.lib`
-as an app-private package format until the package header/chunk table is mapped.
+对 SDK 的实际含义：应暴露并记录 FS/MEM 原语；在包头和 chunk 表映射清楚前，
+把 `sango.lib` 视为应用私有包格式。`FS+0x068` 不是 public stat/access API，
+也不是普通存档 API；C200 已确认它读取内部 file object/descriptor，普通开发继续
+使用 `fopen/fread/fclose` 或 `bda_fs_read_bytes_raw()` 路径。

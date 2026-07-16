@@ -69,21 +69,27 @@ def parse_global(items: list[str]) -> dict[int, str]:
     result = {}
     for item in items:
         if "=" not in item:
-            raise SystemExit(f"bad --global item {item!r}; use NAME=0xADDR")
+            raise SystemExit(f"错误的 --global 项 {item!r}；格式应为 NAME=0xADDR")
         name, value = item.split("=", 1)
         result[int(value, 0)] = name
     return result
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Classify indirect BDA API calls by the table global that feeds them.")
-    ap.add_argument("bda", type=Path)
-    ap.add_argument("--base", type=lambda x: int(x, 0), default=None)
-    ap.add_argument("--global", dest="globals", action="append", default=[])
-    ap.add_argument("--samples", type=int, default=4)
-    ap.add_argument("--context", action="store_true")
-    ap.add_argument("--table", default=None, help="Only print samples/counts for this table name, e.g. FS.")
-    ap.add_argument("--offset", type=lambda x: int(x, 0), default=None, help="Only print samples/counts for this API offset.")
+    ap = argparse.ArgumentParser(
+        description="按缓存 table global 给 BDA 间接 API 调用分类，并可输出调用点反汇编上下文。",
+        add_help=False,
+    )
+    ap._positionals.title = "位置参数"
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("bda", type=Path, help="要扫描的原机 BDA 文件")
+    ap.add_argument("--base", type=lambda x: int(x, 0), default=None, help="运行时文件基址；默认从 BDA header/layout 推导")
+    ap.add_argument("--global", dest="globals", action="append", default=[], help="手工指定 table global，例如 GUI=0x81c16ba4；可重复")
+    ap.add_argument("--samples", type=int, default=4, help="每组 table/offset 输出的 sample 数量")
+    ap.add_argument("--context", action="store_true", help="输出每个 sample 周围的 MIPS 反汇编上下文")
+    ap.add_argument("--table", default=None, help="只输出指定 table，例如 GUI、FS、SYS、MEM、RES")
+    ap.add_argument("--offset", type=lambda x: int(x, 0), default=None, help="只输出指定 API 表内 offset，例如 0x3f8")
     ns = ap.parse_args()
 
     data = ns.bda.read_bytes()

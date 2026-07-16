@@ -6,12 +6,8 @@ import json
 from pathlib import Path
 
 from bda_api_scan import scan_calls
+from bda_header import checksum_ok, get_title, get_decoded_word
 from bda_layout import analyze
-
-
-XOR_KEY = 0x44525744
-CHECKSUM_OFF = 0x84
-CHECKSUM_XOR_KEY = 0x322D464B
 
 
 def u32(data: bytes, off: int) -> int:
@@ -19,29 +15,7 @@ def u32(data: bytes, off: int) -> int:
 
 
 def decode_word(data: bytes, off: int) -> int:
-    return u32(data, off) ^ XOR_KEY
-
-
-def title(data: bytes) -> str:
-    raw = data[0x2C:0x3C].split(b"\0", 1)[0]
-    for enc in ("gbk", "ascii", "latin1"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            pass
-    return raw.decode("latin1", "replace")
-
-
-def checksum_ok(data: bytes) -> bool:
-    if len(data) < CHECKSUM_OFF + 4:
-        return False
-    buf = bytearray(data[:CHECKSUM_OFF])
-    for off in range(0, 0x2C, 4):
-        decoded = int.from_bytes(buf[off : off + 4], "little") ^ XOR_KEY
-        buf[off : off + 4] = decoded.to_bytes(4, "little")
-    expected = sum(buf) & 0xFFFFFFFF
-    actual = u32(data, CHECKSUM_OFF) ^ CHECKSUM_XOR_KEY
-    return expected == actual
+    return get_decoded_word(data, off)
 
 
 def header(data: bytes) -> dict[str, object]:
@@ -53,7 +27,7 @@ def header(data: bytes) -> dict[str, object]:
         "entry_offset_header": words[5] if len(words) > 5 else None,
         "icon_base": words[6] if len(words) > 6 else None,
         "icon_sizes": words[7:11] if len(words) >= 11 else [],
-        "title": title(data),
+        "title": get_title(data),
         "checksum_ok": checksum_ok(data),
     }
 
@@ -89,11 +63,11 @@ def analyze_bda(path: Path) -> dict[str, object]:
 def write_markdown(items: list[dict[str, object]], out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
-    lines.append("# Native BDA Inventory")
+    lines.append("# 原生 BDA 清点索引")
     lines.append("")
-    lines.append("Generated from the original app directory (`*.bda`). This is an index for per-app reports; it is not a full analysis by itself.")
+    lines.append("本索引由原始应用目录中的 `*.bda` 生成，用于给逐应用逆向报告提供清单；它本身不是完整分析。")
     lines.append("")
-    lines.append("| BDA | Size | Title | Cat | Entry | BSS | Checksum | Hot API Offsets | DLX refs |")
+    lines.append("| BDA | 大小 | 标题 | 分类 | 入口 | BSS | 校验 | 高频 API Offset | DLX 引用 |")
     lines.append("| --- | ---: | --- | ---: | ---: | --- | --- | --- | ---: |")
     for item in items:
         h = item["header"]
@@ -120,23 +94,32 @@ def write_markdown(items: list[dict[str, object]], out: Path) -> None:
             )
         )
     lines.append("")
-    lines.append("## Notes")
+    lines.append("## 说明")
     lines.append("")
-    lines.append("- `Hot API Offsets` are raw indirect call offsets before table classification.")
-    lines.append("- Per-app reports should use this inventory as a checklist, then add function-level evidence and cross references to SDK notes.")
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lines.append("- `高频 API Offset` 是表分类之前统计到的原始间接调用 offset。")
+    lines.append("- 逐应用报告应把本索引当作清单，再补充函数级证据以及和 SDK 文档的交叉引用。")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Build an inventory for native BBK BDA applications.")
-    ap.add_argument("--root", type=Path, default=Path("应用") / "程序")
-    ap.add_argument("--json-out", type=Path, default=Path("reverse") / "reports" / "bda_inventory.json")
-    ap.add_argument("--md-out", type=Path, default=Path("reverse") / "reports" / "bda_inventory.md")
+    ap = argparse.ArgumentParser(
+        description="生成步步高原生 BDA 应用清点索引。",
+        add_help=False,
+    )
+    ap._optionals.title = "选项"
+    ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("--root", type=Path, default=Path("应用") / "程序", help="原机应用 BDA 目录")
+    ap.add_argument("--json-out", type=Path, default=Path("reverse") / "reports" / "bda_inventory.json", help="输出 JSON 清点文件")
+    ap.add_argument("--md-out", type=Path, default=Path("reverse") / "reports" / "bda_inventory.md", help="输出 Markdown 索引")
     ns = ap.parse_args()
 
     items = [analyze_bda(path) for path in sorted(ns.root.glob("*.bda"))]
     ns.json_out.parent.mkdir(parents=True, exist_ok=True)
-    ns.json_out.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    ns.json_out.write_text(
+        json.dumps(items, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        newline="\n",
+    )
     write_markdown(items, ns.md_out)
     print(f"files={len(items)}")
     print(f"json={ns.json_out}")

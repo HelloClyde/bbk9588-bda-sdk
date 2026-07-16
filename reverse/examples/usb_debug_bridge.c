@@ -1,4 +1,4 @@
-#include "../sdk/bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static const char k_debug_dir[] = "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\debug";
 static const char k_log_path[] = "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\debug\\usbdebug.log";
