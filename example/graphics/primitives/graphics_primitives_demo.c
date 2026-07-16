@@ -5,9 +5,37 @@
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
+static bda_handle_t g_draw_owner;
 static void *g_draw_object;
 static int g_dirty;
 static int g_exit;
+
+static void release_draw_context(void) {
+    bda_handle_t draw = g_draw;
+
+    if (!draw || (s32)draw == -1) {
+        g_draw = 0;
+        g_draw_owner = 0;
+        return;
+    }
+    g_draw = 0;
+    g_draw_owner = 0;
+    bda_gui_end_draw(draw);
+}
+
+static int acquire_draw_context(bda_handle_t owner) {
+    if (g_draw && g_draw_owner == owner) {
+        return 1;
+    }
+    release_draw_context();
+    g_draw = bda_gui_current_draw(owner);
+    if (!g_draw || (s32)g_draw == -1) {
+        g_draw = 0;
+        return 0;
+    }
+    g_draw_owner = owner;
+    return 1;
+}
 
 static u32 color(u32 red, u32 green, u32 blue) {
     return (u32)bda_gui_rgb(g_draw, red, green, blue);
@@ -118,7 +146,7 @@ static int graphics_window_proc(
 ) {
     if (message == BDA_MSG_DRAW_CONTEXT_ATTACH) {
         g_frame = handle;
-        g_draw = bda_gui_current_draw(handle);
+        (void)acquire_draw_context(handle);
         if (!g_draw_object) {
             g_draw_object = bda_gui_draw_object_create(7);
         }
@@ -128,7 +156,10 @@ static int graphics_window_proc(
         g_dirty = 1;
         draw_scene();
     } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
-        g_draw = 0;
+        if (!g_draw_owner || g_draw_owner == handle) {
+            release_draw_context();
+        }
+        g_exit = 1;
     }
     return bda_gui_default_proc(handle, message, wparam, lparam);
 }
@@ -145,11 +176,14 @@ __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_frame_desc_t descriptor;
     bda_gui_message_t message;
+    int close_requested = 0;
+    u32 close_wait = 0;
 
     bda_memset(&descriptor, 0, sizeof(descriptor));
     bda_memset(&message, 0, sizeof(message));
     g_frame = 0;
     g_draw = 0;
+    g_draw_owner = 0;
     g_draw_object = 0;
     g_dirty = 1;
     g_exit = 0;
@@ -167,32 +201,48 @@ int bda_main(void) {
         return 1;
     }
     (void)bda_gui_frame_activate(g_frame, 0x100);
-    if (!g_draw) {
-        g_draw = bda_gui_current_draw(g_frame);
-    }
+    (void)acquire_draw_context(g_frame);
     if (!g_draw_object) {
         g_draw_object = bda_gui_draw_object_create(7);
     }
     if (!g_draw || !g_draw_object || (s32)(u32)g_draw_object == -1) {
         bda_msgbox("Graphics", "draw context failed");
+        (void)bda_gui_frame_stop(g_frame);
+        (void)bda_gui_frame_release(g_frame);
+        release_draw_context();
+        bda_gui_close_frame(g_frame);
         return 2;
     }
     draw_scene();
 
     while (!g_exit) {
         bda_gui_input_packet_t packet;
-        (void)bda_gui_event_pump_frame_once(&message, g_frame);
+        int pump_result = bda_gui_event_pump_frame_once(&message, g_frame);
         (void)bda_gui_input_packet(&packet);
-        if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE)) {
+        if (!close_requested &&
+            bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE)) {
             wait_key_release(BDA_KEY_ESCAPE);
-            g_exit = 1;
+            (void)bda_gui_frame_stop(g_frame);
+            (void)bda_gui_frame_release(g_frame);
+            close_requested = 1;
+        }
+        if (close_requested) {
+            ++close_wait;
+            if (!pump_result || !g_draw || close_wait >= 128u) {
+                break;
+            }
         }
         bda_sys_delay(1);
     }
 
+    release_draw_context();
     if (g_frame) {
-        (void)bda_gui_frame_stop(g_frame);
-        (void)bda_gui_frame_release(g_frame);
+        if (!close_requested) {
+            (void)bda_gui_frame_stop(g_frame);
+            (void)bda_gui_frame_release(g_frame);
+        }
+        bda_gui_close_frame(g_frame);
+        g_frame = 0;
     }
     return 0;
 }

@@ -87,6 +87,7 @@ static volatile u32 g_touch_read;
 static volatile u32 g_touch_write;
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
+static bda_handle_t g_draw_owner;
 static bda_handle_t g_back;
 static void *g_draw_object;
 static const char *g_log_path;
@@ -110,6 +111,8 @@ static int g_failures;
 static volatile int g_touch_active;
 static volatile int g_need_render;
 static volatile int g_detached;
+static u32 g_draw_acquires;
+static u32 g_draw_releases;
 
 static char *append_text(char *out, char *end, const char *text) {
     while (*text && out < end) {
@@ -908,6 +911,35 @@ static int poll_keys(void) {
     return 0;
 }
 
+static void release_draw_context(void) {
+    bda_handle_t draw = g_draw;
+
+    if (!draw || (s32)draw == -1) {
+        g_draw = 0;
+        g_draw_owner = 0;
+        return;
+    }
+    g_draw = 0;
+    g_draw_owner = 0;
+    bda_gui_end_draw(draw);
+    ++g_draw_releases;
+}
+
+static int acquire_draw_context(bda_handle_t owner) {
+    if (g_draw && g_draw_owner == owner) {
+        return 1;
+    }
+    release_draw_context();
+    g_draw = bda_gui_current_draw(owner);
+    if (!g_draw || (s32)g_draw == -1) {
+        g_draw = 0;
+        return 0;
+    }
+    g_draw_owner = owner;
+    ++g_draw_acquires;
+    return 1;
+}
+
 static int mines_window_proc(
     bda_handle_t handle,
     u32 message,
@@ -916,7 +948,7 @@ static int mines_window_proc(
 ) {
     if (message == BDA_MSG_DRAW_CONTEXT_ATTACH) {
         g_frame = handle;
-        g_draw = bda_gui_current_draw(handle);
+        (void)acquire_draw_context(handle);
         if (!g_draw_object) {
             g_draw_object = bda_gui_draw_object_create(7);
         }
@@ -924,7 +956,9 @@ static int mines_window_proc(
     } else if (message == BDA_MSG_REDRAW_INPUT) {
         g_need_render = 1;
     } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
-        g_draw = 0;
+        if (!g_draw_owner || g_draw_owner == handle) {
+            release_draw_context();
+        }
         g_detached = 1;
     }
     if (message == TOUCH_PREFIX_MESSAGE) {
@@ -972,6 +1006,7 @@ int bda_main(void) {
     g_touch_write = 0;
     g_frame = 0;
     g_draw = 0;
+    g_draw_owner = 0;
     g_back = 0;
     g_draw_object = 0;
     g_previous_keys = 0;
@@ -981,6 +1016,8 @@ int bda_main(void) {
     g_touch_active = 0;
     g_need_render = 1;
     g_detached = 0;
+    g_draw_acquires = 0;
+    g_draw_releases = 0;
 
     descriptor.style = 0;
     descriptor.title = k_window_title;
@@ -997,14 +1034,15 @@ int bda_main(void) {
         return 1;
     }
     log_value("ACTIVATE=", (u32)bda_gui_frame_activate(g_frame, 0x100));
-    if (!g_draw) {
-        g_draw = bda_gui_current_draw(g_frame);
-    }
+    (void)acquire_draw_context(g_frame);
     if (!g_draw_object) {
         g_draw_object = bda_gui_draw_object_create(7);
     }
     if (!g_draw || !g_draw_object || (s32)(u32)g_draw_object == -1) {
         log_text("RESULT=DRAW FAIL");
+        (void)bda_gui_frame_stop(g_frame);
+        (void)bda_gui_frame_release(g_frame);
+        release_draw_context();
         bda_gui_close_frame(g_frame);
         return 2;
     }
@@ -1013,6 +1051,9 @@ int bda_main(void) {
     log_value("BACK=", (u32)g_back);
     if (!g_back || (s32)g_back == -1) {
         log_text("RESULT=BACK FAIL");
+        (void)bda_gui_frame_stop(g_frame);
+        (void)bda_gui_frame_release(g_frame);
+        release_draw_context();
         bda_gui_close_frame(g_frame);
         return 3;
     }
@@ -1054,15 +1095,22 @@ int bda_main(void) {
     }
 
     log_text("LOOP END");
-    if (g_frame) {
-        bda_gui_close_frame(g_frame);
-        g_frame = 0;
-    }
     if (g_back && (s32)g_back != -1) {
         log_text("BEFORE BACK FREE");
         bda_gui_compatible_context_free(g_back);
         g_back = 0;
         log_text("BACK FREED");
+    }
+    release_draw_context();
+    if (g_frame) {
+        bda_gui_close_frame(g_frame);
+        g_frame = 0;
+    }
+    log_value("DRAW ACQUIRES=", g_draw_acquires);
+    log_value("DRAW RELEASES=", g_draw_releases);
+    if (g_draw_acquires != g_draw_releases) {
+        ++g_failures;
+        log_text("DRAW CONTEXT LEAK");
     }
     log_value("FAILURES=", (u32)g_failures);
     log_text(g_failures ? "RESULT=FAIL" : "RESULT=PASS");

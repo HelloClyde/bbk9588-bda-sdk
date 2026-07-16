@@ -356,6 +356,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("#define MINE_COUNT 10", source)
         self.assertIn("bda_gui_register_frame_desc", source)
         self.assertIn("bda_gui_current_draw", source)
+        self.assertIn("bda_gui_end_draw", source)
         self.assertIn("bda_gui_compatible_context_create", source)
         self.assertIn("bda_gui_compatible_context_free", source)
         self.assertIn("bda_gui_draw_vx", source)
@@ -392,6 +393,7 @@ class SdkDocsTest(unittest.TestCase):
         source = read("example/games/minesweeper/minesweeper_bda.c")
 
         required_offsets = [
+            "BDA_SDK_INTERNAL_GUI_END_DRAW          0x30cu",
             "BDA_SDK_INTERNAL_GUI_COMPAT_CREATE     0x310u",
             "BDA_SDK_INTERNAL_GUI_COMPAT_FREE       0x314u",
             "BDA_SDK_INTERNAL_GUI_CONTEXT_COPY      0x418u",
@@ -399,6 +401,7 @@ class SdkDocsTest(unittest.TestCase):
             "BDA_SDK_INTERNAL_GUI_TICK_COUNT_25MS   0x6d8u",
         ]
         required_api = [
+            "bda_gui_end_draw",
             "bda_gui_compatible_context_create",
             "bda_gui_compatible_context_free",
             "bda_gui_draw_vx",
@@ -1465,6 +1468,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("BDA_SDK_INTERNAL_GUI_OBJECT_DRAW_END   0x0e8u", stable_header)
         self.assertIn("bda_gui_object_draw_begin(bda_handle_t object)", stable_header)
         self.assertIn("bda_gui_object_draw_end(", stable_header)
+        self.assertIn("void bda_gui_end_draw(bda_handle_t draw_context)", stable_header)
         self.assertIn("无稳定返回值", candidate_header)
 
         for phrase in [
@@ -1472,7 +1476,7 @@ class SdkDocsTest(unittest.TestCase):
             "首个 standalone BDA",
             "BDA_MSG_TOUCH_COORDINATE = 1  触摸按下/坐标更新",
             "BDA_MSG_TOUCH_RELEASE    = 2  触摸抬起",
-            "stop -> release -> event poll 结束 -> close -> bda_main return",
+            "stop -> release -> event poll 结束/detach -> end draw -> close -> bda_main return",
             "void bda_gui_close_frame()",
             "`ab`",
             "6362f946fbd84c74937e75290c082df36be7356dc10a30aa9044e96680da9aa6",
@@ -1624,7 +1628,11 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("frame/control lifecycle 信号", read("reverse/docs/input_notes.md"))
         self.assertIn("BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE", window_notes)
         self.assertIn("BDA_MSG_DRAW_CONTEXT_DETACH_LIKE", window_notes)
-        self.assertIn("6 个 draw context slot", header + "\n" + c200_notes + "\n" + window_notes)
+        self.assertIn("5 个普通 draw context", header + "\n" + c200_notes + "\n" + window_notes)
+        self.assertIn("0x804a60c0", c200_notes)
+        self.assertIn("0x804a64e4", c200_notes)
+        self.assertIn("0x804a65b8", c200_notes)
+        self.assertIn("满池后还会计算越界地址", window_notes)
         self.assertIn("mode=0", combined)
         self.assertIn("mode=1", combined)
         self.assertIn("旧的无参数", c200_notes)
@@ -1632,8 +1640,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("不是查询全局\ndraw handle 的无状态 getter", api_offsets)
         self.assertIn("不会\n * 创建 frame/window 生命周期", header)
         self.assertNotIn("`GUI+0x304` 与 `GUI+0x308` 两条 draw handle 路径的适用场景差异", window_notes)
-        self.assertIn("从 6 个 slot 取/初始化 context，并以 mode=0", catalog_tool)
-        self.assertIn("从 6 个 slot 取/初始化 context，并以 mode=1", catalog_tool)
+        self.assertIn("从 5 个普通 slot 取/初始化 context，并以 mode=0", catalog_tool)
+        self.assertIn("从 5 个普通 slot 取/初始化 context，并以 mode=1", catalog_tool)
         bbvm_black_probe = read("reverse/examples/window_text_bbvm_black_probe.c")
         bbvm_hold_probe = read("reverse/examples/window_text_bbvm_black_hold_probe.c")
         bbvm_style_probe = read("reverse/examples/window_text_bbvm_style_probe.c")
@@ -3375,8 +3383,8 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(name, header)
             self.assertIn(name, notes)
 
-        self.assertIn("间接调用总数：291", inventory)
-        self.assertIn("唯一 table entry：75", inventory)
+        self.assertIn("间接调用总数：295", inventory)
+        self.assertIn("唯一 table entry：78", inventory)
         self.assertNotIn("| 未命名 |", inventory)
         self.assertIn("| FS | +0x068 | 1 | 未公开 |", inventory)
         self.assertIn("| SYS | +0x050 | 1 | 未公开 |", inventory)

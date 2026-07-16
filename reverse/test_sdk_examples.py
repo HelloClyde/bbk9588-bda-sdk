@@ -339,6 +339,11 @@ class SdkExamplesTest(unittest.TestCase):
         self.assertIn("#define BOARD_WIDTH 9", source)
         self.assertIn("bda_gui_compatible_context_create", source)
         self.assertIn("bda_gui_compatible_context_free", source)
+        self.assertIn("bda_gui_end_draw", source)
+        self.assertIn("DRAW ACQUIRES=", source)
+        self.assertIn("DRAW RELEASES=", source)
+        self.assertIn("g_draw_acquires != g_draw_releases", source)
+        self.assertIn("DRAW CONTEXT LEAK", source)
         self.assertIn("bda_gui_context_copy", source)
         self.assertIn("bda_gui_tick_count_25ms", source)
         self.assertIn("BDA_MSG_TOUCH_RELEASE", source)
@@ -346,6 +351,19 @@ class SdkExamplesTest(unittest.TestCase):
         self.assertNotIn("_LIKE", source)
         self.assertNotIn("0x81c0fdb8", source.lower())
         self.assertNotIn("draw_object_create_like(15)", source)
+
+    def test_public_window_examples_release_fixed_draw_slots(self) -> None:
+        sources = [
+            "example/games/minesweeper/minesweeper_bda.c",
+            "example/graphics/primitives/graphics_primitives_demo.c",
+            "example/input/touch_crosshair/touch_crosshair_demo.c",
+        ]
+        for path in sources:
+            source = Path(path).read_text(encoding="utf-8")
+            self.assertIn("acquire_draw_context", source, path)
+            self.assertIn("release_draw_context", source, path)
+            self.assertIn("bda_gui_end_draw(draw);", source, path)
+            self.assertIn("BDA_MSG_DRAW_CONTEXT_DETACH", source, path)
 
     def test_no_template_build_includes_bss_zero_fill(self) -> None:
         source = self.out_dir / "bss_probe.c"

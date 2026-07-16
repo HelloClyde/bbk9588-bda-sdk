@@ -14,6 +14,7 @@ static const char k_window_title[] = "TOUCH";
 
 static bda_handle_t g_frame;
 static bda_handle_t g_draw;
+static bda_handle_t g_draw_owner;
 static void *g_draw_object;
 static volatile int g_exit;
 static volatile int g_need_draw;
@@ -29,6 +30,33 @@ static s32 g_touch_x;
 static s32 g_touch_y;
 static s32 g_painted_x;
 static s32 g_painted_y;
+
+static void release_draw_context(void) {
+    bda_handle_t draw = g_draw;
+
+    if (!draw || (s32)draw == -1) {
+        g_draw = 0;
+        g_draw_owner = 0;
+        return;
+    }
+    g_draw = 0;
+    g_draw_owner = 0;
+    bda_gui_end_draw(draw);
+}
+
+static int acquire_draw_context(bda_handle_t owner) {
+    if (g_draw && g_draw_owner == owner) {
+        return 1;
+    }
+    release_draw_context();
+    g_draw = bda_gui_current_draw(owner);
+    if (!g_draw || (s32)g_draw == -1) {
+        g_draw = 0;
+        return 0;
+    }
+    g_draw_owner = owner;
+    return 1;
+}
 
 static s32 touch_x_from_lparam(u32 lparam) {
     return (s32)(short)(lparam & 0xffffu);
@@ -248,7 +276,7 @@ static int touch_window_proc(
         bda_handle_t previous_draw = g_draw;
 
         g_frame = handle;
-        g_draw = bda_gui_current_draw(handle);
+        (void)acquire_draw_context(handle);
         if (!g_draw_object) {
             g_draw_object = bda_gui_draw_object_create(7);
         }
@@ -264,7 +292,9 @@ static int touch_window_proc(
             g_need_draw = 1;
         }
     } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
-        g_draw = 0;
+        if (!g_draw_owner || g_draw_owner == handle) {
+            release_draw_context();
+        }
         g_exit = 1;
     }
     if (message == BDA_MSG_TOUCH_COORDINATE ||
@@ -295,6 +325,7 @@ int bda_main(void) {
     bda_memset(&message, 0, sizeof(message));
     g_frame = 0;
     g_draw = 0;
+    g_draw_owner = 0;
     g_draw_object = 0;
     g_exit = 0;
     g_need_draw = 1;
@@ -321,14 +352,16 @@ int bda_main(void) {
         return 1;
     }
     (void)bda_gui_frame_activate(g_frame, 0x100);
-    if (!g_draw) {
-        g_draw = bda_gui_current_draw(g_frame);
-    }
+    (void)acquire_draw_context(g_frame);
     if (!g_draw_object) {
         g_draw_object = bda_gui_draw_object_create(7);
     }
     if (!g_draw || !g_draw_object || (s32)(u32)g_draw_object == -1) {
         bda_msgbox("Touch", "draw context failed");
+        (void)bda_gui_frame_stop(g_frame);
+        (void)bda_gui_frame_release(g_frame);
+        release_draw_context();
+        bda_gui_close_frame(g_frame);
         return 2;
     }
     draw_initial_scene();
@@ -362,6 +395,7 @@ int bda_main(void) {
         }
     }
 
+    release_draw_context();
     if (g_frame) {
         bda_gui_close_frame(g_frame);
         g_frame = 0;
