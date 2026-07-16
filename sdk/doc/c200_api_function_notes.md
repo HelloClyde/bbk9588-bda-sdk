@@ -1252,27 +1252,53 @@ GUI+0x418 -> 0x800b3d90
 - `GUI+0x414` 会调用全局 draw backend `0x80474030` 的 `+0x80/+0x88/+0x8c`
   callback，具体路径取决于 descriptor 字段和裁剪结果；结束路径会释放临时
   buffer。
-- `GUI+0x418` 是多参数 context copy helper。V14/V15 真机动态结果结合 C200
+- `GUI+0x418` 是多参数 context copy helper。V14/V15 真机 ABI 结果、V6/V8/V19-V21
+  模拟器结果结合 C200
   控制流确认 `a0=source_context`、`a1/a2=source_x/y`、`a3=width`，调用者
   `stack+0x10=height`、`stack+0x14=destination_context`、
-  `stack+0x18/+0x1c=destination_x/y`，`stack+0x20` 是转发给 backend 的附加参数。
+  `stack+0x18/+0x1c=destination_x/y`，`stack+0x20` 是 RGB565
+  `color_key_or_zero`。
 - 具体 stack slot 已能从 C200 固定：`stack+0x10` 参与第一矩形的
-  `y+height_or_y2`，`stack+0x14` 是 `context_b`，`stack+0x18/+0x1c`
+  `y+height_or_y2`，`stack+0x14` 作为第二个 context，即 `context_b`；`stack+0x18/+0x1c`
   作为第二矩形 origin，`stack+0x20` 会原样转发给 backend `+0x94`。
 - `GUI+0x418` 的 C200 切片会把 `a0` 和 `stack+0x14` 分别归一化为两个
   context；二者为 0 时都退回 default context `0x80825690`，并且类型 word
   `+0x04 == 0x82` 会进入特殊 context 处理路径。
 - `GUI+0x418` 会分别按两个 context 的 origin/缩放字段换算坐标，构造 clipping
-  rect，并遍历作为 destination 的 `context_b+0xc0` 子区域链。`GUI+0x310`
-  新建的独立兼容 context 没有这条可见目标区域链，因此不能作为该入口的复制目标。
+  rect。可见 destination 会遍历 `context_b+0xc0` 子区域链；compatible destination
+  还能走 backend 的直接 surface 路径。
 - 命中子区域时，`GUI+0x418` 会先调用 backend `+0x44` 准备区域，再调用 backend
-  `+0x94` 提交一次 source/destination 矩形类操作。
+  `+0x94` 提交一次 source/destination 矩形复制，并把 color key 原样放在
+  backend 调用的 `stack+0x20`。
+- V19 同时创建 back 和 sprite 两块 `GUI+0x310` compatible context。每帧先用
+  `GUI+0x540` 分别写背景和 32x32 精灵，再执行
+  `GUI+0x418(sprite, ..., back, sprite_x, 16, 0)`；随后只把
+  `GUI+0x418(back, ..., visible, 16, 90, 0)` 包在 `GUI+0x074(1/0)` 中。
+- 两张采样画面中精灵位置和颜色均变化，旧位置的网格没有残影；连续 116616 帧后
+  两块 compatible context 均经 `GUI+0x314` 释放，`FAILURES=0`、模拟器
+  `invalid=0`。这动态确认 compatible context 可以作为 `+0x418` 的 destination。
+- 雷霆战机 `0x81c10db8` 把 `s5=0xf81f`，并在 visible→temp 和 temp→visible 两个
+  `GUI+0x418` 调用前写到 `stack+0x20`。决战坦克同时存在参数 0 和显式
+  `0xf81f` 的复制分支，说明该参数不是固定保留 word。
+- V19 使用末参数 0，32x32 深色背景被不透明复制。V20 把 sprite surface 未命中
+  图案的像素填为 RGB565 洋红 `0xf81f`，并仅在 sprite→back 时传同一 color key；
+  画面只保留图案，底层网格完整穿透洋红区域。两张采样帧中透明精灵移动并换色，
+  无旧位置残影，连续 4448 帧后正常释放两块 context，模拟器 `invalid=0`。
+- V21 同时保留 clean、back、sprite 三块 compatible context。首帧完整 present 后，
+  每帧先用 `GUI+0x418(clean -> back)` 恢复旧 32x32 区域，再色键合成新精灵，
+  最后只把新旧位置的最小外接 dirty rect 从 back 复制到 visible。第一次移动
+  `old_x=0,new_x=1` 时日志为 `DIRTY WIDTH=0x21`，三次 copy 均返回 0；两张采样帧
+  网格无残影，连续 20862 帧后 clean/back/sprite 均释放，模拟器 `invalid=0`。
+- 当前可把 0 解释为禁用 color key，非零值解释为要跳过的 RGB565 source color。
+  alpha blending 和多个透明键仍未验证；V19-V21 还需要真机复测。
 
 开发建议：
 
-- SDK 只暴露 `BDA_GUI_RENDER_COPY_LIKE`、`BDA_GUI_RENDER_HELPER_LIKE` 和
-  `BDA_GUI_RENDER_FINISH_LIKE` 常量；暂不提供 high-level wrapper。旧文档里的
-  “finish” 只是早期行为猜测，不应理解成无参数提交/flush。
+- 公开 SDK 为 `GUI+0x418` 提供九参数 `bda_gui_context_copy()`，末参数命名为
+  `color_key_rgb565`，并提供 `BDA_GUI_COLOR_KEY_NONE` 和
+  `BDA_GUI_COLOR_KEY_MAGENTA_RGB565`。研究 header 继续保留 `_like` 名供 probe
+  使用；`GUI+0x410/+0x414` 仍只暴露 low-level 候选。旧文档里的 “finish” 只是
+  早期行为猜测，不应理解成无参数提交/flush。
 - 这两个入口适合复刻相册、电子画板、小游戏的完整 render pipeline；不要在普通
   no-template demo 中直接调用。
 - 若必须探测，应复用原机调用点的 descriptor、source buffer、draw context 和 stack
@@ -1317,6 +1343,419 @@ GUI+0x36c -> 0x800b6af8
   `GUI+0x378 -> GUI+0x368`，橙色块使用 `GUI+0x36c`，均得到可见彩色输出。
 - 该入口适合复刻电子画板一类逐点绘制路径；普通 UI 不应在没有 draw context
   生命周期时直接调用。
+
+### GUI +0x384 / +0x3ec / +0x3f0 / +0x3f4: 折线与 clip 查询
+
+system function VA：
+
+```text
+GUI+0x384 -> 0x800bc340
+GUI+0x3ec -> 0x800b64f0
+GUI+0x3f0 -> 0x800b6520
+GUI+0x3f4 -> 0x800b65ac
+```
+
+静态证据：
+
+- `GUI+0x384` 使用 `a0=context,a1=point_array,a2=count`。首个点的两个 word
+  写入 `context+0x34/+0x38`，从第二个点开始按 8 byte 步长调用内部
+  `0x800b715c`，即 `GUI+0x37c` 的 line-to 实现。
+- `GUI+0x3ec` 使用 `context,out_rect`，把 `context+0x94/+0x98/+0x9c/+0xa0`
+  原样复制到四 word rect；函数没有稳定 return value。
+- `GUI+0x3f0` 使用 `context,point`。context 有 clip-region 链时逐节点调用
+  `0x800c0818(region,x,y)`，否则对 `context+0x40` 的 fallback bounds 调同一 helper。
+- `GUI+0x3f4` 使用 `context,rect`，按相同分支调用 `0x800c05e0` 做矩形相交测试。
+
+动态结果：
+
+- `GamePolylineClipProbeV10` 在 8013 专用 NAND 上画出连续锯齿和闭合菱形交叉线。
+- draw context 的 clip bounds 返回 `(0,0,240,320)`；屏内点/矩形返回 `1`，屏外
+  点/矩形返回 `0`。
+- ESC 完成既有窗口退出闭环，最终 `FAILURES=0`、`RESULT=PASS` 并回到主菜单。
+
+开发建议：
+
+- 研究层使用 `bda_point_like_t`（struct tag 为 `bda_point_like`，字段为两个 signed
+  word `x/y`）描述点数组，并提供 `bda_gui_polyline_like()`、
+  `bda_gui_clip_bounds_like()`、`bda_gui_clip_contains_point_like()` 和
+  `bda_gui_clip_intersects_rect_like()`。
+- polyline 不会自动闭合，也不填充；闭合时应在数组末尾重复首点。
+- 这三个 clip 入口都不修改 region。clip region 的创建、合并和释放 ABI 尚未闭环，
+  不要据此自行构造 `GUI+0x3e8` 的内部链表参数。
+- 当前只有模拟器动态结果，真机验证前不进入公开 SDK 或 `sdk/doc/verified/`。
+
+### GUI +0x390: 椭圆轮廓/填充
+
+system function VA：`0x800b7fa0`
+
+已确认的调用子集：
+
+```text
+a0 = draw context
+a1 = center_x
+a2 = center_y
+a3 = radius_x
+stack+0x10 = radius_y
+stack+0x14 = 0
+stack+0x18 = 0
+stack+0x1c = filled (0/1)
+```
+
+静态证据：
+
+- 函数用 `center_x +/- radius_x`、`center_y +/- radius_y` 构造 bounding rect 并走
+  current context clipping/origin/scale 处理。
+- `电子画板.bda` 在 file `+0x124c8` 取 `GUI+0x390`，调用时后三个 stack word
+  全部为 0，对应 outline 模式。
+- C200 的 `0x800bb23c` 调用同一 core 时把两个中间 stack word 置 0、末项置 1。
+- 末项非 0 时调用 backend `+0xcc`，为 0 时调用 backend `+0xc8`；两条路径都把
+  selected draw object 作为后续 stack 参数传入。
+
+动态结果：
+
+- `GameEllipseProbeV11` 对 object 7/8 分别执行 `filled=0` 和 `filled=1`，左列得到
+  空心轮廓，右列得到实心椭圆。
+- object 7/8 的填充中心像素约为 RGB `(131,129,131)` / `(197,194,197)`，说明
+  selected draw object/backend 参与颜色选择；`GUI+0x334` 写入的 cyan 没有直接成为
+  椭圆填充色。
+- ESC 退出后最终 `FAILURES=0`、`RESULT=PASS`，并回到主菜单。
+
+开发建议：
+
+- 研究层提供 `bda_gui_ellipse_like(context,center_x,center_y,radius_x,radius_y,filled)`。
+- wrapper 把两个仍未完整命名的参数固定为 0，与全部已知调用保持一致；不要自行暴露
+  任意值版本。
+- `filled` 只决定轮廓/实心路径，颜色由 selected draw object/backend 决定；不要把
+  `bda_gui_set_fill_color_like()` 当作该图元的颜色 setter。
+- 当前为模拟器动态验证，真机确认前不进入公开 SDK。
+
+### GUI +0x394 / +0x398: 圆弧与圆角矩形
+
+system function VA：
+
+```text
+GUI+0x394 -> 0x800ba660
+GUI+0x398 -> 0x800ba8dc
+```
+
+`GUI+0x394` 参数：
+
+```text
+a0 = context
+a1 = center_x
+a2 = center_y
+a3 = start_degrees
+stack+0x10 = end_degrees
+stack+0x14 = radius
+```
+
+函数按 `center +/- radius` 建立裁剪矩形，经过 context origin/scale/clip 后，把
+start/end/radius 和 selected draw object 传给 backend `+0xd0`。V12 动态结果确认
+`0→180` 画上半圆、`180→360` 画下半圆。
+
+`GUI+0x398` 参数：
+
+```text
+a0 = context
+a1 = center_x
+a2 = center_y
+a3 = width
+stack+0x10 = height
+stack+0x14 = corner_radius_x
+stack+0x18 = corner_radius_y
+stack+0x1c = filled
+```
+
+静态证据：
+
+- width/height 分别按带符号除 2，围绕 center 形成 left/right/top/bottom。
+- corner x/y 半径从外框半径中扣除，用于生成四角和中间直边。
+- `filled != 0` 进入实心 scan/segment 路径；`filled == 0` 进入轮廓路径。
+- 当尺寸退化为圆角覆盖整个外框时，`0x800bb23c` 会调用 `GUI+0x390` core，
+  两个保留参数为 0、filled 为 1。这是其圆角矩形语义的直接内部证据。
+
+动态结果：
+
+- V12 的左下图元为圆角矩形轮廓，右下图元为同尺寸实心圆角矩形。
+- 两个圆弧和两个圆角矩形绘制后，ESC 退出最终 `RESULT=PASS` 并回到主菜单。
+
+开发建议：
+
+- 研究层提供 `bda_gui_arc_like(context,cx,cy,start_degrees,end_degrees,radius)`。
+- 研究层提供 `bda_gui_round_rect_like(context,cx,cy,width,height,corner_rx,corner_ry,filled)`；
+  坐标是中心，不是左上角。
+- 当前合同只覆盖非负 width/height/radius，且 corner 半径不超过对应半尺寸。不要依赖
+  负值、过大圆角或跨多圈角度的行为。
+- 实心颜色仍来自 selected draw object/backend，不要把 `GUI+0x334` 当作通用填充色 API。
+- 当前为模拟器验证，真机确认前不进入公开 SDK。
+
+### GUI +0x3a0..+0x3c4: 逻辑坐标映射状态
+
+system function VA：
+
+```text
+GUI+0x3a0 -> 0x800bfa40  map mode getter
+GUI+0x3a4 -> 0x800bfa54  viewport extent getter
+GUI+0x3a8 -> 0x800bfa74  viewport origin getter
+GUI+0x3ac -> 0x800bfa94  window extent getter
+GUI+0x3b0 -> 0x800bfab4  window origin getter
+GUI+0x3b4 -> 0x800bfad4  map mode setter
+GUI+0x3b8 -> 0x800bfae8  viewport extent setter
+GUI+0x3bc -> 0x800bfb08  viewport origin setter
+GUI+0x3c0 -> 0x800bfb28  window extent setter
+GUI+0x3c4 -> 0x800bfb48  window origin setter
+```
+
+字段映射：
+
+```text
+context+0x70       map mode enabled
+context+0x74/+0x78 viewport origin x/y
+context+0x7c/+0x80 viewport extent x/y
+context+0x84/+0x88 window origin x/y
+context+0x8c/+0x90 window extent x/y
+```
+
+map mode 非 0 时，`GUI+0x368` 等图元中可直接观察到以下转换：
+
+```text
+device = context_origin
+       + (logical - window_origin) * viewport_extent / window_extent
+       + viewport_origin
+```
+
+静态边界：
+
+- 五个 getter 在 `context==0` 时读取默认 context `0x80825690`。
+- 五个 setter 在 `context==0` 时不写任何状态；pair setter 从 `a1` 读取两个 word。
+- window extent 是有符号除法的除数；映射开启时任何一个分量为 0 都会触发 MIPS
+  divide-by-zero break，调用者必须先设置非零 extent。
+
+动态结果：
+
+- V13 初始状态为 mode 0、两组 extent `(1,1)`、两组 origin `(0,0)`。
+- 设置 viewport extent `(2,2)` 和 origin `(30,80)` 后，逻辑 `70×30` 图元变为
+  device `140×60`，左上位置为 `(30,80)`；四组 getter 回读与写入值完全一致。
+- probe 按 `disable mode -> restore pairs -> restore old mode` 顺序恢复状态，ESC 退出后
+  最终 `RESULT=PASS`，主菜单正常。
+
+研究层 wrapper：
+
+```c
+int bda_gui_map_mode_get_like(bda_handle_t context);
+void bda_gui_viewport_extent_get_like(bda_handle_t context, bda_point_like_t *extent);
+void bda_gui_viewport_origin_get_like(bda_handle_t context, bda_point_like_t *origin);
+void bda_gui_window_extent_get_like(bda_handle_t context, bda_point_like_t *extent);
+void bda_gui_window_origin_get_like(bda_handle_t context, bda_point_like_t *origin);
+void bda_gui_map_mode_set_like(bda_handle_t context, int enabled);
+void bda_gui_viewport_extent_set_like(bda_handle_t context, const bda_point_like_t *extent);
+void bda_gui_viewport_origin_set_like(bda_handle_t context, const bda_point_like_t *origin);
+void bda_gui_window_extent_set_like(bda_handle_t context, const bda_point_like_t *extent);
+void bda_gui_window_origin_set_like(bda_handle_t context, const bda_point_like_t *origin);
+```
+
+这些 API 当前仍属于研究层。游戏如需临时启用映射，应保存并完整恢复五组状态，不能只把
+mode 清零后遗留修改过的 origin/extent。
+
+### GUI +0x3c8..+0x3d4: point 坐标转换
+
+system function VA：
+
+```text
+GUI+0x3c8 -> 0x800b6640  full device-to-logical point
+GUI+0x3cc -> 0x800b66e8  full logical-to-device point
+GUI+0x3d0 -> 0x800b6834  map-only device-to-logical point
+GUI+0x3d4 -> 0x800b67b0  map-only logical-to-device point
+```
+
+四个入口都使用 `context,point*`，直接改写两个 signed word。区别不是 point/rect，
+而是是否包含 draw context 自身的 `context+0x40/+0x44` origin：
+
+```text
++0x3cc full L2D:
+device = context_origin
+       + (logical - window_origin) * viewport_extent / window_extent
+       + viewport_origin
+
++0x3c8 full D2L:
+logical = (device - context_origin - viewport_origin)
+        * window_extent / viewport_extent
+        + window_origin
+
++0x3d4 map-only L2D:
+mapped = (logical - window_origin) * viewport_extent / window_extent
+       + viewport_origin
+
++0x3d0 map-only D2L:
+logical = (mapped - viewport_origin) * window_extent / viewport_extent
+        + window_origin
+```
+
+map mode 为 0 时，map-only pair 不修改 point；full pair 仍会加减 context origin。
+map mode 非 0 时两组公式都有有符号除法，因此对应 extent 分量必须非零。
+
+V14 设置 viewport extent `(3,2)`、viewport origin `(20,40)`、window extent `(2,1)`、
+window origin `(5,7)`。map-only L2D 把 `(25,27)` 转成 `(50,80)`，逆转换回
+`(25,27)`；当前 frame 的 context origin 为零，因此 full pair 得到相同结果并完成
+round-trip。逻辑坐标绘制的十字/圆和关闭映射后的物理参考框重合，ESC 退出后
+`FAILURES=0`、`RESULT=PASS`，主菜单正常。
+
+研究层 wrapper：
+
+```c
+void bda_gui_device_to_logical_point_like(bda_handle_t context, bda_point_like_t *point);
+void bda_gui_logical_to_device_point_like(bda_handle_t context, bda_point_like_t *point);
+void bda_gui_map_device_to_logical_point_like(bda_handle_t context, bda_point_like_t *point);
+void bda_gui_map_logical_to_device_point_like(bda_handle_t context, bda_point_like_t *point);
+```
+
+### GUI +0x3d8: exclude clip rect
+
+system function VA：`0x800b5e54`
+
+ABI 为 `context,left,top,right,bottom`；第五参数从 `stack+0x10` 读取。入口先用
+`0x800c0410/0x800c04d8/0x800c0464` 构造、规范化并检查矩形；空矩形直接返回。
+有效矩形分别作用于 `context+0x94` 逻辑 region 和坐标变换后的 `context+0xb0`
+backend region，无稳定 return value。
+
+核心 helper `0x800d2fe4(region,rect)` 的行为已经恢复：
+
+1. 遍历 region 的矩形节点并计算与排除矩形的交集。
+2. 不相交节点保持不变。
+3. 相交节点按需要生成 top、bottom、left、right 最多四个剩余矩形。
+4. 原节点完全落入排除矩形时删除节点。
+5. 最后重新计算 region aggregate bounds。
+
+这证明该入口是矩形差集，而不是 intersect。V16 先用 `+0x3e4` 选择
+`(30,70)-(210,230)`，再排除中央 `(85,110)-(155,190)`：四周点命中为 1，hole
+中心和 hole 内矩形为 0，跨越 hole 左边界的矩形仍为 1。实际线网形成四周条带和
+中央空洞。
+
+排除内部 hole 后，`+0x3ec` 仍返回外层 `(30,70)-(210,230)` aggregate bounds；
+因此 bounds 不能表达 region 内部空洞，必须使用 `+0x3f0/+0x3f4` 或实际绘图判断。
+调用已验证的 `+0x3e4(context,NULL)` 后，hole 中心重新可命中和绘制。最终
+`FAILURES=0`、`RESULT=PASS`，ESC 正常返回主菜单，模拟器 `invalid=0`。
+
+研究层 wrapper：
+
+```c
+void bda_gui_clip_exclude_rect_like(
+    bda_handle_t context,
+    s32 left,
+    s32 top,
+    s32 right,
+    s32 bottom
+);
+```
+
+### GUI +0x3dc: union clip rect
+
+system function VA：`0x800b6040`
+
+ABI 同样为 `context,left,top,right,bottom`，第五参数来自 `stack+0x10`，无稳定
+return value。逻辑 region 的核心顺序是：
+
+```text
+0x800d2fe4(region, new_rect)  从旧节点扣除与 new_rect 重叠的部分
+0x800d3530(region, new_rect)  把 new_rect 作为新节点追加到链表
+```
+
+这样可以得到不重叠矩形节点组成的并集。V17 先选择左块 `(30,80)-(95,225)`，
+再追加右块 `(145,80)-(210,225)`：左右点均命中，中间 gap 点和 gap 内矩形不命中，
+跨越两块和 gap 的矩形命中。实际线网只显示在左右两块区域内。
+
+`0x800d3530` 只链接新节点，不扩展 region header 中的 cached bounds。因此 V17 中
+`+0x3ec` 仍返回旧左块 `(30,80)-(95,225)`，即使右块查询和绘图已经有效。对
+`+0x3dc` 产生的多节点 region，不能把 `+0x3ec` 当作完整并集外接框；使用
+`+0x3f0/+0x3f4` 判断 effective clip。
+
+调用 `+0x3e4(context,NULL)` 后 gap 中心重新可命中和绘制。最终 `FAILURES=0`、
+`RESULT=PASS`，ESC 正常返回主菜单，模拟器 `invalid=0`。
+
+研究层 wrapper：
+
+```c
+void bda_gui_clip_union_rect_like(
+    bda_handle_t context,
+    s32 left,
+    s32 top,
+    s32 right,
+    s32 bottom
+);
+```
+
+### GUI +0x3e0: intersect clip rect
+
+system function VA：`0x800b6260`
+
+ABI 为 `context,const rect*`，无稳定 return value。入口先规范化输入矩形，再执行：
+
+```text
+0x800d35f0(context+0x94, intersect_rect)  逐节点求交并清理空节点
+map logical rect to backend coordinates
+0x800d35f0(context+0xb0, mapped_rect)     同步 backend region
+```
+
+`0x800d35f0` 会在节点处理完成后重新计算 region header 的 aggregate bounds；这与
+`+0x3dc` 仅追加节点、不扩展 cached bounds 的行为不同。
+
+V18 先建立左右两个分离节点 `(25,70)-(100,230)` 和 `(140,70)-(215,230)`，再与
+`(50,110)-(190,190)` 求交。结果保留 `(50,110)-(100,190)` 和
+`(140,110)-(190,190)` 两个裁剪岛，`+0x3ec` 返回重新计算后的整体边界
+`(50,110)-(190,190)`。左右点命中，中间 gap、被上边界裁掉的点和 gap 内矩形均
+不命中；跨越两个裁剪岛的矩形命中，实际绘图也只出现在左右两个岛内。
+
+调用 `+0x3e4(context,NULL)` 后，`+0x3ec` 回到零矩形哨兵，gap 中心重新可命中和
+绘制。最终 `FAILURES=0`、`RESULT=PASS`，ESC 正常返回主菜单，模拟器 `invalid=0`。
+
+研究层 wrapper：
+
+```c
+void bda_gui_clip_intersect_rect_like(
+    bda_handle_t context,
+    const bda_rect_like_t *rect
+);
+```
+
+### GUI +0x3e4: 矩形 clip select/reset
+
+system function VA：`0x800b5c00`
+
+ABI 为 `context,const rect*`，无稳定 return value：
+
+- `rect != NULL` 时复制并规范化四个 signed word，重建 `context+0x94` 的逻辑
+  clip region；完成坐标变换后同步重建 `context+0xb0` 的 backend region。
+- `rect == NULL` 时清空自定义 region。后续 hit test 和绘图回退到 context 的完整
+  drawable bounds。
+- `context==0` 时使用 firmware default draw context；研究 probe 仍只在有效 object-draw
+  scope 中调用，避免污染全局默认状态。
+
+V15 选择 `(45,75)-(195,225)` 后，`+0x3ec` 回读完全一致；内部点/矩形返回 1，
+外部点/矩形返回 0，跨边界矩形返回 1。横线和两条对角线只显示在该矩形内。
+
+调用 `+0x3e4(context,NULL)` 后有一个必须单独记录的行为：
+
+```text
++0x3ec clip bounds = (0,0,0,0)
++0x3f0 outside point = 1
++0x3f4 outside rect = 1
+```
+
+零矩形是“无自定义 region”的哨兵，不表示有效裁剪为空。左侧 `(20,150)` 十字能在
+reset 后正常绘制，也证明 backend 已回退到完整 context bounds。probe 最终
+`FAILURES=0`、`RESULT=PASS`，ESC 正常返回主菜单，模拟器 `invalid=0`。
+
+研究层 wrapper：
+
+```c
+void bda_gui_clip_select_rect_like(
+    bda_handle_t context,
+    const bda_rect_like_t *rect_or_null
+);
+```
+
+修改裁剪后必须在结束 draw scope 前传 `NULL` 恢复。`GUI+0x3d8/+0x3dc/+0x3e0`
+现在都已用该恢复闭环完成独立模拟器验证；真机验证前仍保留在研究层 API。
 
 ### GUI +0x074: `BDA_GUI_PUMP_PRESENT_LIKE`
 
@@ -1506,6 +1945,11 @@ GUI+0x378 -> 0x800bc2e0
   `context+0xb0`，最后调用 `MEM_FREE(context)`。它没有稳定 return value。
 - 电子画板的 `GUI+0x418` 调用后经常紧跟 `GUI+0x314(context)`，因此 `+0x314`
   是较强的 surface/canvas flush-and-free 候选。
+- V19 对两次 `GUI+0x310(visible_context)` 的结果分别调用 `GUI+0x314`，日志完整
+  到 `BACK FREED`、`SPRITE FREED` 并正常返回主菜单，确认该入口是 compatible
+  context 的配对销毁操作，不是只提交但保留对象的 flush。
+- 公开 SDK 因此使用唯一名称 `bda_gui_compatible_context_create()` 和
+  `bda_gui_compatible_context_free()`；free 后 handle 不可复用。
 - `GUI+0x334` 会选择 `a0` 指向的 draw/context；`a0 == 0` 时使用默认 context
   `0x80825690`。它把 `a1=color` 写入 `context+0x14`，返回旧值。
 - `GUI+0x338` 形状相同，但写入 `context+0x18`，返回旧 text/background mode
@@ -1873,7 +2317,7 @@ system function VA：`0x800bb864`
 
 开发建议：
 
-- SDK 暴露 `bda_gui_draw_vx_like(handle, x, y, vx_resource)`。wrapper 内部用
+- 公开 SDK 暴露 `bda_gui_draw_vx(handle, x, y, vx_resource)`。wrapper 内部用
   `bda_call6` 补齐两个 unused 参数，把 `vx_resource` 放在 C200 读取的第 6 个参数位。
 - 不再公开旧的 `width,height` 参数；缩放/裁剪应通过其他 draw/context API 实现，
   不能靠 `GUI+0x540` 的调用参数。
@@ -1962,6 +2406,33 @@ GUI+0x750 -> 0x8001de5c
 - SDK 已将 `GUI+0x750` 修正为 `bda_gui_event_fetch_like(bda_gui_event_fetch_like_t *out_event)`；
   typed result 中 `code` 对应 `record+4`，`value` 对应 `record+0`。这仍是 low-level helper，
   不应替代稳定窗口消息/按键 API。
+
+### GUI +0x6d8: `BDA_GUI_TICK_COUNT_25MS_LIKE`
+
+system function VA：`0x8012bdb0`
+
+当前证据：
+
+- table entry 无参数，直接返回全局 `0x80474094`。
+- 定时 IRQ `0x8012bb90` 先把该全局加一，再向 TCU `0xb0002028` 写入确认值。
+- 初始化函数 `0x8012bcd4` 把 `0x000b71c4 / 0x28 = 18750` 写入 TCU compare。
+  配合 12 MHz 外部时钟和 `/16` prescale，周期是 `18750 / 750000 = 25 ms`。
+- 官方 `BB虚拟机.bda` 在初始化路径调用 `GUI+0x6d8` 并保存返回值；其 GetTick
+  wrapper 在 `0x81c051b4` 再读当前值，执行无符号 `current - base`，最后用移位加法
+  乘 25。固件字符串 `0100831:修改“gettick读出来不是ms”` 与该换算一致。
+- `GameTickProbeV9` 在 8013 上从 `0x000001ff` 走到 `0x00000227`，raw delta 为
+  `40`，毫秒换算为 `1000`，回绕算术通过并正常返回菜单。
+- 独立 HMP 读取同一固件全局，两轮宿主采样得到 `24.853 ms/tick` 和
+  `24.696 ms/tick`；误差来自 HMP 读取暂停和模拟器自适应 instruction clock。
+
+开发建议：
+
+- 读取原始值用公开 `bda_gui_tick_count_25ms()`。
+- 时间间隔必须用无符号差值；公开 helper 提供 `bda_gui_tick_elapsed_25ms()` 和
+  `bda_gui_tick_elapsed_ms()`。
+- 不要把 raw tick 直接当毫秒，不要用 `SYS+0x09c` 代替；后者是 preset selector。
+- 当前公开等级是模拟器稳定；研究头保留 `_like` 供 probe 使用，普通应用使用上面的
+  无后缀公开名称。真机状态仍为待复测。
 
 ### GUI +0x738: `BDA_GUI_SCREEN_WIDTH_LIKE`
 

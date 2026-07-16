@@ -1,6 +1,6 @@
 #include "bda_sdk.h"
 
-static u32 first_pressed_key(const bda_gui_input_packet_like_t *packet) {
+static u32 first_pressed_key(const bda_gui_input_packet_t *packet) {
     static const u32 keys[] = {
         BDA_KEY_UP,
         BDA_KEY_DOWN,
@@ -12,7 +12,7 @@ static u32 first_pressed_key(const bda_gui_input_packet_like_t *packet) {
     u32 i;
 
     for (i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
-        if (bda_gui_input_packet_key_pressed_like(packet, keys[i])) {
+        if (bda_gui_input_packet_key_pressed(packet, keys[i])) {
             return keys[i];
         }
     }
@@ -37,24 +37,24 @@ int bda_main(void) {
 
     bda_msgbox("KeyInput", "Press a device key");
     for (;;) {
-        bda_gui_input_packet_like_t packet;
+        bda_gui_input_packet_t packet;
         u32 keycode;
 
-        (void)bda_gui_input_packet_like(&packet);
+        (void)bda_gui_input_packet(&packet);
         keycode = first_pressed_key(&packet);
         if (keycode == 0) {
             latched = 0;
         } else if (latched == 0) {
             latched = keycode;
             do {
-                (void)bda_gui_input_packet_like(&packet);
-                bda_sys_delay_like(1);
-            } while (bda_gui_input_packet_key_pressed_like(&packet, keycode));
+                (void)bda_gui_input_packet(&packet);
+                bda_sys_delay(1);
+            } while (bda_gui_input_packet_key_pressed(&packet, keycode));
             bda_msgbox("KeyInput", key_name(keycode));
             if (keycode == BDA_KEY_ESCAPE) {
                 return 0;
             }
         }
-        bda_sys_delay_like(1);
+        bda_sys_delay(1);
     }
 }

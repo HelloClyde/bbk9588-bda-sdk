@@ -91,19 +91,46 @@ typedef unsigned long long u64;
 #define BDA_GUI_RGB_LIKE            0x378u
 #define BDA_GUI_LINE_TO_LIKE        0x37cu
 #define BDA_GUI_MOVE_TO_LIKE        0x380u
+#define BDA_GUI_POLYLINE_LIKE       0x384u
 #define BDA_GUI_CIRCLE_LIKE         0x388u
 #define BDA_GUI_RECTANGLE_LIKE      0x38cu
+#define BDA_GUI_ELLIPSE_LIKE        0x390u
+#define BDA_GUI_ARC_LIKE            0x394u
+#define BDA_GUI_ROUND_RECT_LIKE     0x398u
+#define BDA_GUI_MAP_MODE_GET_LIKE   0x3a0u
+#define BDA_GUI_VIEWPORT_EXTENT_GET_LIKE 0x3a4u
+#define BDA_GUI_VIEWPORT_ORIGIN_GET_LIKE 0x3a8u
+#define BDA_GUI_WINDOW_EXTENT_GET_LIKE   0x3acu
+#define BDA_GUI_WINDOW_ORIGIN_GET_LIKE   0x3b0u
+#define BDA_GUI_MAP_MODE_SET_LIKE   0x3b4u
+#define BDA_GUI_VIEWPORT_EXTENT_SET_LIKE 0x3b8u
+#define BDA_GUI_VIEWPORT_ORIGIN_SET_LIKE 0x3bcu
+#define BDA_GUI_WINDOW_EXTENT_SET_LIKE   0x3c0u
+#define BDA_GUI_WINDOW_ORIGIN_SET_LIKE   0x3c4u
+#define BDA_GUI_DEVICE_TO_LOGICAL_POINT_LIKE 0x3c8u
+#define BDA_GUI_LOGICAL_TO_DEVICE_POINT_LIKE 0x3ccu
+#define BDA_GUI_MAP_DEVICE_TO_LOGICAL_POINT_LIKE 0x3d0u
+#define BDA_GUI_MAP_LOGICAL_TO_DEVICE_POINT_LIKE 0x3d4u
+#define BDA_GUI_CLIP_EXCLUDE_RECT_LIKE 0x3d8u
+#define BDA_GUI_CLIP_UNION_RECT_LIKE 0x3dcu
+#define BDA_GUI_CLIP_INTERSECT_RECT_LIKE 0x3e0u
+#define BDA_GUI_CLIP_SELECT_RECT_LIKE 0x3e4u
+#define BDA_GUI_CLIP_BOUNDS_LIKE    0x3ecu
+#define BDA_GUI_CLIP_CONTAINS_POINT_LIKE 0x3f0u
+#define BDA_GUI_CLIP_INTERSECTS_RECT_LIKE 0x3f4u
 #define BDA_GUI_DRAW_VX_LIKE        0x540u
 #define BDA_GUI_REGION_DRAW_LIKE    0x40cu
 /*
  * low-level render helper 常量。C200 的 +0x410/+0x414/+0x418 都读取多个 stack 参数、
  * draw context 和 resource/bitmap descriptor，并会调用 backend callback。+0x410
- * 在 clipping 后宽度变化时可能临时分配裁剪 buffer，结束后释放；SDK 暂不提供
- * high-level wrapper。
+ * 在 clipping 后宽度变化时可能临时分配裁剪 buffer，结束后释放；SDK 暂不为
+ * +0x410/+0x414 提供 high-level wrapper，+0x418 由下方 context-copy wrapper 封装。
  */
 #define BDA_GUI_RENDER_COPY_LIKE    0x410u
 #define BDA_GUI_RENDER_HELPER_LIKE  0x414u
-#define BDA_GUI_RENDER_FINISH_LIKE  0x418u /* source context first; visible destination at stack arg 6 */
+#define BDA_GUI_RENDER_FINISH_LIKE  0x418u /* source first; destination at stack arg 6 */
+#define BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE 0xf81fu
+#define BDA_GUI_PICTURE_SOURCE_FREE_LIKE 0x50cu
 /*
  * low-level rect writer。C200 的 +0x430 是 5 参数 ABI：rect,x0,y0,x1,y1；
  * 第五参数从 stack+0x10 读取；wrapper 已用 bda_call5 封装。
@@ -126,6 +153,7 @@ typedef unsigned long long u64;
 #define BDA_GUI_INPUT_PACKET_LIKE      0x5d4u
 #define BDA_GUI_SCREEN_BUFFER_LIKE     0x6b0u
 #define BDA_GUI_TOUCH_POSITION_LIKE    0x6c0u
+#define BDA_GUI_TICK_COUNT_25MS_LIKE   0x6d8u
 #define BDA_GUI_GAME_DISPLAY_PUMP_LIKE 0x6e0u
 #define BDA_GUI_STATE_QUERY_LIKE       0x72cu
 #define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u
@@ -253,6 +281,11 @@ static inline u8 bda_sys_alarm_record_enable_flag_like(const bda_sys_alarm_recor
 
 typedef void *bda_handle_t;
 typedef int (*bda_wndproc_t)(bda_handle_t hwnd, u32 message, u32 wparam, u32 lparam);
+
+typedef struct bda_point_like {
+    s32 x;
+    s32 y;
+} bda_point_like_t;
 
 typedef struct bda_rect_like {
     s32 x0;
@@ -1234,6 +1267,23 @@ static inline void bda_gui_line_to_like(bda_handle_t context, s32 x, s32 y) {
     (void)bda_call3(bda_gui_table(), BDA_GUI_LINE_TO_LIKE, (u32)context, (u32)x, (u32)y);
 }
 
+/*
+ * Draw a connected series of count points. C200 loads the first x/y pair
+ * into context+0x34/+0x38, then calls the same line-to implementation for
+ * each remaining pair. The point array therefore contains two signed words
+ * per element and remains owned by the caller.
+ */
+static inline void bda_gui_polyline_like(
+    bda_handle_t context,
+    const bda_point_like_t *points,
+    u32 count
+) {
+    (void)bda_call3(
+        bda_gui_table(), BDA_GUI_POLYLINE_LIKE,
+        (u32)context, (u32)points, count
+    );
+}
+
 static inline void bda_gui_circle_like(bda_handle_t context, s32 center_x, s32 center_y, s32 radius) {
     (void)bda_call4(
         bda_gui_table(), BDA_GUI_CIRCLE_LIKE,
@@ -1247,6 +1297,309 @@ static inline void bda_gui_rectangle_like(
     (void)bda_call5(
         bda_gui_table(), BDA_GUI_RECTANGLE_LIKE,
         (u32)context, (u32)left, (u32)top, (u32)right, (u32)bottom
+    );
+}
+
+/*
+ * Ellipse primitive used by the original drawing application. The recovered
+ * eight-argument core is context,cx,cy,rx,ry,reserved0,reserved1,filled.
+ * Original and C200-internal callers keep both reserved words at zero. The
+ * last word selects the backend outline/fill callback.
+ */
+static inline void bda_gui_ellipse_like(
+    bda_handle_t context,
+    s32 center_x,
+    s32 center_y,
+    s32 radius_x,
+    s32 radius_y,
+    int filled
+) {
+    typedef void (*ellipse_fn)(
+        bda_handle_t, s32, s32, s32, s32, u32, u32, u32
+    );
+    ellipse_fn fn = (ellipse_fn)bda_api(bda_gui_table(), BDA_GUI_ELLIPSE_LIKE);
+
+    fn(context, center_x, center_y, radius_x, radius_y, 0, 0, filled ? 1u : 0u);
+}
+
+/* Circular arc. Angles use the firmware's integer degree convention. */
+static inline void bda_gui_arc_like(
+    bda_handle_t context,
+    s32 center_x,
+    s32 center_y,
+    s32 start_degrees,
+    s32 end_degrees,
+    s32 radius
+) {
+    (void)bda_call6(
+        bda_gui_table(), BDA_GUI_ARC_LIKE,
+        (u32)context, (u32)center_x, (u32)center_y,
+        (u32)start_degrees, (u32)end_degrees, (u32)radius
+    );
+}
+
+/* Center-based rounded rectangle with separate x/y corner radii. */
+static inline void bda_gui_round_rect_like(
+    bda_handle_t context,
+    s32 center_x,
+    s32 center_y,
+    s32 width,
+    s32 height,
+    s32 corner_radius_x,
+    s32 corner_radius_y,
+    int filled
+) {
+    typedef void (*round_rect_fn)(
+        bda_handle_t, s32, s32, s32, s32, s32, s32, u32
+    );
+    round_rect_fn fn = (round_rect_fn)bda_api(
+        bda_gui_table(), BDA_GUI_ROUND_RECT_LIKE
+    );
+
+    fn(
+        context, center_x, center_y, width, height,
+        corner_radius_x, corner_radius_y, filled ? 1u : 0u
+    );
+}
+
+/*
+ * Logical-to-device mapping state. When map mode is nonzero, primitives use:
+ * device = context_origin + (logical - window_origin) *
+ *          viewport_extent / window_extent + viewport_origin.
+ * Setter functions require a non-null context. Pair values use x/y words.
+ */
+static inline int bda_gui_map_mode_get_like(bda_handle_t context) {
+    return bda_call1(
+        bda_gui_table(), BDA_GUI_MAP_MODE_GET_LIKE, (u32)context
+    );
+}
+
+static inline void bda_gui_viewport_extent_get_like(
+    bda_handle_t context, bda_point_like_t *extent
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_VIEWPORT_EXTENT_GET_LIKE,
+        (u32)context, (u32)extent
+    );
+}
+
+static inline void bda_gui_viewport_origin_get_like(
+    bda_handle_t context, bda_point_like_t *origin
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_VIEWPORT_ORIGIN_GET_LIKE,
+        (u32)context, (u32)origin
+    );
+}
+
+static inline void bda_gui_window_extent_get_like(
+    bda_handle_t context, bda_point_like_t *extent
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_EXTENT_GET_LIKE,
+        (u32)context, (u32)extent
+    );
+}
+
+static inline void bda_gui_window_origin_get_like(
+    bda_handle_t context, bda_point_like_t *origin
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_ORIGIN_GET_LIKE,
+        (u32)context, (u32)origin
+    );
+}
+
+static inline void bda_gui_map_mode_set_like(
+    bda_handle_t context, int enabled
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_MAP_MODE_SET_LIKE,
+        (u32)context, (u32)enabled
+    );
+}
+
+static inline void bda_gui_viewport_extent_set_like(
+    bda_handle_t context, const bda_point_like_t *extent
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_VIEWPORT_EXTENT_SET_LIKE,
+        (u32)context, (u32)extent
+    );
+}
+
+static inline void bda_gui_viewport_origin_set_like(
+    bda_handle_t context, const bda_point_like_t *origin
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_VIEWPORT_ORIGIN_SET_LIKE,
+        (u32)context, (u32)origin
+    );
+}
+
+static inline void bda_gui_window_extent_set_like(
+    bda_handle_t context, const bda_point_like_t *extent
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_EXTENT_SET_LIKE,
+        (u32)context, (u32)extent
+    );
+}
+
+static inline void bda_gui_window_origin_set_like(
+    bda_handle_t context, const bda_point_like_t *origin
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_ORIGIN_SET_LIKE,
+        (u32)context, (u32)origin
+    );
+}
+
+/*
+ * In-place point conversion helpers. The full pair includes context origin
+ * (context+0x40/+0x44); the map-only pair applies viewport/window mapping but
+ * deliberately omits that origin. With map mode disabled, the map-only pair
+ * is a no-op while the full pair still adds/subtracts the context origin.
+ */
+static inline void bda_gui_device_to_logical_point_like(
+    bda_handle_t context, bda_point_like_t *point
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_DEVICE_TO_LOGICAL_POINT_LIKE,
+        (u32)context, (u32)point
+    );
+}
+
+static inline void bda_gui_logical_to_device_point_like(
+    bda_handle_t context, bda_point_like_t *point
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_LOGICAL_TO_DEVICE_POINT_LIKE,
+        (u32)context, (u32)point
+    );
+}
+
+static inline void bda_gui_map_device_to_logical_point_like(
+    bda_handle_t context, bda_point_like_t *point
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_MAP_DEVICE_TO_LOGICAL_POINT_LIKE,
+        (u32)context, (u32)point
+    );
+}
+
+static inline void bda_gui_map_logical_to_device_point_like(
+    bda_handle_t context, bda_point_like_t *point
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_MAP_LOGICAL_TO_DEVICE_POINT_LIKE,
+        (u32)context, (u32)point
+    );
+}
+
+/*
+ * Subtract one normalized rectangle from the current clip region. Intersected
+ * region nodes are split into up to four remaining strips. The function has
+ * no stable return value and takes right/bottom as the fifth stack argument.
+ */
+static inline void bda_gui_clip_exclude_rect_like(
+    bda_handle_t context,
+    s32 left,
+    s32 top,
+    s32 right,
+    s32 bottom
+) {
+    (void)bda_call5(
+        bda_gui_table(), BDA_GUI_CLIP_EXCLUDE_RECT_LIKE,
+        (u32)context, (u32)left, (u32)top, (u32)right, (u32)bottom
+    );
+}
+
+/*
+ * Add one normalized rectangle to the current clip region. Existing nodes are
+ * first trimmed against the new rectangle to keep the list non-overlapping,
+ * then the new rectangle is appended. The cached bounds returned by
+ * clip_bounds_like() are not expanded for that appended node; use effective
+ * hit tests for multi-node regions. The function has no stable return value.
+ */
+static inline void bda_gui_clip_union_rect_like(
+    bda_handle_t context,
+    s32 left,
+    s32 top,
+    s32 right,
+    s32 bottom
+) {
+    (void)bda_call5(
+        bda_gui_table(), BDA_GUI_CLIP_UNION_RECT_LIKE,
+        (u32)context, (u32)left, (u32)top, (u32)right, (u32)bottom
+    );
+}
+
+/*
+ * Intersect every current clip-region node with one normalized rectangle and
+ * remove empty nodes. Unlike exclude/union, the firmware takes a rect pointer.
+ * The region bounds cache is recomputed; there is no stable return value.
+ */
+static inline void bda_gui_clip_intersect_rect_like(
+    bda_handle_t context,
+    const bda_rect_like_t *rect
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_CLIP_INTERSECT_RECT_LIKE,
+        (u32)context, (u32)rect
+    );
+}
+
+/*
+ * Replace the current clip with one normalized rectangle. Passing NULL clears
+ * the custom region; hit tests and drawing then fall back to the draw context
+ * bounds, while clip_bounds_like() reports the empty (0,0,0,0) region sentinel.
+ * The function has no stable return value. Restore with NULL before ending the
+ * draw scope.
+ */
+static inline void bda_gui_clip_select_rect_like(
+    bda_handle_t context,
+    const bda_rect_like_t *rect_or_null
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_CLIP_SELECT_RECT_LIKE,
+        (u32)context, (u32)rect_or_null
+    );
+}
+
+/*
+ * Read-only current-clip queries. +0x3ec copies the custom region bounds from
+ * context+0x94..+0xa0; after reset it reports the zero-region sentinel even
+ * though drawing falls back to context bounds. +0x3f0 tests one point and
+ * +0x3f4 tests a rect against the effective clip.
+ */
+static inline void bda_gui_clip_bounds_like(
+    bda_handle_t context,
+    bda_rect_like_t *bounds
+) {
+    (void)bda_call2(
+        bda_gui_table(), BDA_GUI_CLIP_BOUNDS_LIKE,
+        (u32)context, (u32)bounds
+    );
+}
+
+static inline int bda_gui_clip_contains_point_like(
+    bda_handle_t context,
+    const bda_point_like_t *point
+) {
+    return bda_call2(
+        bda_gui_table(), BDA_GUI_CLIP_CONTAINS_POINT_LIKE,
+        (u32)context, (u32)point
+    );
+}
+
+static inline int bda_gui_clip_intersects_rect_like(
+    bda_handle_t context,
+    const bda_rect_like_t *rect
+) {
+    return bda_call2(
+        bda_gui_table(), BDA_GUI_CLIP_INTERSECTS_RECT_LIKE,
+        (u32)context, (u32)rect
     );
 }
 
@@ -1286,6 +1639,77 @@ static inline int bda_gui_object_rect_like(bda_handle_t handle, bda_rect_like_t 
  */
 static inline int bda_gui_region_draw_like(bda_handle_t context, s32 x, s32 y, s32 width, s32 height) {
     return bda_call5(bda_gui_table(), BDA_GUI_REGION_DRAW_LIKE, (u32)context, (u32)x, (u32)y, (u32)width, (u32)height);
+}
+
+/*
+ * Render a decoded picture descriptor into an active draw context. C200 reads
+ * context,x,y,width,height,picture; picture+0x04/+0x08 are source dimensions,
+ * +0x14 is the decoded source and +0x18 selects the backend path. This remains
+ * research-only until hardware validates the full decode/render lifecycle.
+ */
+static inline int bda_gui_render_picture_like(
+    bda_handle_t context,
+    s32 x,
+    s32 y,
+    s32 width,
+    s32 height,
+    const bda_picture_like_t *picture
+) {
+    return bda_call6(
+        bda_gui_table(), BDA_GUI_RENDER_COPY_LIKE,
+        (u32)context, (u32)x, (u32)y, (u32)width, (u32)height, (u32)picture
+    );
+}
+
+/*
+ * Copy a rectangle from source_context to destination_context. C200 reads
+ * height at stack+0x10, destination_context at +0x14, destination x/y at
+ * +0x18/+0x1c and color_key_rgb565_or_zero at +0x20. A compatible context is valid as the
+ * source or destination. V19 verified compatible-to-compatible composition,
+ * followed by one compatible-to-visible copy inside a complete draw guard.
+ * V20 and original Thunder/Tank call sites confirm 0 disables color key and
+ * RGB565 0xf81f skips magenta source pixels. V21 verified sub-rectangle
+ * clean-to-back restoration and a 33-pixel-wide back-to-visible dirty present.
+ */
+static inline int bda_gui_context_copy_like(
+    bda_handle_t source_context,
+    s32 source_x,
+    s32 source_y,
+    s32 width,
+    s32 height,
+    bda_handle_t destination_context,
+    s32 destination_x,
+    s32 destination_y,
+    u32 color_key_rgb565_or_zero
+) {
+    typedef int (*copy_fn_t)(
+        u32, u32, u32, u32, u32, u32, u32, u32, u32
+    );
+    copy_fn_t fn = (copy_fn_t)bda_api(
+        bda_gui_table(), BDA_GUI_RENDER_FINISH_LIKE
+    );
+    return fn(
+        (u32)source_context,
+        (u32)source_x,
+        (u32)source_y,
+        (u32)width,
+        (u32)height,
+        (u32)destination_context,
+        (u32)destination_x,
+        (u32)destination_y,
+        color_key_rgb565_or_zero
+    );
+}
+
+/*
+ * Free picture+0x14 for decoder outputs whose out_source_buffer is zero.
+ * If decode returned a separate out_source_buffer, free that pointer with
+ * bda_free() instead and do not call this helper for the same allocation.
+ */
+static inline void bda_gui_picture_source_free_like(bda_picture_like_t *picture) {
+    (void)bda_call1(
+        bda_gui_table(), BDA_GUI_PICTURE_SOURCE_FREE_LIKE, (u32)picture
+    );
 }
 
 /*
@@ -1399,6 +1823,23 @@ static inline int bda_gui_key_pressed_like(u32 keycode) {
 }
 
 /*
+ * C200 的 GUI+0x6d8 无参数返回 32-bit 固件 tick counter。定时 IRQ 每次递增 1；
+ * C200 定时器配置和 BBVM 的 GetTick 实现都表明一个 raw tick 是 25 ms。
+ * 用无符号减法计算 elapsed 可正确跨过一次 u32 回绕。
+ */
+static inline u32 bda_gui_tick_count_25ms_like(void) {
+    return (u32)bda_call0(bda_gui_table(), BDA_GUI_TICK_COUNT_25MS_LIKE);
+}
+
+static inline u32 bda_gui_tick_elapsed_25ms_like(u32 start, u32 end) {
+    return end - start;
+}
+
+static inline u32 bda_gui_tick_elapsed_ms_like(u32 start, u32 end) {
+    return bda_gui_tick_elapsed_25ms_like(start, end) * 25u;
+}
+
+/*
  * game/display 状态推进 helper。C200 table entry 无参数；内部检查时间/状态阈值
  * 0x1068，必要时写全局 display state 并调用 update helper。GAMEBOY、雷霆战机、
  * 决战坦克的 screen/blit 路径附近都出现该入口。return value 是状态推进结果，
@@ -1420,7 +1861,10 @@ static inline int bda_gui_decode_bmp_like(void *owner, bda_picture_like_t *out, 
 
 /*
  * JPEG table entry 会把 mode 截成 signed 8-bit；mode==1 先走 path/format check，其他
- * mode 直接进入 JPEG decoder。return value 来自内部 decoder/错误路径。
+ * mode 直接进入 JPEG decoder。return value 来自内部 decoder/错误路径。V7 在完整
+ * NAND 模拟器上确认标准 JPEG 的 mode 0/1 都生成独立 source_pixels，可通过
+ * bda_gui_render_picture_like() 缩放显示并用 picture-source free helper 分别释放。
+ * 真机尚未验证，特殊 mode-1 payload 的语义也仍未命名。
  */
 static inline int bda_gui_decode_jpeg_like(void *owner, bda_picture_like_t *out, const char *path, u32 mode) {
     return bda_call4(bda_gui_table(), BDA_GUI_DECODE_JPEG_LIKE, (u32)owner, (u32)out, (u32)path, mode);

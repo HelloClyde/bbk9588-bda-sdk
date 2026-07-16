@@ -3,13 +3,15 @@
 本目录只放面向 BDA 开发者使用的 SDK 代码和中文文档，逆向工具、probe 和原机报告仍放在 `reverse/`。
 
 ```text
-api/    C header、SDK 源码和开发者示例
-doc/    中文 API 文档、C200 表项说明和开发笔记
+include/ 稳定公开 C header
+api/     逆向候选 header 和开发者示例
+doc/     中文 API 文档、C200 表项说明和开发笔记
 ```
 
 开发 entry：
 
-- `api/bda_sdk.h`：原生 BDA C SDK header。
+- `include/bda_sdk.h`：打包器默认使用的稳定公开 BDA SDK header。
+- `api/bda_sdk.h`：受控 probe 使用的逆向候选 header，不会被默认构建隐式包含。
 - `api/examples/hello_msgbox.c`：最小 message box 示例。
 - `api/examples/hello_world_msgbox.c`：standalone 打包器动态验证用的 HelloWorld message box 示例。
 - `api/examples/gui_rect_contains_demo.c`：rect helper 示例。
@@ -28,7 +30,7 @@ doc/    中文 API 文档、C200 表项说明和开发笔记
 - `api/examples/touch_crosshair_demo.c`：真机 V23 两阶段绘制的触摸坐标与无闪烁十字定位程序。
 - `api/examples/graphics_primitives_demo.c`：已验证的 frame 图元绘制和彩色像素示例。
 - `api/examples/tile_blit_probe.c`：tile framebuffer blit ABI/build probe；真机已确认逐块 flip 后死机，不能作为游戏绘图示例。
-- `api/examples/minesweeper_bda.c`：8x8 图形扫雷源码和 standalone 编译 smoke；绘图 lifecycle 尚未通过独立 BDA 动态验证，不能视为可运行游戏。
+- `api/examples/minesweeper_bda.c`：使用公开 API 的 9x9 可玩扫雷，8013 已完成胜负、触摸和退出闭环。
 - `doc/README.md`：如何编写、编译和验证原生 BDA 程序。
 - `doc/api_catalog.md`：SDK 已命名 API 与原机调用覆盖。
 - `doc/system_api_tables.md`：从 `C200.bin` 导出的系统 API 表函数地址。
@@ -39,10 +41,14 @@ doc/    中文 API 文档、C200 表项说明和开发笔记
 - `doc/verified/touch_press_api.md`：已验证的触摸按下/抬起 API、固件绑定和动态证据。
 - `doc/verified/graphics_primitives_api.md`：已验证的图元绘制 API、生命周期和动态证据。
 - `doc/verified/touch_window_lifecycle_api.md`：真机已验证的触摸坐标、实时日志和完整窗口退出顺序。
+- `doc/verified/game_rendering_api.md`：图文说明 compatible context、VX、双缓冲、色键、dirty rect 和 25 ms tick。
+- `doc/game_api_verification_progress.md`：游戏候选系统 API 的静态、模拟器和真机分级验证进度。
 - `doc/verification_notes.md`：verify 覆盖、已验证能力和 `_LIKE` API 风险边界。
 
-仓库自带构建脚本会自动加入 `sdk/api` include 路径，因此示例源码可以直接：
+仓库自带打包器默认加入 `sdk/include`，稳定示例源码可以直接：
 
 ```c
 #include "bda_sdk.h"
 ```
+
+只有研究 probe 才显式传入 `-I sdk/api`；普通应用不应依赖候选 header。

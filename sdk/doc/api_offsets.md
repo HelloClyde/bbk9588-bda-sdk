@@ -286,9 +286,13 @@ release`、`+0x030 poll` 返回 0、`+0x17c close`、`bda_main return`。`+0x17c
 GUI +0x308  BDA_GUI_BEGIN_DRAW_LIKE
 GUI +0x30c  BDA_GUI_END_DRAW_LIKE
 GUI +0x304  BDA_GUI_CURRENT_DRAW_LIKE
-GUI +0x314  BDA_GUI_SURFACE_FLUSH_LIKE
+GUI +0x310  compatible draw context/surface 创建；V19 验证可同时创建两块
+GUI +0x314  compatible context flush-and-free；释放后 handle 不可复用
 GUI +0x074  BDA_GUI_PUMP_PRESENT_LIKE
 ```
+
+`+0x310/+0x314` 的公开 wrapper 是
+`bda_gui_compatible_context_create()` 和 `bda_gui_compatible_context_free()`。
 
 原机应用常见模式是：
 
@@ -356,10 +360,25 @@ stack+0x10 = extra/width/flags，常见 -1
 
 ```text
 GUI +0x368  put pixel / draw point 类
+GUI +0x384  polyline；context,point_array,count，point 为两个 signed word
+GUI +0x390  ellipse outline/fill；context,cx,cy,rx,ry,0,0,filled
+GUI +0x394  circular arc；context,cx,cy,start_degrees,end_degrees,radius
+GUI +0x398  center-based rounded rectangle；context,cx,cy,width,height,corner_rx,corner_ry,filled
+GUI +0x3a0..+0x3b0  map mode / viewport / window mapping getters
+GUI +0x3b4..+0x3c4  map mode / viewport / window mapping setters
+GUI +0x3c8/+0x3cc  full device-to-logical / logical-to-device point conversion；包含 context origin
+GUI +0x3d0/+0x3d4  map-only device-to-logical / logical-to-device point conversion；不含 context origin
+GUI +0x3d8  exclude clip rect；context,left,top,right,bottom
+GUI +0x3dc  union clip rect；context,left,top,right,bottom，cached bounds 不随追加节点扩展
+GUI +0x3e0  intersect clip rect；context,const rect*，逐节点求交并重新计算 aggregate bounds
+GUI +0x3e4  select/reset clip rect；context,rect_or_null，NULL 清除自定义 region
+GUI +0x3ec  custom clip-region bounds getter；reset 后返回零矩形哨兵
+GUI +0x3f0  current clip point hit test；context,point
+GUI +0x3f4  current clip rect intersection test；context,rect
 GUI +0x40c  region draw/copy 类
 GUI +0x410  render/copy helper；context,x,y,width,height,descriptor
 GUI +0x414  low-level render helper，多 stack 参数和 descriptor
-GUI +0x418  双 context/双矩形 render helper
+GUI +0x418  双 context 矩形复制；支持 compatible source/destination 子矩形和 dirty present；末参数 0 禁用色键，0xf81f 跳过洋红 source pixel
 GUI +0x430  rect writer；rect,x0,y0,x1,y1 五参数，SDK wrapper 为 bda_gui_rect_prepare_like()
 GUI +0x0a4  object/default client rect 查询；handle,rect，成功写 16 byte rect
 GUI +0x3f8  framebuffer/region blit 类
@@ -376,6 +395,22 @@ a2 = y
 a3 = RGB565 color，例如 0xf800 红色
 ```
 
+`GUI+0x384` 已由 C200 确认会把首点设为 current point，再对剩余点逐个调用
+line-to；V10 模拟器验证连续折线可见。`GUI+0x3ec/+0x3f0/+0x3f4` 只读当前 clip，
+不包含 clip region 的创建或修改生命周期。
+
+`GUI+0x390` 已由 V11 验证末项 `0/1` 分别产生轮廓/实心椭圆；两个中间参数在
+`电子画板` 和 C200 内部调用中都为 0，研究 wrapper 固定写 0。填充颜色来自 selected
+draw object/backend，不是 `GUI+0x334` 的直接颜色值。
+
+`GUI+0x394` 的角度为整数度，V12 已确认 `0→180` 是上半圆、`180→360` 是下半圆。
+`GUI+0x398` 使用中心坐标而不是左上角，末项切换轮廓/实心；调用者应让两个圆角半径
+不超过 width/height 的一半。
+
+逻辑坐标映射字段位于 context `+0x70..+0x90`。V13 已验证单位默认值、2 倍 viewport
+extent、viewport origin 偏移和完整恢复。启用 map mode 前必须保证 window extent 两个
+分量都非 0；setter 要求非空 context。
+
 `GUI+0x3f8/+0x400` 在游戏中常见全屏形态：
 
 ```text
@@ -390,10 +425,11 @@ stack+0x10 = buffer pointer
 screen/backend region buffer，适合和 `GUI+0x400` restore 路径配对；返回值必须
 用 `bda_free()` 释放。
 
-`GUI+0x314` 和 `GUI+0x334` 来自画板/BBVM 路径，SDK 暴露为：
+`GUI+0x314` 已由 compatible context 闭环收窄为 destructive free；`GUI+0x334`
+仍是研究候选：
 
 ```c
-void bda_gui_surface_flush_like(bda_handle_t context);
+void bda_gui_compatible_context_free(bda_handle_t context);
 int bda_gui_set_fill_color_like(bda_handle_t handle, u32 color);
 ```
 
@@ -439,6 +475,11 @@ GUI +0x808  JPEG decode 类
 RES +0x090  resource/picture state 类
 ```
 
+`GUI+0x540` 的公开 wrapper 是
+`bda_gui_draw_vx(context, x, y, vx_resource)`；尺寸来自 VX header，不执行缩放。
+`GUI+0x418` 的公开 wrapper 是九参数 `bda_gui_context_copy()`，支持 compatible
+source/destination、visible 提交、`0xf81f` 洋红色键和子矩形复制。
+
 相册使用的临时图片描述符：
 
 ```text
@@ -454,6 +495,29 @@ RES +0x090  resource/picture state 类
 
 SDK 对应 `bda_picture_like_t`。VX 快路径已确认写 `width/height/stride_bytes`
 和 `source_pixels`；完整流程见 `picture_notes.md`。
+
+## 游戏计时
+
+```text
+GUI +0x6d8  25 ms raw tick counter；无参数返回 u32
+```
+
+C200 table entry 指向 `0x8012bdb0`，只返回全局 `0x80474094`。定时 IRQ
+`0x8012bb90` 每次把该全局加一；初始化函数把定时器配置为 25 ms 周期。
+官方 `BB虚拟机.bda` 会在启动时保存一次原始值，随后按
+`(current - base) * 25` 返回毫秒数。
+
+公开 wrapper：
+
+```c
+u32 bda_gui_tick_count_25ms(void);
+u32 bda_gui_tick_elapsed_25ms(u32 start, u32 end);
+u32 bda_gui_tick_elapsed_ms(u32 start, u32 end);
+```
+
+elapsed helper 使用无符号 `end - start`，可跨一次 `u32` 回绕。不要把 raw counter
+直接当毫秒，也不要用 `end >= start` 判断是否前进。V9 已在 8013 模拟器通过并按
+模拟器稳定等级进入公开 `sdk/include`；真机仍待复测。
 
 ## 文件选择器
 

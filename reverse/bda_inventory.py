@@ -98,7 +98,7 @@ def write_markdown(items: list[dict[str, object]], out: Path) -> None:
     lines.append("")
     lines.append("- `高频 API Offset` 是表分类之前统计到的原始间接调用 offset。")
     lines.append("- 逐应用报告应把本索引当作清单，再补充函数级证据以及和 SDK 文档的交叉引用。")
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def main() -> None:
@@ -115,7 +115,11 @@ def main() -> None:
 
     items = [analyze_bda(path) for path in sorted(ns.root.glob("*.bda"))]
     ns.json_out.parent.mkdir(parents=True, exist_ok=True)
-    ns.json_out.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    ns.json_out.write_text(
+        json.dumps(items, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+        newline="\n",
+    )
     write_markdown(items, ns.md_out)
     print(f"files={len(items)}")
     print(f"json={ns.json_out}")

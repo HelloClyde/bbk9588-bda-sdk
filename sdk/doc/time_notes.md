@@ -11,6 +11,26 @@
 当前 `闹钟.bda` 报告是 RTC/闹钟调用点最强证据；`时间.bda` 主要证明显示刷新
 循环和 delay 行为。
 
+## GUI 游戏 tick
+
+```text
+GUI +0x6d8  25 ms raw tick counter
+```
+
+该入口无参数返回 32-bit 原始计数。C200 定时 IRQ 每 25 ms 递增一次；官方 BBVM
+的 GetTick 会先减去启动时保存的基准值，再乘 25 返回毫秒。公开 SDK 提供：
+
+```c
+u32 bda_gui_tick_count_25ms(void);
+u32 bda_gui_tick_elapsed_25ms(u32 start, u32 end);
+u32 bda_gui_tick_elapsed_ms(u32 start, u32 end);
+```
+
+差值 helper 使用无符号减法，可跨一次 32-bit 回绕。`GameTickProbeV9` 已在 8013
+模拟器验证 raw counter 前进、40 tick 等于 1000 ms 的换算和回绕算术；它已按模拟器
+稳定等级进入 `sdk/include`，真机待测。
+这与 `SYS+0x080` busy-wait delay 和 `SYS+0x09c` preset selector 是三条不同路径。
+
 ## SYS 表调用
 
 ```text
@@ -64,6 +84,9 @@ SYS +0x09c  timer/rate preset-like
 
 `reverse/examples/time_probe.c` 会读取 `SYS+0x0b8` 的 due alarm record 和三个
 alarm slot 的 `SYS+0x0b0`，然后显示 return value 和原始 byte。
+
+`reverse/examples/game_tick_probe.c` 只读 `GUI+0x6d8`，等待至少 40 个 raw tick，
+将每条结果立即写入 `A:\应用\数据\游戏\GAMETICK.TXT` 后返回菜单。
 
 该 probe 刻意不调用 `SYS+0x0ac`。`SYS+0x0a8` 在 C200 中是 no-op stub，已经从
 SDK 公开 wrapper 中移除。

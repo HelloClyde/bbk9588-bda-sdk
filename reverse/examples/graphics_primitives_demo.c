@@ -10,7 +10,7 @@ static int g_dirty;
 static int g_exit;
 
 static u32 color(u32 red, u32 green, u32 blue) {
-    return (u32)bda_gui_rgb_like(g_draw, red, green, blue);
+    return (u32)bda_gui_rgb(g_draw, red, green, blue);
 }
 
 static void fill_pixels_converted(
@@ -24,7 +24,7 @@ static void fill_pixels_converted(
     int y;
     for (y = 0; y < height; ++y) {
         for (x = 0; x < width; ++x) {
-            (void)bda_gui_put_pixel_like(g_draw, left + x, top + y, value);
+            (void)bda_gui_put_pixel(g_draw, left + x, top + y, value);
         }
     }
 }
@@ -42,7 +42,7 @@ static void fill_pixels_rgb(
     int y;
     for (y = 0; y < height; ++y) {
         for (x = 0; x < width; ++x) {
-            (void)bda_gui_put_pixel_rgb_like(
+            (void)bda_gui_put_pixel_rgb(
                 g_draw, left + x, top + y, red, green, blue
             );
         }
@@ -60,11 +60,11 @@ static void draw_pixel_swatch(s32 left, s32 top) {
             int alternate = ((x / 4) + (y / 4)) & 1;
             if (x < 10) {
                 u32 value = alternate ? accent : light;
-                (void)bda_gui_put_pixel_like(g_draw, left + x, top + y, value);
+                (void)bda_gui_put_pixel(g_draw, left + x, top + y, value);
             } else if (alternate) {
-                (void)bda_gui_put_pixel_rgb_like(g_draw, left + x, top + y, 250, 190, 35);
+                (void)bda_gui_put_pixel_rgb(g_draw, left + x, top + y, 250, 190, 35);
             } else {
-                (void)bda_gui_put_pixel_rgb_like(g_draw, left + x, top + y, 245, 248, 250);
+                (void)bda_gui_put_pixel_rgb(g_draw, left + x, top + y, 245, 248, 250);
             }
         }
     }
@@ -84,30 +84,30 @@ static void draw_scene(void) {
     foreground = color(245, 248, 250);
     muted = color(165, 180, 190);
 
-    (void)bda_gui_draw_guard_begin_like();
-    old_object = bda_gui_select_draw_object_like(g_draw, g_draw_object);
+    (void)bda_gui_draw_guard_begin();
+    old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
 
     fill_pixels_converted(16, 48, 88, 48, panel_a);
     fill_pixels_rgb(136, 48, 88, 48, 235, 165, 35);
 
-    bda_gui_rectangle_like(g_draw, 12, 42, 108, 104);
-    bda_gui_rectangle_like(g_draw, 132, 42, 228, 104);
-    bda_gui_move_to_like(g_draw, 18, 135);
-    bda_gui_line_to_like(g_draw, 222, 135);
-    bda_gui_circle_like(g_draw, 60, 185, 34);
-    bda_gui_rectangle_like(g_draw, 126, 151, 218, 219);
+    bda_gui_rectangle(g_draw, 12, 42, 108, 104);
+    bda_gui_rectangle(g_draw, 132, 42, 228, 104);
+    bda_gui_move_to(g_draw, 18, 135);
+    bda_gui_line_to(g_draw, 222, 135);
+    bda_gui_circle(g_draw, 60, 185, 34);
+    bda_gui_rectangle(g_draw, 126, 151, 218, 219);
     draw_pixel_swatch(110, 240);
 
-    (void)bda_gui_set_text_mode_like(g_draw, 1);
-    (void)bda_gui_set_text_color_like(g_draw, foreground);
-    (void)bda_gui_draw_text_like(g_draw, 40, 10, "GRAPHICS API", -1);
-    (void)bda_gui_draw_text_like(g_draw, 25, 66, "RECT", -1);
-    (void)bda_gui_draw_text_like(g_draw, 152, 66, "FILL", -1);
-    (void)bda_gui_set_text_color_like(g_draw, muted);
-    (void)bda_gui_draw_text_like(g_draw, 75, 278, "ESC EXIT", -1);
+    (void)bda_gui_set_text_mode(g_draw, 1);
+    (void)bda_gui_set_text_color(g_draw, foreground);
+    (void)bda_gui_draw_text(g_draw, 40, 10, "GRAPHICS API", -1);
+    (void)bda_gui_draw_text(g_draw, 25, 66, "RECT", -1);
+    (void)bda_gui_draw_text(g_draw, 152, 66, "FILL", -1);
+    (void)bda_gui_set_text_color(g_draw, muted);
+    (void)bda_gui_draw_text(g_draw, 75, 278, "ESC EXIT", -1);
 
-    (void)bda_gui_select_draw_object_like(g_draw, old_object);
-    (void)bda_gui_draw_guard_end_like();
+    (void)bda_gui_select_draw_object(g_draw, old_object);
+    (void)bda_gui_draw_guard_end();
 }
 
 static int graphics_window_proc(
@@ -116,35 +116,35 @@ static int graphics_window_proc(
     u32 wparam,
     u32 lparam
 ) {
-    if (message == BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE) {
+    if (message == BDA_MSG_DRAW_CONTEXT_ATTACH) {
         g_frame = handle;
-        g_draw = bda_gui_current_draw_like(handle);
+        g_draw = bda_gui_current_draw(handle);
         if (!g_draw_object) {
-            g_draw_object = bda_gui_draw_object_create_like(7);
+            g_draw_object = bda_gui_draw_object_create(7);
         }
         g_dirty = 1;
         draw_scene();
-    } else if (message == BDA_MSG_REDRAW_INPUT_LIKE) {
+    } else if (message == BDA_MSG_REDRAW_INPUT) {
         g_dirty = 1;
         draw_scene();
-    } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH_LIKE) {
+    } else if (message == BDA_MSG_DRAW_CONTEXT_DETACH) {
         g_draw = 0;
     }
-    return bda_gui_default_proc_like(handle, message, wparam, lparam);
+    return bda_gui_default_proc(handle, message, wparam, lparam);
 }
 
 static void wait_key_release(u32 keycode) {
-    bda_gui_input_packet_like_t packet;
+    bda_gui_input_packet_t packet;
     do {
-        (void)bda_gui_input_packet_like(&packet);
-        bda_sys_delay_like(1);
-    } while (bda_gui_input_packet_key_pressed_like(&packet, keycode));
+        (void)bda_gui_input_packet(&packet);
+        bda_sys_delay(1);
+    } while (bda_gui_input_packet_key_pressed(&packet, keycode));
 }
 
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
-    bda_frame_desc_like_t descriptor;
-    bda_gui_message_like_t message;
+    bda_frame_desc_t descriptor;
+    bda_gui_message_t message;
 
     bda_memset(&descriptor, 0, sizeof(descriptor));
     bda_memset(&message, 0, sizeof(message));
@@ -159,19 +159,19 @@ int bda_main(void) {
     descriptor.wndproc = graphics_window_proc;
     descriptor.height = SCREEN_WIDTH;
     descriptor.width = SCREEN_HEIGHT;
-    descriptor.surface = (u32)bda_gui_draw_object_create_like(15);
+    descriptor.surface = (u32)bda_gui_draw_object_create(15);
 
-    g_frame = bda_gui_register_frame_desc_like(&descriptor);
+    g_frame = bda_gui_register_frame_desc(&descriptor);
     if (!g_frame || (s32)g_frame == -1) {
         bda_msgbox("Graphics", "frame registration failed");
         return 1;
     }
-    (void)bda_gui_frame_activate_like(g_frame, 0x100);
+    (void)bda_gui_frame_activate(g_frame, 0x100);
     if (!g_draw) {
-        g_draw = bda_gui_current_draw_like(g_frame);
+        g_draw = bda_gui_current_draw(g_frame);
     }
     if (!g_draw_object) {
-        g_draw_object = bda_gui_draw_object_create_like(7);
+        g_draw_object = bda_gui_draw_object_create(7);
     }
     if (!g_draw || !g_draw_object || (s32)(u32)g_draw_object == -1) {
         bda_msgbox("Graphics", "draw context failed");
@@ -180,19 +180,19 @@ int bda_main(void) {
     draw_scene();
 
     while (!g_exit) {
-        bda_gui_input_packet_like_t packet;
-        (void)bda_gui_event_pump_frame_once_like(&message, g_frame);
-        (void)bda_gui_input_packet_like(&packet);
-        if (bda_gui_input_packet_key_pressed_like(&packet, BDA_KEY_ESCAPE)) {
+        bda_gui_input_packet_t packet;
+        (void)bda_gui_event_pump_frame_once(&message, g_frame);
+        (void)bda_gui_input_packet(&packet);
+        if (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE)) {
             wait_key_release(BDA_KEY_ESCAPE);
             g_exit = 1;
         }
-        bda_sys_delay_like(1);
+        bda_sys_delay(1);
     }
 
     if (g_frame) {
-        (void)bda_gui_frame_stop_like(g_frame);
-        (void)bda_gui_frame_release_like(g_frame);
+        (void)bda_gui_frame_stop(g_frame);
+        (void)bda_gui_frame_release(g_frame);
     }
     return 0;
 }

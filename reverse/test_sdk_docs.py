@@ -325,18 +325,111 @@ class SdkDocsTest(unittest.TestCase):
     def test_minesweeper_example_documents_standalone_runtime_limits(self) -> None:
         source = read("sdk/api/examples/minesweeper_bda.c")
         readme = read("sdk/doc/README.md")
-        self.assertIn("#define BOARD_W 8", source)
+        mines_notes = read("sdk/doc/minesweeper_v1.md")
+        window_notes = read("sdk/doc/window_notes.md")
+        self.assertIn("#define BOARD_WIDTH 9", source)
         self.assertIn("#define MINE_COUNT 10", source)
-        self.assertIn("bda_gui_register_frame_desc_like", source)
-        self.assertIn("bda_gui_current_draw_like", source)
-        self.assertIn("bda_gui_rectangle_like", source)
-        self.assertIn("bda_gui_input_packet_like", source)
-        self.assertIn("standalone 打包器", readme)
-        self.assertIn("不作为可运行游戏", readme)
-        self.assertIn("不能进入\n`sdk/doc/verified/`", readme)
+        self.assertIn("bda_gui_register_frame_desc", source)
+        self.assertIn("bda_gui_current_draw", source)
+        self.assertIn("bda_gui_compatible_context_create", source)
+        self.assertIn("bda_gui_compatible_context_free", source)
+        self.assertIn("bda_gui_draw_vx", source)
+        self.assertIn("bda_gui_context_copy", source)
+        self.assertIn("bda_gui_input_packet", source)
+        self.assertIn("首击安全", mines_notes)
+        self.assertIn("WON TICKS=", mines_notes)
+        self.assertIn("--category 4", mines_notes)
+        self.assertIn("--icon-png sdk\\assets\\minesweeper_icon.png", mines_notes)
+        self.assertIn("娱乐天地", mines_notes)
+        self.assertNotIn("-I sdk\\api", mines_notes)
+        self.assertNotIn("_like", source)
+        self.assertNotIn("_LIKE", source)
+        self.assertTrue(Path("sdk/assets/minesweeper_icon.png").is_file())
+        self.assertTrue(
+            Path("sdk/doc/assets/minesweeper_v1_entertainment_menu.png").is_file()
+        )
+        self.assertIn("standalone 9x9 扫雷", readme)
+        self.assertIn("彻底移除雷霆模板", window_notes)
+        self.assertIn("模拟器稳定等级进入公开 include", readme)
+        self.assertIn("verified/game_rendering_api.md", readme)
+        self.assertNotIn("0x81c0fdb8", source.lower())
         examples_test = read("reverse/test_sdk_examples.py")
         self.assertIn('"Mines"', examples_test)
         self.assertIn("test_minesweeper_example_builds", examples_test)
+
+    def test_game_rendering_api_is_public_and_documented(self) -> None:
+        stable_header = read("sdk/include/bda_sdk.h")
+        verified = read("sdk/doc/verified/game_rendering_api.md")
+        verified_index = read("sdk/doc/verified/README.md")
+        include_readme = read("sdk/include/README.md")
+        sdk_readme = read("sdk/README.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        source = read("sdk/api/examples/minesweeper_bda.c")
+
+        required_offsets = [
+            "BDA_SDK_INTERNAL_GUI_COMPAT_CREATE     0x310u",
+            "BDA_SDK_INTERNAL_GUI_COMPAT_FREE       0x314u",
+            "BDA_SDK_INTERNAL_GUI_CONTEXT_COPY      0x418u",
+            "BDA_SDK_INTERNAL_GUI_DRAW_VX           0x540u",
+            "BDA_SDK_INTERNAL_GUI_TICK_COUNT_25MS   0x6d8u",
+        ]
+        required_api = [
+            "bda_gui_compatible_context_create",
+            "bda_gui_compatible_context_free",
+            "bda_gui_draw_vx",
+            "bda_gui_context_copy",
+            "bda_gui_tick_count_25ms",
+            "bda_gui_tick_elapsed_25ms",
+            "bda_gui_tick_elapsed_ms",
+            "BDA_GUI_COLOR_KEY_NONE",
+            "BDA_GUI_COLOR_KEY_MAGENTA_RGB565",
+        ]
+        for text in required_offsets:
+            self.assertIn(text, stable_header)
+        for text in required_api:
+            self.assertIn(text, stable_header)
+            self.assertIn(text, verified)
+
+        for legacy in [
+            "bda_gui_compat_context_create_like",
+            "bda_gui_surface_flush_like",
+            "bda_gui_context_copy_like",
+            "bda_gui_draw_vx_like",
+            "bda_gui_tick_count_25ms_like",
+        ]:
+            self.assertNotIn(legacy, stable_header)
+            self.assertNotIn(legacy, source)
+
+        for phrase in [
+            "模拟器稳定公开",
+            "不扩张到其他机型或固件版本",
+            "draw guard 内一次 copy",
+            "24 + width * height * 2",
+            "153624",
+            "33x32",
+            "0xfffffff0 -> 0x10",
+            "frame stop",
+            "BBK 9588 真机仍需复测",
+            "alpha blending",
+        ]:
+            self.assertIn(phrase, verified)
+
+        self.assertGreaterEqual(verified.count("```mermaid"), 2)
+        self.assertNotIn("-I sdk\\api", verified)
+        self.assertIn("game_rendering_api.md", verified_index)
+        self.assertIn("game_rendering_api.md", include_readme)
+        self.assertIn("game_rendering_api.md", sdk_readme)
+        self.assertIn("已按“模拟器稳定”等级进入", progress)
+
+        for asset in [
+            "game_rendering_double_buffer_a.png",
+            "game_rendering_double_buffer_b.png",
+            "game_rendering_color_key.png",
+            "game_rendering_dirty_rect.png",
+            "game_rendering_minesweeper.png",
+        ]:
+            self.assertIn(f"assets/{asset}", verified)
+            self.assertTrue((ROOT / "sdk/doc/verified/assets" / asset).is_file())
 
     def test_gui_lifecycle_boundary_is_documented_near_public_wrappers(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -733,6 +826,31 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("ticks_or_us", header + readme + time_notes)
         self.assertNotIn("bda_sys_timer_like(u32 ticks)", header + readme + time_notes)
 
+    def test_game_tick_api_keeps_raw_unit_and_validation_boundary(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        stable_header = read("sdk/include/bda_sdk.h")
+        time_notes = read("sdk/doc/time_notes.md")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        api_offsets = read("sdk/doc/api_offsets.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        combined = "\n".join([header, time_notes, c200_notes, api_offsets, progress])
+
+        self.assertIn("#define BDA_GUI_TICK_COUNT_25MS_LIKE   0x6d8u", header)
+        self.assertIn("static inline u32 bda_gui_tick_count_25ms_like(void)", header)
+        self.assertIn("bda_gui_tick_count_25ms(void)", stable_header)
+        self.assertIn("bda_gui_tick_elapsed_25ms(u32 start, u32 end)", stable_header)
+        self.assertIn("bda_gui_tick_elapsed_ms(u32 start, u32 end)", stable_header)
+        self.assertIn("return end - start", header)
+        self.assertIn("return end - start", stable_header)
+        self.assertIn("* 25u", header)
+        self.assertIn("* 25u", stable_header)
+        self.assertIn("0x8012bdb0", c200_notes)
+        self.assertIn("0x8012bb90", c200_notes)
+        self.assertIn("(current - base) * 25", combined)
+        self.assertIn("24.853 ms/tick", progress)
+        self.assertIn("真机待测", time_notes)
+        self.assertIn("进入 `sdk/include`", time_notes)
+
     def test_stub_and_constant_query_apis_are_not_misleading(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         readme = read("sdk/doc/README.md")
@@ -1085,6 +1203,162 @@ class SdkDocsTest(unittest.TestCase):
             (ROOT / "sdk/doc/verified/assets/graphics_primitives_bda_verified.png").is_file()
         )
         self.assertIn("不承诺可直接把该流程当双缓冲游戏循环", verified)
+
+    def test_gui_polyline_and_clip_query_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        combined = header + "\n" + catalog_tool + "\n" + progress
+        self.assertIn("#define BDA_GUI_POLYLINE_LIKE       0x384u", header)
+        self.assertIn("bda_gui_polyline_like", header)
+        self.assertIn("bda_gui_clip_bounds_like", header)
+        self.assertIn("bda_gui_clip_contains_point_like", header)
+        self.assertIn("bda_gui_clip_intersects_rect_like", header)
+        self.assertIn("context,point_array,count", catalog_tool)
+        self.assertIn("GamePolylineClipProbeV10", progress)
+
+    def test_gui_ellipse_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_ELLIPSE_LIKE        0x390u", header)
+        self.assertIn("bda_gui_ellipse_like", header)
+        self.assertIn("context,cx,cy,rx,ry,0,0,filled", catalog_tool)
+        self.assertIn("GameEllipseProbeV11", progress)
+
+    def test_gui_arc_round_rect_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_ARC_LIKE            0x394u", header)
+        self.assertIn("#define BDA_GUI_ROUND_RECT_LIKE     0x398u", header)
+        self.assertIn("bda_gui_arc_like", header)
+        self.assertIn("bda_gui_round_rect_like", header)
+        self.assertIn("start_degrees,end_degrees,radius", catalog_tool)
+        self.assertIn("center-based rounded rectangle", catalog_tool)
+        self.assertIn("GameArcRoundRectProbeV12", progress)
+
+    def test_gui_map_mode_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        for name in (
+            "bda_gui_map_mode_get_like",
+            "bda_gui_viewport_extent_get_like",
+            "bda_gui_viewport_origin_get_like",
+            "bda_gui_window_extent_get_like",
+            "bda_gui_window_origin_get_like",
+            "bda_gui_map_mode_set_like",
+            "bda_gui_viewport_extent_set_like",
+            "bda_gui_viewport_origin_set_like",
+            "bda_gui_window_extent_set_like",
+            "bda_gui_window_origin_set_like",
+        ):
+            self.assertIn(name, header)
+        self.assertIn("context+0x70", catalog_tool)
+        self.assertIn("context+0x7c/+0x80", catalog_tool)
+        self.assertIn("GameMapModeProbeV13", progress)
+
+    def test_gui_coordinate_transform_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        for name in (
+            "bda_gui_device_to_logical_point_like",
+            "bda_gui_logical_to_device_point_like",
+            "bda_gui_map_device_to_logical_point_like",
+            "bda_gui_map_logical_to_device_point_like",
+        ):
+            self.assertIn(name, header)
+        self.assertIn("device-to-logical point 原地转换", catalog_tool)
+        self.assertIn("map-only logical-to-device point", catalog_tool)
+        self.assertIn("GameCoordinateTransformProbeV14", progress)
+
+    def test_gui_clip_select_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_CLIP_SELECT_RECT_LIKE 0x3e4u", header)
+        self.assertIn("bda_gui_clip_select_rect_like", header)
+        self.assertIn("context,rect_or_null", catalog_tool)
+        self.assertIn("无自定义 region", c200_notes)
+        self.assertIn("GameClipSelectProbeV15", progress)
+
+    def test_gui_clip_exclude_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_CLIP_EXCLUDE_RECT_LIKE 0x3d8u", header)
+        self.assertIn("bda_gui_clip_exclude_rect_like", header)
+        self.assertIn("最多四个剩余条带", catalog_tool)
+        self.assertIn("0x800d2fe4(region,rect)", c200_notes)
+        self.assertIn("GameClipExcludeProbeV16", progress)
+
+    def test_gui_clip_union_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_CLIP_UNION_RECT_LIKE 0x3dcu", header)
+        self.assertIn("bda_gui_clip_union_rect_like", header)
+        self.assertIn("cached bounds 不随追加扩展", catalog_tool)
+        self.assertIn("0x800d3530(region, new_rect)", c200_notes)
+        self.assertIn("GameClipUnionProbeV17", progress)
+
+    def test_gui_clip_intersect_research_api(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("#define BDA_GUI_CLIP_INTERSECT_RECT_LIKE 0x3e0u", header)
+        self.assertIn("bda_gui_clip_intersect_rect_like", header)
+        self.assertIn("重新计算 aggregate bounds", catalog_tool)
+        self.assertIn("0x800d35f0(context+0x94, intersect_rect)", c200_notes)
+        self.assertIn("GameClipIntersectProbeV18", progress)
+
+    def test_game_double_buffer_sprite_probe_is_documented(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        game_notes = read("sdk/doc/game_framework_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        self.assertIn("bda_gui_context_copy_like", header)
+        self.assertIn("V19-V21 验证 compatible 合成", catalog_tool)
+        self.assertIn("compatible context 可以作为 `+0x418` 的 destination", c200_notes)
+        self.assertIn("GUI+0x418(sprite -> back)", game_notes)
+        self.assertIn("GameDoubleBufferSpriteProbeV19", progress)
+        self.assertIn("FRAMES=0x0001C788", progress)
+
+    def test_game_color_key_sprite_probe_is_documented(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        verified = read("sdk/doc/verified/touch_window_lifecycle_api.md")
+        self.assertIn("BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE 0xf81fu", header)
+        self.assertIn("color_key_rgb565_or_zero", header)
+        self.assertIn("0xf81f 洋红透明键", catalog_tool)
+        self.assertIn("雷霆战机 `0x81c10db8`", c200_notes)
+        self.assertIn("GameColorKeySpriteProbeV20", progress)
+        self.assertIn("COLOR KEY=0x0000F81F", progress)
+        self.assertIn("该\n推断撤回", verified)
+
+    def test_game_dirty_rect_sprite_probe_is_documented(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        catalog_tool = read("reverse/bda_api_catalog.py")
+        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        game_notes = read("sdk/doc/game_framework_notes.md")
+        progress = read("sdk/doc/game_api_verification_progress.md")
+        readme = read("sdk/doc/README.md")
+        self.assertIn("33-pixel-wide back-to-visible dirty present", header)
+        self.assertIn("dirty rect 局部提交", catalog_tool)
+        self.assertIn("GameDirtyRectSpriteProbeV21", progress)
+        self.assertIn("DIRTY WIDTH=0x00000021", progress)
+        self.assertIn("clean -> back", c200_notes)
+        self.assertIn("最小外接 dirty rect", game_notes)
+        self.assertIn("game_dirty_rect_sprite_probe.c", readme)
 
     def test_gui_blit_entries_document_c200_backend_callbacks(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -2132,7 +2406,7 @@ class SdkDocsTest(unittest.TestCase):
             "frontend 文件 API 写入其持久 worker copy",
             "不要把 `Config.inf` 当成 BDA app 的有效注册机制",
             "Public Wrapper 快览",
-            "已确认或风险较低的 wrapper",
+            "普通应用以 `sdk/include/bda_sdk.h` 为唯一公开清单",
             "从原机应用调用点和 C200 切片整理出的 wrapper",
             "用于 low-level probe 或复刻原机调用形状的 table call",
             "不要把未知 offset 当成稳定 API",
@@ -2529,7 +2803,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("sp+0x20 = backend_arg", paint_report)
         self.assertIn("归一化为两个\n  context", c200_notes)
         self.assertIn("backend `+0x94`", combined)
-        self.assertIn("暂不提供 high-level wrapper", c200_notes)
+        self.assertIn("bda_gui_context_copy()", c200_notes)
         self.assertIn("不是简单 present/finish", picture_notes)
         self.assertIn("GUI +0x418  双 context/双矩形 render helper", system_bin_notes)
         self.assertIn("GUI +0x418   31 次  双 context/双矩形 render helper", album_report)

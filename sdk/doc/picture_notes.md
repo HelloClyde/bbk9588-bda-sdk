@@ -167,7 +167,8 @@ C200 会按 backend bytes-per-pixel 临时分配 buffer，并调用 backend `+0x
 
 `GUI+0x418` 的 C200 table entry `0x800b3d90` 会读取第二个 context 和 source/destination
 矩形参数，命中子区域后调用 backend `+0x94`。因此它更像双 context render/copy
-helper，不是简单 present/finish。
+helper，不是简单 present/finish。末参数为 RGB565 `color_key_or_zero`：原机
+雷霆战机/决战坦克使用 `0xf81f`，V20 已在模拟器确认洋红 source pixel 透明。
 
 `0x81c06f78` 的 dispatcher 通过 jump table 选择 `0..7` render/clip/scaling mode，
 并大量调用 `GUI+0x418`。
@@ -214,11 +215,16 @@ int bda_gui_decode_jpeg_like(void *owner, bda_picture_like_t *out,
 void bda_gui_rect_prepare_like(bda_rect_like_t *rect, s32 x0, s32 y0, s32 x1, s32 y1);
 ```
 
-这些 wrapper 适合 controlled experiment，不适合作为“直接可用的 image control API”。要做稳健 custom
-应用，还缺少两个已验证 helper：
+`GameJpegProbeV7` 已在完整 NAND 模拟器上用官方 `gcddh.jpg` 验证 mode 0/1：两次均
+返回独立的 `300x300` `source_pixels`，可由 `GUI+0x410` 缩放到 `100x100` 显示，
+并可分别通过 `GUI+0x50c` 释放。普通 JPEG descriptor 的 `stride/mode/bpp` 仍为零，
+调用者只应依赖 `width/height/source_pixels/selected_index`。该结果尚未提升为真机 verified。
 
-- 创建或取得有效 `owner/window/image handle`。
-- 用正确 scaling mode 把返回的 RGB565 buffer render 到屏幕。
+这些 wrapper 适合 controlled experiment，不适合作为“直接可用的 image control API”。要做稳健 custom
+应用，还缺少两个真机已验证边界：
+
+- 当前 frame draw context 作为 decoder owner 的适用范围。
+- `GUI+0x410` 缩放、裁剪和 decoder source 释放的真机闭环。
 
 在这两点确认前，普通应用更稳的 image 路线仍是保留完整 VX resource block 并通过
 `bda_gui_draw_vx_like(handle, x, y, vx_resource)` 在已有 draw handle 上绘制。

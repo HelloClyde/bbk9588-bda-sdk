@@ -79,11 +79,11 @@ hardware probe 显示，缺少 context 的直接创建容易重启。
 - `bda_sys_delay_like()` no-GUI 版本：真机仍可死机，说明 SYS table call 也不能当作
   该入口下的安全 keepalive。
 
-当前 `sdk/api/examples/minesweeper_bda.c` 已改为雷霆模板上的图形实现，不再是
-return-only smoke。模拟器确认 category 4 产物可在“娱乐天地”显示并启动绘制棋盘；
-它 patch 雷霆 app-init 和模板后续事件循环，不能作为 no-template frame starter。
-实体键在当前 QEMU 中仍未完成窗口消息或 raw key 状态闭环，因此不能宣称为可玩版本。
-硬编码时间入口的失败结论不变，不要把这个模板实验复制到 `时间.bda` 路径。
+当前 `sdk/api/examples/minesweeper_bda.c` 已彻底移除雷霆模板、patch 和 BDA 内部绝对
+地址。它使用 `style=0`、`surface=0` 的 standalone frame，按已验证顺序执行
+`stop -> release -> event poll -> close -> return`，并通过 compatible back surface
+一次提交完整 VX 画面。8013 已完成触摸、胜负和 ESC 退出闭环；图形链仍需真机复测。
+硬编码时间入口的失败结论不变，不要把该示例替换到 `时间.bda` 路径。
 
 `GUI+0x084` 用一个 0x34 byte descriptor 注册顶层 frame。C200 中目标函数为
 `0x800cc1c8`，会分配约 0x114 byte 内部 object，并读取 descriptor `+0x00..+0x30`

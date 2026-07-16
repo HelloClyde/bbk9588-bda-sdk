@@ -211,7 +211,7 @@ def write_markdown(catalog: dict[str, object], out: Path) -> None:
                     note=str(row.get("candidate_note", "")).replace("|", "\\|"),
                 )
             )
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def main() -> None:
@@ -232,7 +232,11 @@ def main() -> None:
     write_markdown(catalog, ns.output)
     if ns.json_out:
         ns.json_out.parent.mkdir(parents=True, exist_ok=True)
-        ns.json_out.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
+        ns.json_out.write_text(
+            json.dumps(catalog, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+            newline="\n",
+        )
     print(f"system_bin={catalog['system_bin']}")
     print(f"rows={len(catalog['rows'])}")
     print(f"unknown_candidates={len(catalog.get('unknown_candidate_rows', []))}")

@@ -75,7 +75,8 @@ update。SDK 已暴露 wrapper：
 C200 中 `GUI+0x418` 读取第二个 context 和多组 stack 参数，会按两个 context 的
 origin/scaling 字段计算 source/destination 区域，再通过 backend `+0x94` 提交。
 已确认 `stack+0x14` 是第二 context，`stack+0x18/+0x1c` 是第二矩形 origin，
-`stack+0x20` 会转发给 backend；高层 source/destination 语义仍要结合原机调用点。
+`stack+0x20` 是 RGB565 `color_key_or_zero`。原机雷霆/坦克使用 `0xf81f` 洋红键，
+V20 模拟器画面确认对应 source pixel 被跳过；0 表示普通不透明复制。
 它不是无参数 render finish，也不适合作为通用 flush API。
 
 ```c

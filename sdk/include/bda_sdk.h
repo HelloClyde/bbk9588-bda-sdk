@@ -92,6 +92,8 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu
 #define BDA_SDK_INTERNAL_GUI_DRAW_OBJECT       0x2fcu
 #define BDA_SDK_INTERNAL_GUI_CURRENT_DRAW      0x304u
+#define BDA_SDK_INTERNAL_GUI_COMPAT_CREATE     0x310u
+#define BDA_SDK_INTERNAL_GUI_COMPAT_FREE       0x314u
 #define BDA_SDK_INTERNAL_GUI_SET_TEXT_MODE     0x338u
 #define BDA_SDK_INTERNAL_GUI_SET_TEXT_COLOR    0x33cu
 #define BDA_SDK_INTERNAL_GUI_SELECT_DRAW       0x358u
@@ -102,8 +104,14 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_MOVE_TO           0x380u
 #define BDA_SDK_INTERNAL_GUI_CIRCLE            0x388u
 #define BDA_SDK_INTERNAL_GUI_RECTANGLE         0x38cu
+#define BDA_SDK_INTERNAL_GUI_CONTEXT_COPY      0x418u
 #define BDA_SDK_INTERNAL_GUI_DRAW_TEXT         0x4f0u
+#define BDA_SDK_INTERNAL_GUI_DRAW_VX           0x540u
 #define BDA_SDK_INTERNAL_GUI_INPUT_PACKET      0x5d4u
+#define BDA_SDK_INTERNAL_GUI_TICK_COUNT_25MS   0x6d8u
+
+#define BDA_GUI_COLOR_KEY_NONE 0u
+#define BDA_GUI_COLOR_KEY_MAGENTA_RGB565 0xf81fu
 
 #define BDA_SDK_INTERNAL_FS_OPEN  0x000u
 #define BDA_SDK_INTERNAL_FS_CLOSE 0x004u
@@ -304,6 +312,24 @@ static inline int bda_gui_key_pressed(u32 keycode) {
     return bda_gui_input_packet_key_pressed(&packet, keycode);
 }
 
+/* Monotonic firmware tick. One unsigned tick is 25 ms on kj409588/C200. */
+static inline u32 bda_gui_tick_count_25ms(void) {
+    typedef u32 (*fn_t)(void);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_TICK_COUNT_25MS
+    );
+    return fn();
+}
+
+/* Unsigned subtraction remains correct across one u32 counter wrap. */
+static inline u32 bda_gui_tick_elapsed_25ms(u32 start, u32 end) {
+    return end - start;
+}
+
+static inline u32 bda_gui_tick_elapsed_ms(u32 start, u32 end) {
+    return bda_gui_tick_elapsed_25ms(start, end) * 25u;
+}
+
 /* Firmware-bound touch level query dynamically verified on kj409588/C200. */
 static inline int bda_touch_pressed_9588(void) {
     typedef int (*fn_t)(void);
@@ -448,6 +474,27 @@ static inline bda_handle_t bda_gui_current_draw(bda_handle_t handle) {
     );
 }
 
+/*
+ * Create an off-screen context compatible with an active visible draw context.
+ * The returned context owns firmware resources and must be released exactly
+ * once with bda_gui_compatible_context_free().
+ */
+static inline bda_handle_t bda_gui_compatible_context_create(
+    bda_handle_t source_context
+) {
+    return (bda_handle_t)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_COMPAT_CREATE,
+        (u32)source_context
+    );
+}
+
+static inline void bda_gui_compatible_context_free(bda_handle_t context) {
+    (void)bda_sdk_internal_call1(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_COMPAT_FREE, (u32)context
+    );
+}
+
 static inline void *bda_gui_select_draw_object(
     bda_handle_t context, void *object
 ) {
@@ -553,6 +600,58 @@ static inline void bda_gui_rectangle(
         (u32)top,
         (u32)right,
         (u32)bottom
+    );
+}
+
+/*
+ * Draw one complete RGB565 VX resource block at its native dimensions.
+ * Width and height are read from the VX header; this API does not scale.
+ */
+static inline int bda_gui_draw_vx(
+    bda_handle_t context, s32 x, s32 y, const void *vx_resource
+) {
+    return bda_sdk_internal_call6(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_DRAW_VX,
+        (u32)context,
+        (u32)x,
+        (u32)y,
+        0u,
+        0u,
+        (u32)vx_resource
+    );
+}
+
+/*
+ * Copy a source rectangle to a visible or compatible destination context.
+ * Presenting to the visible context must be enclosed by one complete dynamic
+ * draw guard. Use BDA_GUI_COLOR_KEY_NONE for an opaque copy.
+ */
+static inline int bda_gui_context_copy(
+    bda_handle_t source_context,
+    s32 source_x,
+    s32 source_y,
+    s32 width,
+    s32 height,
+    bda_handle_t destination_context,
+    s32 destination_x,
+    s32 destination_y,
+    u32 color_key_rgb565
+) {
+    typedef int (*fn_t)(u32, u32, u32, u32, u32, u32, u32, u32, u32);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_CONTEXT_COPY
+    );
+    return fn(
+        (u32)source_context,
+        (u32)source_x,
+        (u32)source_y,
+        (u32)width,
+        (u32)height,
+        (u32)destination_context,
+        (u32)destination_x,
+        (u32)destination_y,
+        color_key_rgb565
     );
 }
 

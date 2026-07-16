@@ -18,10 +18,10 @@ int bda_main(void) {
     bda_msgbox("Touch", "Press and release the screen");
 
     while (!bda_touch_pressed_9588()) {
-        bda_sys_delay_like(1);
+        bda_sys_delay(1);
     }
     while (bda_touch_pressed_9588()) {
-        bda_sys_delay_like(1);
+        bda_sys_delay(1);
     }
 
     write_result();

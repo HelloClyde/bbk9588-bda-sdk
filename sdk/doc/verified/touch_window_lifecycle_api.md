@@ -126,9 +126,11 @@ V14 已在真机确认 `GUI+0x310(visible)` 返回独立临时 context `0x80a893
 `GUI+0x418` 均返回 `0`，`GUI+0x314(temp)` 也完成并继续运行到正常退出。画面为白色
 背景且保留黑色矩形边框。V15 把两个 context 对调后，真机画面变成全白。
 
-这两个结果结合 C200 控制流纠正了 V15 的方向判断。`GUI+0x418` 遍历第二个 context
-的 `+0xc0` 目标区域链，所以第二个 context 是 destination；`GUI+0x310` 创建的独立
-兼容 context 没有这条可见目标区域链，不能作为复制目标。入口参数现解释为：
+这两个结果结合 C200 控制流纠正了 V15 的方向判断：第二个 context 是 destination。
+早期曾进一步推断 `GUI+0x310` 创建的 compatible context 不能作为复制目标；后续
+V19/V20 在完整 C200/QEMU 路径用可区分像素证明 hidden→hidden 复制有效，因此该
+推断撤回。V14/V15 的白色画面只证明当时的绘制内容/顺序没有形成有效可见对照，
+不能证明 destination 类型限制。入口参数现解释为：
 
 ```text
 a0          source_context
@@ -136,13 +138,12 @@ a1/a2       source_x/source_y
 a3/sp+0x10  width/height
 sp+0x14     destination_context
 sp+0x18/1c  destination_x/destination_y
-sp+0x20     backend_arg（电子画板常用 0）
+sp+0x20     RGB565 color_key_or_zero
 ```
 
-因此 V14 的 `visible -> temp` copy-in 实际不生效，随后在初始白色 temp 上绘制，最后
-`temp -> visible` 成功，得到白底和黑色边框。V15 启动时先执行 `temp -> visible`，立即
-把初始白色 surface 提交到屏幕；绘制后的 `visible -> temp` 又因 temp 不能作为目标而
-不生效，所以最终全白。
+V14/V15 真机仍确认 source/destination ABI、compatible context 的创建与释放，以及
+两种调用顺序对应的白色输出；但不能再用它们断言 visible→temp 必然无效。V19/V20
+目前只是模拟器补充证据，不把 hidden destination 或色键能力升级为真机已验证 API。
 
 V16 移除无效的 copy-in，直接使用 temp 的白色初始 surface，并把文字从近白色改成黑色。
 真机第二次启动后，首帧 `WAITING MESSAGE` 已显示为黑色，证明黑色 text color 本身有效；
