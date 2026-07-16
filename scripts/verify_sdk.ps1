@@ -61,9 +61,10 @@ Invoke-Step "运行单元测试和 SDK C 示例编译 smoke" {
 }
 
 Invoke-Step "构建并验证 RectDemo 示例" {
-    & python -m bda_packer sdk\api\examples\gui_rect_contains_demo.c `
+    & python -m bda_packer reverse\examples\gui_rect_contains_demo.c `
         --title RectDemo `
         --category 9 `
+        -I reverse `
         -o build\RectDemo.bda
     & python -m bda_packer.validate build\RectDemo.bda
 }

@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SDK_HEADER = ROOT / "sdk" / "api" / "bda_sdk.h"
+SDK_HEADER = ROOT / "reverse" / "bda_research_sdk.h"
 
 
 def read(path: str) -> str:
@@ -18,47 +18,66 @@ def read(path: str) -> str:
 
 class SdkDocsTest(unittest.TestCase):
     def test_sdk_layout_is_split_from_reverse_workspace(self) -> None:
-        self.assertTrue((ROOT / "sdk" / "api" / "bda_sdk.h").is_file())
-        self.assertTrue((ROOT / "sdk" / "README.md").is_file())
-        self.assertTrue((ROOT / "sdk" / "doc" / "README.md").is_file())
+        self.assertTrue((ROOT / "reverse" / "bda_research_sdk.h").is_file())
+        self.assertTrue((ROOT / "sdk" / "include" / "bda_sdk.h").is_file())
+        self.assertTrue((ROOT / "docs" / "README.md").is_file())
+        self.assertTrue((ROOT / "example" / "README.md").is_file())
+        sdk_files = sorted(
+            path.relative_to(ROOT / "sdk").as_posix()
+            for path in (ROOT / "sdk").rglob("*")
+            if path.is_file()
+        )
+        self.assertEqual(sdk_files, ["include/bda_sdk.h"])
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
-        sdk_include_count = 0
+        public_docs = sorted(path.name for path in (ROOT / "docs").glob("*.md"))
+        self.assertEqual(public_docs, ["README.md", "minesweeper_v1.md", "sdk_api_layout.md"])
+        verified_docs = sorted(path.name for path in (ROOT / "docs" / "verified").glob("*.md"))
+        self.assertEqual(
+            verified_docs,
+            [
+                "README.md",
+                "fs_write_api.md",
+                "game_rendering_api.md",
+                "graphics_primitives_api.md",
+                "input_polling_api.md",
+                "msgbox_api.md",
+                "public_api_policy.md",
+                "touch_press_api.md",
+                "touch_window_lifecycle_api.md",
+            ],
+        )
+
+        research_include_count = 0
         for source in (ROOT / "reverse" / "examples").glob("*.c"):
             text = source.read_text(encoding="utf-8")
             self.assertNotIn("../sdk/bda_sdk.h", text, source)
-            self.assertNotIn("../../sdk/api/bda_sdk.h", text, source)
-            if '#include "bda_sdk.h"' in text:
-                sdk_include_count += 1
-        self.assertGreaterEqual(sdk_include_count, 10)
+            if '#include "../bda_research_sdk.h"' in text:
+                research_include_count += 1
+        self.assertGreaterEqual(research_include_count, 10)
 
         catalog_tool = read("reverse/bda_api_catalog.py")
-        system_tables = read("sdk/doc/system_api_tables.md")
-        api_catalog = read("sdk/doc/api_catalog.md")
+        system_tables = read("reverse/docs/system_api_tables.md")
+        api_catalog = read("reverse/docs/api_catalog.md")
         generated_tables = system_tables + "\n" + api_catalog
         c200_table_tool = read("reverse/c200_api_tables.py")
         c200_disasm_tool = read("reverse/c200_api_disasm.py")
-        sdk_readme = read("sdk/README.md")
-        self.assertIn("# 原生 BDA SDK", sdk_readme)
-        self.assertNotIn("# BDA SDK", sdk_readme)
-        self.assertIn("逆向工具、probe", sdk_readme)
-        self.assertIn("开发 entry", sdk_readme)
-        self.assertIn("SDK header", sdk_readme)
-        self.assertNotIn("逆向工具、探针", sdk_readme)
-        self.assertNotIn("开发入口", sdk_readme)
-        self.assertNotIn("SDK 头文件", sdk_readme)
-        self.assertIn("api/bda_sdk.h", sdk_readme)
-        self.assertIn("doc/README.md", sdk_readme)
-        self.assertIn("doc/verification_notes.md", sdk_readme)
+        sdk_readme = read("docs/sdk_api_layout.md")
+        self.assertIn("# SDK API 目录", sdk_readme)
+        self.assertIn("只保存 API header", sdk_readme)
+        self.assertIn("sdk/include/bda_sdk.h", sdk_readme)
+        self.assertIn("reverse/bda_research_sdk.h", sdk_readme)
+        self.assertIn("example/README.md", sdk_readme)
+        self.assertIn("docs/README.md", sdk_readme)
         self.assertIn('#include "bda_sdk.h"', sdk_readme)
-        self.assertIn('Path("sdk") / "api" / "bda_sdk.h"', catalog_tool)
-        self.assertIn('Path("sdk") / "doc" / "api_catalog.md"', catalog_tool)
-        self.assertIn('Path("sdk") / "api" / "bda_sdk.h"', c200_table_tool)
-        self.assertIn('Path("sdk") / "doc" / "system_api_tables.md"', c200_table_tool)
-        self.assertIn('Path("sdk") / "api" / "bda_sdk.h"', c200_disasm_tool)
+        self.assertIn('Path("reverse") / "bda_research_sdk.h"', catalog_tool)
+        self.assertIn('Path("reverse") / "docs" / "api_catalog.md"', catalog_tool)
+        self.assertIn('Path("reverse") / "bda_research_sdk.h"', c200_table_tool)
+        self.assertIn('Path("reverse") / "docs" / "system_api_tables.md"', c200_table_tool)
+        self.assertIn('Path("reverse") / "bda_research_sdk.h"', c200_disasm_tool)
 
     def test_front_door_docs_keep_common_computer_terms(self) -> None:
-        combined = read("sdk/README.md") + "\n" + read("sdk/doc/README.md")
+        combined = read("docs/sdk_api_layout.md") + "\n" + read("reverse/docs/README.md")
         for phrase in [
             "## Entry Function",
             "MIPS little-endian toolchain",
@@ -90,14 +109,17 @@ class SdkDocsTest(unittest.TestCase):
             self.assertNotIn(phrase, combined)
 
     def test_front_door_build_examples_use_sdk_sources(self) -> None:
-        combined = read("README.md") + "\n" + read("sdk/doc/README.md")
-        self.assertIn("python -m bda_packer sdk\\api\\examples\\hello_msgbox.c", combined)
+        combined = read("README.md") + "\n" + read("reverse/docs/README.md")
+        self.assertIn(
+            "python -m bda_packer example\\basic\\hello_world\\hello_world_msgbox.c",
+            combined,
+        )
         self.assertIn("--icon-png", combined)
         self.assertNotIn("reverse\\examples\\notpl_demo_msgbox.c", combined)
         self.assertNotIn("reverse/examples/notpl_demo_msgbox.c", combined)
 
     def test_gba_notes_do_not_treat_blit_as_framebuffer_allocator(self) -> None:
-        notes = read("sdk/doc/gba_notes.md")
+        notes = read("reverse/docs/gba_notes.md")
         self.assertIn("显示输出         暂未恢复", notes)
         self.assertIn("不能直接用 GUI+0x3f8/+0x400 当 framebuffer/present API", notes)
         self.assertIn("不负责分配 framebuffer", notes)
@@ -106,8 +128,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("通过 GUI+0x3f8 wrapper 分配 320x240 RGB565", notes)
 
     def test_sdk_doc_readme_indexes_all_markdown_docs(self) -> None:
-        readme = read("sdk/doc/README.md")
-        docs = sorted((ROOT / "sdk" / "doc").glob("*.md"))
+        readme = read("reverse/docs/README.md")
+        docs = sorted((ROOT / "reverse" / "docs").glob("*.md"))
         self.assertGreater(len(docs), 10)
         for doc in docs:
             if doc.name == "README.md":
@@ -116,7 +138,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_public_sdk_functions_are_mentioned_in_sdk_docs(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        docs = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "sdk" / "doc").glob("*.md"))
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "reverse" / "docs").glob("*.md")
+        )
         pattern = re.compile(r"^(?:static inline\s+)?(?:[A-Za-z_][\w\s\*]+?)\s+(bda_[A-Za-z0-9_]+)\s*\(", re.M)
         functions = sorted({match.group(1) for match in pattern.finditer(header)})
         self.assertGreaterEqual(len(functions), 100)
@@ -125,16 +150,22 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_public_sdk_defines_are_mentioned_in_sdk_docs(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        docs = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "sdk" / "doc").glob("*.md"))
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "reverse" / "docs").glob("*.md")
+        )
         defines = sorted({match.group(1) for match in re.finditer(r"^#define\s+(BDA_[A-Z0-9_]+)\b", header, re.M)})
         self.assertGreaterEqual(len(defines), 100)
-        ignored = {"BDA_SDK_H"}
+        ignored = {"BDA_RESEARCH_SDK_H"}
         missing = [name for name in defines if name not in ignored and name not in docs]
         self.assertEqual(missing, [])
 
     def test_public_sdk_types_are_mentioned_in_sdk_docs(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        docs = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "sdk" / "doc").glob("*.md"))
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "reverse" / "docs").glob("*.md")
+        )
         names = set()
         for match in re.finditer(r"typedef\s+[^;{]+\s+(bda_[A-Za-z0-9_]+_t)\s*;", header):
             names.add(match.group(1))
@@ -150,7 +181,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_public_sdk_struct_fields_are_mentioned_in_sdk_docs(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        docs = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "sdk" / "doc").glob("*.md"))
+        docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / "reverse" / "docs").glob("*.md")
+        )
         fields = []
         for struct_match in re.finditer(
             r"typedef\s+struct\s+bda_[A-Za-z0-9_]+\s*\{(?P<body>.*?)\}\s*bda_[A-Za-z0-9_]+_t\s*;",
@@ -171,61 +205,52 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_verified_sdk_examples_are_indexed_in_docs(self) -> None:
         test_source = read("reverse/test_sdk_examples.py")
-        readme = read("sdk/doc/README.md")
-        sources = sorted(set(re.findall(r'"((?:reverse/examples|sdk/api/examples)/[A-Za-z0-9_]+\.c)"', test_source)))
+        readme = read("reverse/docs/README.md")
+        sources = sorted(set(re.findall(r'"((?:example|reverse/examples)/[A-Za-z0-9_/]+\.c)"', test_source)))
         self.assertGreaterEqual(len(sources), 10)
         for source in sources:
             self.assertIn(source, readme)
         for phrase in [
             "Verify 覆盖的 SDK 示例",
             "standalone 示例",
-            "SDK/toolchain smoke 的推荐起点",
-            "其他文件多数是专题 probe 或真机回归实验",
+            "开发者应从根目录",
+            "未达到公开标准的 ABI/build smoke",
         ]:
             self.assertIn(phrase, readme)
 
     def test_all_public_sdk_examples_are_indexed(self) -> None:
-        sdk_readme = read("sdk/README.md")
-        doc_readme = read("sdk/doc/README.md")
-        examples = sorted((ROOT / "sdk" / "api" / "examples").glob("*.c"))
+        example_readme = read("example/README.md")
+        doc_readme = read("reverse/docs/README.md")
+        examples = sorted((ROOT / "example").rglob("*.c"))
         self.assertGreaterEqual(len(examples), 7)
         for example in examples:
             rel = example.relative_to(ROOT).as_posix()
-            sdk_rel = example.relative_to(ROOT / "sdk").as_posix()
-            self.assertIn(sdk_rel, sdk_readme)
+            self.assertIn(example.name, example_readme)
             self.assertIn(rel, doc_readme)
 
-    def test_public_sdk_example_mirrors_match_reverse_examples(self) -> None:
-        examples = sorted((ROOT / "sdk" / "api" / "examples").glob("*.c"))
-        self.assertGreaterEqual(len(examples), 10)
+    def test_public_examples_are_not_duplicated_in_reverse(self) -> None:
+        examples = sorted((ROOT / "example").rglob("*.c"))
+        self.assertGreaterEqual(len(examples), 7)
         for example in examples:
             mirror = ROOT / "reverse" / "examples" / example.name
-            self.assertTrue(mirror.is_file(), example.name)
-            self.assertEqual(
-                mirror.read_text(encoding="utf-8"),
-                example.read_text(encoding="utf-8"),
-                example.name,
-            )
+            self.assertFalse(mirror.exists(), example.name)
 
-    def test_sdk_docs_use_sdk_paths_for_public_examples(self) -> None:
+    def test_docs_do_not_reference_removed_sdk_example_directory(self) -> None:
         docs = "\n".join(
             path.read_text(encoding="utf-8")
-            for path in (ROOT / "sdk" / "doc").glob("*.md")
+            for path in (ROOT / "docs").rglob("*.md")
         ).replace("\\", "/")
-        migrated = [
-            "fs_read_demo.c",
-            "fs_read_raw_demo.c",
-            "fs_diskinfo_demo.c",
-            "fs_find_demo.c",
-            "fs_status_demo.c",
-            "gui_rect_contains_demo.c",
-            "gui_screen_width_demo.c",
-            "input_state_demo.c",
-            "mem_alloc_demo.c",
-            "res_state_demo.c",
-        ]
-        for name in migrated:
-            self.assertNotIn(f"reverse/examples/{name}", docs)
+        self.assertNotIn("sdk/api/examples", docs)
+        for path in [
+            "example/basic/hello_world/hello_world_msgbox.c",
+            "example/filesystem/fs_write/fs_write_demo.c",
+            "example/input/key_polling/key_msgbox_demo.c",
+            "example/input/touch_press/touch_press_demo.c",
+            "example/input/touch_crosshair/touch_crosshair_demo.c",
+            "example/graphics/primitives/graphics_primitives_demo.c",
+            "example/games/minesweeper/minesweeper_bda.c",
+        ]:
+            self.assertIn(path, docs)
 
     def test_reverse_readme_indexes_core_toolchain_scripts(self) -> None:
         readme = read("reverse/README.md")
@@ -284,9 +309,9 @@ class SdkDocsTest(unittest.TestCase):
                 "bda_packer/README.md",
                 "reverse/README.md",
                 "reverse/native_toolchain_notes.md",
-                "sdk/doc/README.md",
-                "sdk/doc/bda_header_notes.md",
-                "sdk/doc/verification_notes.md",
+                "docs/README.md",
+                "reverse/docs/bda_header_notes.md",
+                "reverse/docs/verification_notes.md",
             ]
         )
         self.assertIn("python -m bda_packer", docs)
@@ -295,8 +320,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("python reverse\\bda_validate.py", docs)
 
     def test_verification_notes_document_current_verify_boundary(self) -> None:
-        notes = read("sdk/doc/verification_notes.md")
-        readme = read("sdk/doc/README.md")
+        notes = read("reverse/docs/verification_notes.md")
+        readme = read("reverse/docs/README.md")
         verify_script = read("scripts/verify_sdk.ps1")
 
         self.assertIn("verification_notes.md", readme)
@@ -309,7 +334,7 @@ class SdkDocsTest(unittest.TestCase):
             "`/api/files/export`",
             "`/api/files/delete`",
             "不直接修改原版 NAND",
-            "`sdk/doc/verified/`",
+            "`docs/verified/`",
             "静态校验通过不等于系统 API 已验证",
         ]:
             self.assertIn(phrase, notes)
@@ -323,10 +348,10 @@ class SdkDocsTest(unittest.TestCase):
             self.assertNotIn(obsolete, verify_script + "\n" + notes)
 
     def test_minesweeper_example_documents_standalone_runtime_limits(self) -> None:
-        source = read("sdk/api/examples/minesweeper_bda.c")
-        readme = read("sdk/doc/README.md")
-        mines_notes = read("sdk/doc/minesweeper_v1.md")
-        window_notes = read("sdk/doc/window_notes.md")
+        source = read("example/games/minesweeper/minesweeper_bda.c")
+        readme = read("reverse/docs/README.md")
+        mines_notes = read("docs/minesweeper_v1.md")
+        window_notes = read("reverse/docs/window_notes.md")
         self.assertIn("#define BOARD_WIDTH 9", source)
         self.assertIn("#define MINE_COUNT 10", source)
         self.assertIn("bda_gui_register_frame_desc", source)
@@ -339,14 +364,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("首击安全", mines_notes)
         self.assertIn("WON TICKS=", mines_notes)
         self.assertIn("--category 4", mines_notes)
-        self.assertIn("--icon-png sdk\\assets\\minesweeper_icon.png", mines_notes)
+        self.assertIn("--icon-png example\\games\\minesweeper\\minesweeper_icon.png", mines_notes)
         self.assertIn("娱乐天地", mines_notes)
-        self.assertNotIn("-I sdk\\api", mines_notes)
+        self.assertNotIn("-I reverse", mines_notes)
         self.assertNotIn("_like", source)
         self.assertNotIn("_LIKE", source)
-        self.assertTrue(Path("sdk/assets/minesweeper_icon.png").is_file())
+        self.assertTrue(Path("example/games/minesweeper/minesweeper_icon.png").is_file())
         self.assertTrue(
-            Path("sdk/doc/assets/minesweeper_v1_entertainment_menu.png").is_file()
+            Path("docs/assets/minesweeper_v1_entertainment_menu.png").is_file()
         )
         self.assertIn("standalone 9x9 扫雷", readme)
         self.assertIn("彻底移除雷霆模板", window_notes)
@@ -359,12 +384,12 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_game_rendering_api_is_public_and_documented(self) -> None:
         stable_header = read("sdk/include/bda_sdk.h")
-        verified = read("sdk/doc/verified/game_rendering_api.md")
-        verified_index = read("sdk/doc/verified/README.md")
-        include_readme = read("sdk/include/README.md")
-        sdk_readme = read("sdk/README.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
-        source = read("sdk/api/examples/minesweeper_bda.c")
+        verified = read("docs/verified/game_rendering_api.md")
+        verified_index = read("docs/verified/README.md")
+        include_readme = read("docs/verified/public_api_policy.md")
+        sdk_readme = read("docs/sdk_api_layout.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
+        source = read("example/games/minesweeper/minesweeper_bda.c")
 
         required_offsets = [
             "BDA_SDK_INTERNAL_GUI_COMPAT_CREATE     0x310u",
@@ -415,7 +440,7 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(phrase, verified)
 
         self.assertGreaterEqual(verified.count("```mermaid"), 2)
-        self.assertNotIn("-I sdk\\api", verified)
+        self.assertNotIn("-I reverse", verified)
         self.assertIn("game_rendering_api.md", verified_index)
         self.assertIn("game_rendering_api.md", include_readme)
         self.assertIn("game_rendering_api.md", sdk_readme)
@@ -429,12 +454,12 @@ class SdkDocsTest(unittest.TestCase):
             "game_rendering_minesweeper.png",
         ]:
             self.assertIn(f"assets/{asset}", verified)
-            self.assertTrue((ROOT / "sdk/doc/verified/assets" / asset).is_file())
+            self.assertTrue((ROOT / "docs/verified/assets" / asset).is_file())
 
     def test_gui_lifecycle_boundary_is_documented_near_public_wrappers(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        tile_probe = read("sdk/api/examples/tile_blit_probe.c")
+        readme = read("reverse/docs/README.md")
+        tile_probe = read("reverse/examples/tile_blit_probe.c")
         combined = header + "\n" + readme + "\n" + tile_probe
         required = [
             "event poll helper",
@@ -480,8 +505,8 @@ class SdkDocsTest(unittest.TestCase):
             "README.md",
             "reverse/README.md",
             "reverse/native_toolchain_notes.md",
-            "sdk/doc/README.md",
-            "sdk/doc/fs_notes.md",
+            "docs/README.md",
+            "reverse/docs/fs_notes.md",
         ]
         combined = "\n".join(read(path) for path in paths)
         self.assertIn("bda_fs_close_raw", combined)
@@ -498,8 +523,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertFalse((ROOT / "reverse" / "bda_build.py").exists())
 
     def test_fs_notes_keep_risky_candidates_unwrapped(self) -> None:
-        notes = read("sdk/doc/fs_notes.md")
-        bbvm_notes = read("sdk/doc/bbvm_notes.md")
+        notes = read("reverse/docs/fs_notes.md")
+        bbvm_notes = read("reverse/docs/bbvm_notes.md")
         eros_report = read("reverse/reports/eros_bda_report.md")
         linkgame_report = read("reverse/reports/linkgame_bda_report.md")
         sango_report = read("reverse/reports/sango_bda_report.md")
@@ -523,7 +548,7 @@ class SdkDocsTest(unittest.TestCase):
             "普通开发继续使用 `fopen/fread/fclose` 路径",
         ]:
             self.assertIn(phrase, notes)
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("FS +0x068: 不公开的 file-object block read helper", c200_notes)
         self.assertIn("system function VA：`0x8017a200`", c200_notes)
         self.assertIn("a0=buffer", c200_notes)
@@ -566,7 +591,7 @@ class SdkDocsTest(unittest.TestCase):
             self.assertNotIn(name, header)
 
     def test_bda_header_notes_document_validator_constraints(self) -> None:
-        notes = read("sdk/doc/bda_header_notes.md")
+        notes = read("reverse/docs/bda_header_notes.md")
         required = [
             "# BDA Header 与固件加载规则",
             "菜单扫描函数 `0x8002c4c0`",
@@ -591,8 +616,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs064_block_read_support_is_documented_but_not_public_wrapper(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         report = read("reverse/reports/ninecourse_bda_report.md")
         self.assertIn("FS+0x064", fs_notes)
         self.assertIn("0x8017afb4", fs_notes)
@@ -615,9 +640,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs06c_stat_like_does_not_claim_output_struct(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("bda_fs_stat_like(const char *path, u32 flags)", header)
         self.assertIn("bda_fs_stat_like(const char *path, u32 flags);", readme)
         self.assertIn("C200 wrapper 只保存", fs_notes)
@@ -629,9 +654,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_sys050_stub_is_not_public_sdk_wrapper(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        media_notes = read("sdk/doc/media_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("SYS+0x050", media_notes)
         self.assertIn("立即返回", media_notes)
         self.assertIn("stub", game_notes)
@@ -653,8 +678,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_sys004_resource_close_is_documented_as_internal_constant(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + c200_notes + "\n" + catalog_tool + "\n" + api_offsets
         self.assertIn("SYS +0x000 / +0x008 / +0x00c / +0x010", c200_notes)
@@ -678,14 +703,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("不是 app exit", combined)
         self.assertIn("raw audio 专用 stop", c200_notes)
         self.assertIn("不提供 wrapper", c200_notes)
-        self.assertNotIn("bda_sys_close_like", header + read("sdk/doc/README.md"))
+        self.assertNotIn("bda_sys_close_like", header + read("reverse/docs/README.md"))
         self.assertNotIn("BDA_SYS_RESOURCE_OPEN_LIKE", header)
         self.assertNotIn("bda_sys_resource_open_like", header)
 
     def test_raw_audio_reset_flush_are_void_wrappers(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        media_notes = read("sdk/doc/media_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("#define BDA_SYS_AUDIO_RESET_LIKE 0x08cu", header)
         self.assertIn("#define BDA_SYS_AUDIO_FLUSH_LIKE 0x0a0u", header)
         self.assertIn("static inline void bda_sys_audio_reset_like(void)", header)
@@ -701,10 +726,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_raw_audio_state_getter_is_read_only_pointer_probe(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        media_notes = read("sdk/doc/media_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        readme = read("sdk/doc/README.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        readme = read("reverse/docs/README.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, media_notes, c200_notes, api_offsets, readme, catalog_tool])
         self.assertIn("#define BDA_SYS_AUDIO_STATE_LIKE 0x090u", header)
@@ -729,11 +754,11 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_package_sound_wrappers_match_c200_argument_counts(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        readme = read("sdk/doc/README.md")
-        media_notes = read("sdk/doc/media_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
+        readme = read("reverse/docs/README.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
         combined = header + "\n" + c200_notes + "\n" + catalog_tool + "\n" + readme + "\n" + media_notes + "\n" + game_notes
         self.assertIn("bda_sys_package_sound_op40_like(u32 sound_id)", header)
         self.assertIn("bda_sys_package_sound_op44_like(void)", header)
@@ -771,10 +796,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_raw_audio_open_ready_write_c200_abi_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        media_notes = read("sdk/doc/media_notes.md")
-        gameboy_notes = read("sdk/doc/gameboy_notes.md")
-        catalog = read("sdk/doc/api_catalog.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        gameboy_notes = read("reverse/docs/gameboy_notes.md")
+        catalog = read("reverse/docs/api_catalog.md")
         combined = header + "\n" + c200_notes + "\n" + media_notes + "\n" + gameboy_notes + "\n" + catalog
         self.assertIn("SYS +0x06c / +0x074 / +0x078", c200_notes)
         self.assertIn("SYS+0x06c -> 0x80194654", combined)
@@ -782,10 +807,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("SYS+0x078 -> 0x80194320", combined)
         self.assertIn("static inline void bda_sys_audio_open_like(u32 device, u32 format, u32 channels)", header)
         self.assertIn("bda_call3(bda_sys_table(), BDA_SYS_AUDIO_OPEN_LIKE, device, format, channels)", header)
-        self.assertIn("void bda_sys_audio_open_like(u32 device, u32 format, u32 channels);", read("sdk/doc/README.md"))
+        self.assertIn("void bda_sys_audio_open_like(u32 device, u32 format, u32 channels);", read("reverse/docs/README.md"))
         self.assertIn("void bda_sys_audio_open_like(u32 device, u32 format, u32 channels);", media_notes)
-        self.assertNotIn("bda_sys_audio_open_like(u32 device, u32 format, u32 channels, u32 buffer_hint)", header + media_notes + c200_notes + read("sdk/doc/README.md"))
-        self.assertNotIn("buffer_hint", header + media_notes + c200_notes + read("sdk/doc/README.md"))
+        self.assertNotIn("bda_sys_audio_open_like(u32 device, u32 format, u32 channels, u32 buffer_hint)", header + media_notes + c200_notes + read("reverse/docs/README.md"))
+        self.assertNotIn("buffer_hint", header + media_notes + c200_notes + read("reverse/docs/README.md"))
         self.assertNotIn("static inline int bda_sys_audio_open_like", header)
         self.assertIn("`0x8058+0x6e8 > 0`", c200_notes)
         self.assertIn("返回 0x8058+0x6e8 > 0", catalog + "\n" + gameboy_notes)
@@ -802,10 +827,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_sys_delay_and_timer_parameters_match_c200_evidence(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        time_notes = read("sdk/doc/time_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        time_notes = read("reverse/docs/time_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         self.assertIn("void bda_sys_delay_like(u32 delay_units)", header)
         self.assertNotIn("static inline int bda_sys_delay_like", header)
         self.assertIn("void bda_sys_timer_like(u32 preset_index)", header)
@@ -813,8 +838,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("void bda_sys_delay_like(u32 delay_units)", readme)
         self.assertIn("void bda_sys_timer_like(u32 preset_index)", readme)
         self.assertIn("阻塞式 delay", c200_notes)
-        self.assertIn("busy-wait delay", read("sdk/doc/api_catalog.md"))
-        self.assertIn("无稳定 return value", read("sdk/doc/api_catalog.md"))
+        self.assertIn("busy-wait delay", read("reverse/docs/api_catalog.md"))
+        self.assertIn("无稳定 return value", read("reverse/docs/api_catalog.md"))
         self.assertIn("不要读取 return value", c200_notes + "\n" + time_notes)
         self.assertIn("不是调度式 sleep", time_notes)
         self.assertIn("按 `0..14`", c200_notes)
@@ -829,10 +854,10 @@ class SdkDocsTest(unittest.TestCase):
     def test_game_tick_api_keeps_raw_unit_and_validation_boundary(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         stable_header = read("sdk/include/bda_sdk.h")
-        time_notes = read("sdk/doc/time_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        time_notes = read("reverse/docs/time_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         combined = "\n".join([header, time_notes, c200_notes, api_offsets, progress])
 
         self.assertIn("#define BDA_GUI_TICK_COUNT_25MS_LIKE   0x6d8u", header)
@@ -853,10 +878,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_stub_and_constant_query_apis_are_not_misleading(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        time_notes = read("sdk/doc/time_notes.md")
-        gameboy_notes = read("sdk/doc/gameboy_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        time_notes = read("reverse/docs/time_notes.md")
+        gameboy_notes = read("reverse/docs/gameboy_notes.md")
 
         self.assertIn("#define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u", header)
         self.assertIn("static inline int bda_gui_screen_width_like(void)", header)
@@ -916,9 +941,9 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("GUI +0x738  screen width-like", gameboy_notes)
 
     def test_msgbox_api_has_dynamic_standalone_evidence(self) -> None:
-        verified = read("sdk/doc/verified/msgbox_api.md")
-        index = read("sdk/doc/verified/README.md")
-        source = read("sdk/api/examples/hello_world_msgbox.c")
+        verified = read("docs/verified/msgbox_api.md")
+        index = read("docs/verified/README.md")
+        source = read("example/basic/hello_world/hello_world_msgbox.c")
         for phrase in [
             "GUI +0x2b8",
             "0x800c6544",
@@ -932,17 +957,17 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(phrase, verified)
         self.assertIn("msgbox_api.md", index)
         self.assertIn('bda_msgbox("HelloWorld", "HelloWorld")', source)
-        self.assertTrue((ROOT / "sdk/doc/verified/assets/msgbox_hello_world_verified.png").is_file())
+        self.assertTrue((ROOT / "docs/verified/assets/msgbox_hello_world_verified.png").is_file())
 
     def test_gameboy_extended_gui_helpers_match_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        gameboy_notes = read("sdk/doc/gameboy_notes.md")
-        verified_input = read("sdk/doc/verified/input_polling_api.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        gameboy_notes = read("reverse/docs/gameboy_notes.md")
+        verified_input = read("docs/verified/input_polling_api.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        system_tables = read("sdk/doc/system_api_tables.md")
-        api_catalog = read("sdk/doc/api_catalog.md")
+        system_tables = read("reverse/docs/system_api_tables.md")
+        api_catalog = read("reverse/docs/api_catalog.md")
         generated_tables = system_tables + "\n" + api_catalog
         self.assertIn("#define BDA_GUI_INPUT_PACKET_LIKE      0x5d4u", header)
         self.assertIn("#define BDA_GUI_INPUT_PACKET_SIZE 6u", header)
@@ -1011,9 +1036,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_object_update_c200_message_layout_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        bbvm_notes = read("sdk/doc/bbvm_notes.md")
+        notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        bbvm_notes = read("reverse/docs/bbvm_notes.md")
         ninecourse_report = read("reverse/reports/ninecourse_bda_report.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, notes, window_notes, bbvm_notes, ninecourse_report, catalog_tool])
@@ -1055,7 +1080,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("bda_gui_object_flags_get_like(bda_handle_t handle)", header)
         self.assertIn("bda_gui_object_flags_or_like(bda_handle_t handle, u32 mask)", header)
         self.assertIn("bda_gui_object_flags_clear_like(bda_handle_t handle, u32 mask)", header)
-        readme = read("sdk/doc/README.md")
+        readme = read("reverse/docs/README.md")
         self.assertIn("u32 bda_gui_object_flags_get_like(bda_handle_t handle);", readme)
         self.assertIn("int bda_gui_object_flags_or_like(bda_handle_t handle, u32 mask);", readme)
         self.assertIn("int bda_gui_object_flags_clear_like(bda_handle_t handle, u32 mask);", readme)
@@ -1077,7 +1102,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("handle+0x24", notes + "\n" + window_notes + "\n" + catalog_tool)
         self.assertIn("flags OR helper", notes + "\n" + catalog_tool)
         self.assertIn("flags clear/OR/get helper", window_notes)
-        self.assertIn("flags &= ~mask", read("sdk/doc/api_offsets.md"))
+        self.assertIn("flags &= ~mask", read("reverse/docs/api_offsets.md"))
         self.assertIn("成功返回 `1`", notes + "\n" + window_notes)
         self.assertIn("它不清除任何 bit", notes)
         self.assertIn("只清 mask 对应 bit", notes)
@@ -1118,10 +1143,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_origin_helpers_are_documented_as_parent_chain_coordinate_converters(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, c200_notes, window_notes, api_offsets, catalog_tool])
 
@@ -1145,8 +1170,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_rgb_and_color_setters_match_c200_context_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        text_notes = read("sdk/doc/text_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        text_notes = read("reverse/docs/text_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + text_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("bda_gui_rgb_like(bda_handle_t handle, u32 r, u32 g, u32 b)", header)
@@ -1172,9 +1197,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_put_pixel_documents_context_color_backend_path(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        paint_notes = read("sdk/doc/paint_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        paint_notes = read("reverse/docs/paint_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + paint_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("bda_gui_put_pixel_like(bda_handle_t context, s32 x, s32 y, u32 color)", combined)
@@ -1189,8 +1214,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("0x800c0818", c200_notes)
         self.assertIn("+0xb0(surface, x, y, color)", c200_notes)
         self.assertIn("backend +0xb0", catalog_tool)
-        verified = read("sdk/doc/verified/graphics_primitives_api.md")
-        example = read("sdk/api/examples/graphics_primitives_demo.c")
+        verified = read("docs/verified/graphics_primitives_api.md")
+        example = read("example/graphics/primitives/graphics_primitives_demo.c")
         self.assertIn("#define BDA_GUI_PUT_PIXEL_RGB_LIKE  0x36cu", header)
         self.assertIn("bda_gui_put_pixel_rgb_like", header + example + verified)
         self.assertIn("GUI+0x36c -> 0x800b6af8", c200_notes)
@@ -1200,14 +1225,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("矩形轮廓", verified)
         self.assertIn("assets/graphics_primitives_bda_verified.png", verified)
         self.assertTrue(
-            (ROOT / "sdk/doc/verified/assets/graphics_primitives_bda_verified.png").is_file()
+            (ROOT / "docs/verified/assets/graphics_primitives_bda_verified.png").is_file()
         )
         self.assertIn("不承诺可直接把该流程当双缓冲游戏循环", verified)
 
     def test_gui_polyline_and_clip_query_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         combined = header + "\n" + catalog_tool + "\n" + progress
         self.assertIn("#define BDA_GUI_POLYLINE_LIKE       0x384u", header)
         self.assertIn("bda_gui_polyline_like", header)
@@ -1220,7 +1245,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_ellipse_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_ELLIPSE_LIKE        0x390u", header)
         self.assertIn("bda_gui_ellipse_like", header)
         self.assertIn("context,cx,cy,rx,ry,0,0,filled", catalog_tool)
@@ -1229,7 +1254,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_arc_round_rect_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_ARC_LIKE            0x394u", header)
         self.assertIn("#define BDA_GUI_ROUND_RECT_LIKE     0x398u", header)
         self.assertIn("bda_gui_arc_like", header)
@@ -1241,7 +1266,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_map_mode_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         for name in (
             "bda_gui_map_mode_get_like",
             "bda_gui_viewport_extent_get_like",
@@ -1262,7 +1287,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_coordinate_transform_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         for name in (
             "bda_gui_device_to_logical_point_like",
             "bda_gui_logical_to_device_point_like",
@@ -1277,8 +1302,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_clip_select_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_CLIP_SELECT_RECT_LIKE 0x3e4u", header)
         self.assertIn("bda_gui_clip_select_rect_like", header)
         self.assertIn("context,rect_or_null", catalog_tool)
@@ -1288,8 +1313,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_clip_exclude_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_CLIP_EXCLUDE_RECT_LIKE 0x3d8u", header)
         self.assertIn("bda_gui_clip_exclude_rect_like", header)
         self.assertIn("最多四个剩余条带", catalog_tool)
@@ -1299,8 +1324,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_clip_union_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_CLIP_UNION_RECT_LIKE 0x3dcu", header)
         self.assertIn("bda_gui_clip_union_rect_like", header)
         self.assertIn("cached bounds 不随追加扩展", catalog_tool)
@@ -1310,8 +1335,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_clip_intersect_research_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("#define BDA_GUI_CLIP_INTERSECT_RECT_LIKE 0x3e0u", header)
         self.assertIn("bda_gui_clip_intersect_rect_like", header)
         self.assertIn("重新计算 aggregate bounds", catalog_tool)
@@ -1321,9 +1346,9 @@ class SdkDocsTest(unittest.TestCase):
     def test_game_double_buffer_sprite_probe_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
         self.assertIn("bda_gui_context_copy_like", header)
         self.assertIn("V19-V21 验证 compatible 合成", catalog_tool)
         self.assertIn("compatible context 可以作为 `+0x418` 的 destination", c200_notes)
@@ -1334,9 +1359,9 @@ class SdkDocsTest(unittest.TestCase):
     def test_game_color_key_sprite_probe_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
-        verified = read("sdk/doc/verified/touch_window_lifecycle_api.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
+        verified = read("docs/verified/touch_window_lifecycle_api.md")
         self.assertIn("BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE 0xf81fu", header)
         self.assertIn("color_key_rgb565_or_zero", header)
         self.assertIn("0xf81f 洋红透明键", catalog_tool)
@@ -1348,10 +1373,10 @@ class SdkDocsTest(unittest.TestCase):
     def test_game_dirty_rect_sprite_probe_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
-        progress = read("sdk/doc/game_api_verification_progress.md")
-        readme = read("sdk/doc/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
+        readme = read("reverse/docs/README.md")
         self.assertIn("33-pixel-wide back-to-visible dirty present", header)
         self.assertIn("dirty rect 局部提交", catalog_tool)
         self.assertIn("GameDirtyRectSpriteProbeV21", progress)
@@ -1362,10 +1387,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_blit_entries_document_c200_backend_callbacks(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        readme = read("sdk/doc/README.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, readme, api_offsets, game_notes, catalog_tool])
         self.assertIn("GUI +0x3f8 / +0x3fc / +0x400", c200_notes)
@@ -1393,8 +1418,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_touch_press_api_is_verified_and_firmware_bound(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        verified = read("sdk/doc/verified/touch_press_api.md")
-        example = read("sdk/api/examples/touch_press_demo.c")
+        verified = read("docs/verified/touch_press_api.md")
+        example = read("example/input/touch_press/touch_press_demo.c")
         combined = header + "\n" + verified + "\n" + example
         self.assertIn("bda_touch_pressed_9588", combined)
         self.assertIn("0x80059f68u", header)
@@ -1405,17 +1430,17 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("没有进入 verified", verified)
         self.assertIn("assets/touch_press_bda_verified.png", verified)
         self.assertTrue(
-            (ROOT / "sdk/doc/verified/assets/touch_press_bda_verified.png").is_file()
+            (ROOT / "docs/verified/assets/touch_press_bda_verified.png").is_file()
         )
 
     def test_touch_window_lifecycle_is_verified_on_hardware(self) -> None:
         stable_header = read("sdk/include/bda_sdk.h")
         candidate_header = SDK_HEADER.read_text(encoding="utf-8")
-        verified = read("sdk/doc/verified/touch_window_lifecycle_api.md")
-        verified_index = read("sdk/doc/verified/README.md")
-        include_readme = read("sdk/include/README.md")
-        sdk_readme = read("sdk/README.md")
-        doc_readme = read("sdk/doc/README.md")
+        verified = read("docs/verified/touch_window_lifecycle_api.md")
+        verified_index = read("docs/verified/README.md")
+        include_readme = read("docs/verified/public_api_policy.md")
+        sdk_readme = read("docs/sdk_api_layout.md")
+        doc_readme = read("reverse/docs/README.md")
         source = read("reverse/examples/touch_input_stage_probe.c")
         v12_source = read("reverse/examples/touch_input_stage_probe_v12.c")
         v13_source = read("reverse/examples/touch_input_stage_probe_v13.c")
@@ -1429,7 +1454,7 @@ class SdkDocsTest(unittest.TestCase):
         v21_source = read("reverse/examples/touch_input_stage_probe_v21.c")
         v22_source = read("reverse/examples/touch_input_stage_probe_v22.c")
         v23_source = read("reverse/examples/touch_input_stage_probe_v23.c")
-        public_example = read("sdk/api/examples/touch_crosshair_demo.c")
+        public_example = read("example/input/touch_crosshair/touch_crosshair_demo.c")
 
         self.assertIn("BDA_SDK_INTERNAL_GUI_CLOSE_FRAME       0x17cu", stable_header)
         self.assertIn("void bda_gui_close_frame(bda_handle_t handle)", stable_header)
@@ -1543,8 +1568,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_gui_draw_object_create_is_single_index_table_lookup(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         stable_header = read("sdk/include/bda_sdk.h")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + c200_notes + "\n" + game_notes + "\n" + catalog_tool
         self.assertIn("bda_gui_draw_object_create_like(u32 kind)", header)
@@ -1572,9 +1597,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_current_draw_requires_handle_and_documents_mode0(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         examples = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "reverse/examples").glob("*.c"))
         combined = header + "\n" + c200_notes + "\n" + window_notes + "\n" + api_offsets + "\n" + catalog_tool
@@ -1590,13 +1615,13 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("GUI+0x304(frame_handle)", window_notes)
         self.assertIn("#define BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE 0x0060u", header)
         self.assertIn("#define BDA_MSG_DRAW_CONTEXT_DETACH_LIKE 0x0066u", header)
-        self.assertIn("BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE", read("sdk/doc/input_notes.md"))
-        self.assertIn("BDA_MSG_DRAW_CONTEXT_DETACH_LIKE", read("sdk/doc/input_notes.md"))
+        self.assertIn("BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE", read("reverse/docs/input_notes.md"))
+        self.assertIn("BDA_MSG_DRAW_CONTEXT_DETACH_LIKE", read("reverse/docs/input_notes.md"))
         self.assertIn("wndproc message `0x60`", c200_notes + "\n" + header)
         self.assertIn("GUI+0x304(object)", c200_notes)
         self.assertIn("message `0x66`", c200_notes)
         self.assertIn("GUI+0x30c(context) -> GUI+0x088(object) -> GUI+0x04c(object)", c200_notes)
-        self.assertIn("frame/control lifecycle 信号", read("sdk/doc/input_notes.md"))
+        self.assertIn("frame/control lifecycle 信号", read("reverse/docs/input_notes.md"))
         self.assertIn("BDA_MSG_DRAW_CONTEXT_ATTACH_LIKE", window_notes)
         self.assertIn("BDA_MSG_DRAW_CONTEXT_DETACH_LIKE", window_notes)
         self.assertIn("6 个 draw context slot", header + "\n" + c200_notes + "\n" + window_notes)
@@ -1618,11 +1643,11 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_end_and_surface_flush_are_void_cleanup_apis(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        paint_notes = read("sdk/doc/paint_notes.md")
+        readme = read("reverse/docs/README.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        paint_notes = read("reverse/docs/paint_notes.md")
         paint_report = read("reverse/reports/paint_bda_report.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + api_offsets + "\n" + paint_notes + "\n" + paint_report + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("void bda_gui_end_draw_like(bda_handle_t draw_handle)", header)
@@ -1647,8 +1672,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_object_draw_end_is_void_cleanup_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("bda_gui_object_draw_begin_like(bda_handle_t handle)", header)
@@ -1662,11 +1687,11 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("object-level wrapper", c200_notes)
         self.assertIn("0x800bce50(object)", c200_notes)
         self.assertIn("object+0x54+0x1c", c200_notes)
-        self.assertIn("object+0x7c", header + "\n" + c200_notes + "\n" + read("sdk/doc/window_notes.md"))
+        self.assertIn("object+0x7c", header + "\n" + c200_notes + "\n" + read("reverse/docs/window_notes.md"))
         self.assertIn("0x800b3950()", c200_notes)
         self.assertIn("0x800bd4b0(draw_context)", c200_notes)
-        self.assertIn("必须传回同一个 object", c200_notes + "\n" + read("sdk/doc/window_notes.md"))
-        self.assertIn("不能把它当作无状态 present/flush", c200_notes + "\n" + read("sdk/doc/window_notes.md"))
+        self.assertIn("必须传回同一个 object", c200_notes + "\n" + read("reverse/docs/window_notes.md"))
+        self.assertIn("不能把它当作无状态 present/flush", c200_notes + "\n" + read("reverse/docs/window_notes.md"))
         self.assertIn("不要把它当作\n * 独立的 framebuffer/present API", header)
         self.assertIn("没有稳定 return value", c200_notes)
         self.assertIn("`void` cleanup wrapper", c200_notes)
@@ -1675,9 +1700,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_object_op_is_single_object_refresh_message(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         examples = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "reverse/examples").glob("*.c"))
         combined = header + "\n" + readme + "\n" + c200_notes + "\n" + window_notes + "\n" + catalog_tool
@@ -1696,9 +1721,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_region_draw_uses_five_argument_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
-        paint_notes = read("sdk/doc/paint_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
+        paint_notes = read("reverse/docs/paint_notes.md")
         paint_report = read("reverse/reports/paint_bda_report.md")
         album_report = read("reverse/reports/album_bda_report.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
@@ -1731,10 +1756,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_rect_prepare_is_documented_as_five_arg_rect_writer(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        readme = read("sdk/doc/README.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         schedule_report = read("reverse/reports/schedule_bda_report.md")
         ninecourse_report = read("reverse/reports/ninecourse_bda_report.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
@@ -1778,8 +1803,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_rect_contains_is_not_documented_as_resource_draw_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         ebook_report = read("reverse/reports/ebook_bda_report.md")
         schedule_report = read("reverse/reports/schedule_bda_report.md")
         ninecourse_report = read("reverse/reports/ninecourse_bda_report.md")
@@ -1802,10 +1827,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_draw_text_extra_parameter_matches_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        text_notes = read("sdk/doc/text_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
+        text_notes = read("reverse/docs/text_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
         notepad_report = read("reverse/reports/notepad_bda_report.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([
             header,
@@ -1844,9 +1869,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_draw_vx_uses_vx_header_dimensions_not_public_width_height(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, c200_notes, picture_notes, catalog_tool])
         self.assertIn("BDA_GUI_DRAW_VX_LIKE", header)
@@ -1867,10 +1892,10 @@ class SdkDocsTest(unittest.TestCase):
             self.assertNotIn("bda_gui_draw_vx_like(g_draw, 0, 40, (s32)g_vx_width", text, source)
 
     def test_picture_decode_c200_abi_is_documented(self) -> None:
-        notes = read("sdk/doc/c200_api_function_notes.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        notes = read("reverse/docs/c200_api_function_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
+        readme = read("reverse/docs/README.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, notes, picture_notes, catalog_tool])
         self.assertIn("GUI +0x670 / +0x808", notes)
@@ -1885,8 +1910,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("u32 stride_bytes;", header)
         self.assertIn("u8 bits_per_pixel11;", header)
         self.assertIn("void *source_pixels;", header)
-        self.assertIn("width/height/stride_bytes", read("sdk/doc/api_offsets.md") + "\n" + picture_notes)
-        self.assertIn("source_pixels", read("sdk/doc/api_offsets.md") + "\n" + picture_notes)
+        self.assertIn("width/height/stride_bytes", read("reverse/docs/api_offsets.md") + "\n" + picture_notes)
+        self.assertIn("source_pixels", read("reverse/docs/api_offsets.md") + "\n" + picture_notes)
         self.assertIn("void **out_source_buffer", combined)
         self.assertIn("不要传 `NULL`", header + "\n" + notes + "\n" + picture_notes)
         self.assertIn("*out_source_buffer", notes + "\n" + picture_notes)
@@ -1906,10 +1931,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_res_get_state_uses_sized_output_struct(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         self.assertIn("typedef struct bda_res_state_like", header)
         self.assertIn("u32 aux10_minus1", header)
@@ -1925,10 +1950,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("0x8000528c(saved_cp0_status)", c200_notes)
         self.assertIn("不要读取 return value", c200_notes + "\n" + picture_notes)
         self.assertIn("bda_res_state_like_t", picture_notes)
-        self.assertIn("sdk/api/examples/res_state_demo.c", picture_notes)
+        self.assertIn("reverse/examples/res_state_demo.c", picture_notes)
         self.assertIn("不是推荐的第一个运行 smoke", picture_notes)
-        self.assertIn("bda_res_get_state_like(&g_res_state);", read("sdk/api/examples/res_state_demo.c"))
-        self.assertNotIn("int ret = bda_res_get_state_like", read("sdk/api/examples/res_state_demo.c"))
+        self.assertIn("bda_res_get_state_like(&g_res_state);", read("reverse/examples/res_state_demo.c"))
+        self.assertNotIn("int ret = bda_res_get_state_like", read("reverse/examples/res_state_demo.c"))
         self.assertIn("写 7 个 word", catalog_tool)
         self.assertIn("RES +0x000/+0x004/+0x008/+0x00c/+0x010/+0x040", c200_notes)
         self.assertIn("RES+0x004 -> 0x8013aaf0", c200_notes)
@@ -1946,10 +1971,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui074_requires_explicit_draw_guard_argument(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
+        readme = read("reverse/docs/README.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
         thunder_report = read("reverse/reports/thunder_bda_report.md")
         tank_report = read("reverse/reports/tank_bda_report.md")
         combined = "\n".join([header, readme, window_notes, c200_notes, game_notes, thunder_report, tank_report])
@@ -1999,7 +2024,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("反馈", window_notes + "\n" + thunder_report)
         self.assertIn("每个方块逐个 flip", thunder_report)
         self.assertNotIn("bda_gui_pump_present_like(void)", header + readme)
-        self.assertNotIn("bda_gui_pump_present_like();", read("sdk/doc/game_framework_notes.md"))
+        self.assertNotIn("bda_gui_pump_present_like();", read("reverse/docs/game_framework_notes.md"))
         self.assertNotIn("确认 +0x3f8/+0x400 哪个负责 present", game_notes)
         for source in (ROOT / "reverse" / "examples").glob("*.c"):
             text = source.read_text(encoding="utf-8")
@@ -2007,9 +2032,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_file_selector_adjacent_helpers_match_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("#define BDA_GUI_LIST_NTH_LIKE", header)
         self.assertIn("#define BDA_GUI_LIST_FREE_LIKE", header)
         self.assertIn("bda_gui_file_selector_update_like(void)", header)
@@ -2037,9 +2062,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_file_selector_open_mode_session_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         selector_probe = read("reverse/examples/file_selector_probe.c")
         self.assertIn("bda_gui_file_selector_open_like(u32 mode)", header)
@@ -2102,11 +2127,11 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_create_requires_real_parent_frame_lifecycle(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        system_notes = read("sdk/doc/system_bin_notes.md")
-        text_notes = read("sdk/doc/text_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        system_notes = read("reverse/docs/system_bin_notes.md")
+        text_notes = read("reverse/docs/text_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
         combined = "\n".join([header, api_offsets, c200_notes, system_notes, text_notes, window_notes])
         self.assertIn("bda_gui_create_window_like", header)
         self.assertIn("GUI +0x1a4: `BDA_GUI_CREATE`", c200_notes)
@@ -2125,20 +2150,20 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_open_uses_string_mode_only(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
+        readme = read("reverse/docs/README.md")
         self.assertNotIn("bda_fs_open_raw", header)
         self.assertNotIn("bda_fs_open_raw", readme)
         self.assertIn("bda_fs_fopen_raw", header)
         self.assertIn('bda_fs_fopen_raw(const char *path, const char *mode)', readme)
-        self.assertIn("原机代码常传 rb/wb 等 mode string", read("sdk/doc/api_catalog.md"))
+        self.assertIn("原机代码常传 rb/wb 等 mode string", read("reverse/docs/api_catalog.md"))
 
     def test_fs_read_write_fread_order_and_zero_failure_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        raw_demo = read("sdk/api/examples/fs_read_raw_demo.c")
-        write_demo = read("sdk/api/examples/fs_write_demo.c")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        raw_demo = read("reverse/examples/fs_read_raw_demo.c")
+        write_demo = read("example/filesystem/fs_write/fs_write_demo.c")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + fs_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("bda_fs_fread_raw(void *buffer, bda_size_t size, bda_size_t count, int file)", header)
@@ -2175,8 +2200,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_seek_and_close_c200_abi_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + fs_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("static inline int bda_fs_close_raw(int fd)", header)
@@ -2199,8 +2224,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_tell_index_and_zero_error_paths_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         self.assertIn("bda_fs_tell_raw(int file)", header)
         self.assertIn("+0x48", header)
@@ -2214,10 +2239,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("file+0x44", catalog_tool)
 
     def test_fs_status_example_is_read_only_and_documented(self) -> None:
-        source = read("sdk/api/examples/fs_status_demo.c")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        sdk_readme = read("sdk/README.md")
-        docs_readme = read("sdk/doc/README.md")
+        source = read("reverse/examples/fs_status_demo.c")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        sdk_readme = read("docs/sdk_api_layout.md")
+        docs_readme = read("reverse/docs/README.md")
         combined_docs = fs_notes + "\n" + sdk_readme + "\n" + docs_readme
 
         self.assertIn("bda_fs_media_present_raw_like()", source)
@@ -2239,10 +2264,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_getcwd_required_size_abi_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, fs_notes, c200_notes, api_offsets, catalog_tool])
         self.assertIn("#define BDA_FS_GETCWD_LIKE", header)
@@ -2261,10 +2286,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_path_info_abi_is_documented_from_c200(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, fs_notes, c200_notes, api_offsets, catalog_tool])
 
@@ -2292,9 +2317,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_remove_single_path_abi_is_documented_from_c200(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + fs_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("static inline int bda_fs_remove_raw(const char *path)", header)
@@ -2314,9 +2339,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_storage_ready_is_no_arg_low_byte_query(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         self.assertIn("static inline int bda_fs_media_present_raw_like(void)", header)
         self.assertIn("int bda_fs_media_present_raw_like(void);", readme)
@@ -2340,10 +2365,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_chdir_mkdir_and_rmdir_are_documented_from_c200(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, fs_notes, c200_notes, api_offsets, catalog_tool])
         self.assertIn("static inline int bda_fs_chdir_like(const char *path)", header)
@@ -2376,7 +2401,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("FS+0x034  0x80172520  path 解析 + 内部 helper；当前未见原机直接调用点", fs_notes)
 
     def test_sdk_readme_documents_removed_dlx_aliases(self) -> None:
-        readme = read("sdk/doc/README.md")
+        readme = read("reverse/docs/README.md")
         self.assertIn("已删除的历史 misnames", readme)
         self.assertIn("bda_gui_create_ex / BDA_MSG_TOUCH_B_LIKE", readme)
         self.assertIn("使用 `bda_gui_create_window_like()` 创建 control", readme)
@@ -2391,11 +2416,11 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("不是 standalone SDK starter", readme)
 
     def test_sdk_readme_has_build_validate_deploy_verify_quickstart(self) -> None:
-        readme = read("sdk/doc/README.md")
+        readme = read("reverse/docs/README.md")
         required = [
             "## 快速闭环",
             ".\\scripts\\setup_toolchain.ps1",
-            "python -m bda_packer sdk\\api\\examples\\hello_world_msgbox.c",
+            "python -m bda_packer example\\basic\\hello_world\\hello_world_msgbox.c",
             "--title HelloWorld",
             "--category 9",
             "--icon-png",
@@ -2455,7 +2480,7 @@ class SdkDocsTest(unittest.TestCase):
             "开发者 API 使用 title,message 顺序",
             "parent,message,title,flags",
             "standalone app 可把它作为首个",
-            "doc/verified/msgbox_api.md",
+            "docs/verified/msgbox_api.md",
             "class_name 常见值包括",
             "height 在 width 前",
             "flush 会释放 context",
@@ -2469,7 +2494,7 @@ class SdkDocsTest(unittest.TestCase):
             "C200-backed directory enumeration",
             "provisional message ID",
         ]
-        combined = header + "\n" + read("sdk/doc/README.md")
+        combined = header + "\n" + read("reverse/docs/README.md")
         for note in required_notes:
             self.assertIn(note, combined)
         for old_phrase in [
@@ -2490,7 +2515,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("实验性 directory enumeration", header)
 
     def test_api_offset_naming_rules_do_not_overclaim_no_like_wrappers(self) -> None:
-        api_offsets = read("sdk/doc/api_offsets.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         self.assertIn("没有 `_LIKE` 的少数 wrapper 表示当前风险较低", api_offsets)
         self.assertIn("不表示", api_offsets)
         self.assertIn("任意入口上下文", api_offsets)
@@ -2501,8 +2526,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_low_level_call_helpers_document_mips_o32_stack_args(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         combined = "\n".join([header, readme, api_offsets])
 
         self.assertIn("MIPS a0..a3", header)
@@ -2514,11 +2539,11 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_object_bind_is_documented_as_context_slot_setter(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        paint_notes = read("sdk/doc/paint_notes.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
+        readme = read("reverse/docs/README.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        paint_notes = read("reverse/docs/paint_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
         paint_report = read("reverse/reports/paint_bda_report.md")
         album_report = read("reverse/reports/album_bda_report.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
@@ -2544,9 +2569,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_default_proc_is_documented_as_wndproc_fallback(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        input_notes = read("sdk/doc/input_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        input_notes = read("reverse/docs/input_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, window_notes, input_notes, catalog_tool])
         self.assertIn("bda_gui_default_proc_like(bda_handle_t handle, u32 message, u32 wparam, u32 lparam)", header)
@@ -2566,9 +2591,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_frame_descriptor_uses_named_fields_for_sample_layout(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         stage_probe = read("reverse/examples/showcase_stage_probe.c")
         combined = "\n".join([header, c200_notes, window_notes, api_offsets])
         self.assertIn("typedef struct bda_frame_desc_like", header)
@@ -2604,8 +2629,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("arg04", header + window_notes + api_offsets)
 
     def test_element_event_loop_is_sample_specific_not_sdk_default(self) -> None:
-        element_notes = read("sdk/doc/element_bda_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
+        element_notes = read("reverse/docs/element_bda_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
         header = SDK_HEADER.read_text(encoding="utf-8")
         self.assertIn("Element 原机 event loop 形态", element_notes)
         self.assertIn("Element 原机 event loop 使用 GUI+0x030(msg, 0)", element_notes)
@@ -2622,9 +2647,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_frame_lifecycle_helpers_are_documented_with_distinct_roles(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, window_notes, api_offsets, catalog_tool])
         self.assertIn("bda_gui_frame_stop_like(bda_handle_t handle)", header)
@@ -2634,9 +2659,9 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("int bda_gui_active_frame_set_like(bda_handle_t handle)", header)
         self.assertIn("#define BDA_GUI_ACTIVE_FRAME_GET_LIKE  0x13cu", header)
         self.assertIn("bda_handle_t bda_gui_active_child_get_like(bda_handle_t context)", header)
-        self.assertIn("int bda_gui_active_frame_set_like(bda_handle_t handle);", read("sdk/doc/README.md"))
-        self.assertIn("bda_handle_t bda_gui_active_child_get_like(bda_handle_t context);", read("sdk/doc/README.md"))
-        self.assertNotIn("bda_handle_t bda_gui_active_frame_set_like", header + read("sdk/doc/README.md"))
+        self.assertIn("int bda_gui_active_frame_set_like(bda_handle_t handle);", read("reverse/docs/README.md"))
+        self.assertIn("bda_handle_t bda_gui_active_child_get_like(bda_handle_t context);", read("reverse/docs/README.md"))
+        self.assertNotIn("bda_handle_t bda_gui_active_frame_set_like", header + read("reverse/docs/README.md"))
         self.assertIn("GUI +0x04c: `BDA_GUI_FRAME_RELEASE_LIKE`", c200_notes)
         self.assertIn("GUI +0x088 / +0x098 / +0x17c", c200_notes)
         self.assertIn("system function VA：`0x800dd31c`", c200_notes)
@@ -2680,9 +2705,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_event_loop_helpers_match_c200_message_buffer_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, window_notes, api_offsets, catalog_tool])
         self.assertIn("#define BDA_GUI_MESSAGE_SIZE 0x1cu", header)
@@ -2694,7 +2719,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("bda_gui_event_poll_like(bda_gui_message_like_t *message, bda_handle_t handle)", header)
         self.assertIn("bda_gui_event_step_like(bda_gui_message_like_t *message)", header)
         self.assertIn("bda_gui_event_dispatch_like(bda_gui_message_like_t *message)", header)
-        self.assertIn("int bda_gui_event_poll_global_like(bda_gui_message_like_t *message);", read("sdk/doc/README.md"))
+        self.assertIn("int bda_gui_event_poll_global_like(bda_gui_message_like_t *message);", read("reverse/docs/README.md"))
         self.assertIn("bda_gui_event_pump_frame_once_like", header)
         self.assertIn("bda_gui_event_poll_like(message, frame)", header)
         self.assertIn("GUI +0x030 / +0x050 / +0x054", c200_notes)
@@ -2713,19 +2738,19 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("不是无参数 pump", combined)
         self.assertIn("poll(&msg, frame) -> step(&msg) -> dispatch(&msg)", c200_notes)
         self.assertIn("message_buffer,frame_or_handle", catalog_tool)
-        self.assertNotIn("bda_gui_event_poll_like(void *message", header + read("sdk/doc/README.md"))
+        self.assertNotIn("bda_gui_event_poll_like(void *message", header + read("reverse/docs/README.md"))
         self.assertNotIn("新代码建议使用 7 个 word 的局部数组", c200_notes)
         self.assertNotIn("bda_gui_event_step_like(void)", header)
-        self.assertNotIn("bda_gui_event_step_like();", read("sdk/doc/window_notes.md"))
+        self.assertNotIn("bda_gui_event_step_like();", read("reverse/docs/window_notes.md"))
         for source in (ROOT / "reverse" / "examples").glob("*.c"):
             text = source.read_text(encoding="utf-8")
             self.assertNotIn("bda_gui_event_step_like();", text, source)
 
     def test_gui_send_and_notify_are_documented_as_sync_vs_queued(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        window_notes = read("sdk/doc/window_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        window_notes = read("reverse/docs/window_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, window_notes, api_offsets, catalog_tool])
         self.assertIn("bda_gui_send(bda_handle_t handle, u32 message, u32 a, u32 b)", header)
@@ -2747,14 +2772,14 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_gui_render_helpers_are_documented_as_low_level_multi_arg_api(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
-        paint_notes = read("sdk/doc/paint_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
+        paint_notes = read("reverse/docs/paint_notes.md")
         paint_report = read("reverse/reports/paint_bda_report.md")
-        picture_notes = read("sdk/doc/picture_notes.md")
-        game_notes = read("sdk/doc/game_framework_notes.md")
-        media_notes = read("sdk/doc/media_notes.md")
-        system_bin_notes = read("sdk/doc/system_bin_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
+        game_notes = read("reverse/docs/game_framework_notes.md")
+        media_notes = read("reverse/docs/media_notes.md")
+        system_bin_notes = read("reverse/docs/system_bin_notes.md")
         eros_report = read("reverse/reports/eros_bda_report.md")
         linkgame_report = read("reverse/reports/linkgame_bda_report.md")
         album_report = read("reverse/reports/album_bda_report.md")
@@ -2823,8 +2848,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_game_display_pump_is_documented_as_no_arg_state_pump(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        gameboy_notes = read("sdk/doc/gameboy_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        gameboy_notes = read("reverse/docs/gameboy_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, c200_notes, gameboy_notes, catalog_tool])
         self.assertIn("BDA_GUI_GAME_DISPLAY_PUMP_LIKE", header)
@@ -2851,10 +2876,10 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_sys_raw_keycode_query_is_documented_as_raw_input(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        input_notes = read("sdk/doc/input_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
-        api_offsets = read("sdk/doc/api_offsets.md")
+        readme = read("reverse/docs/README.md")
+        input_notes = read("reverse/docs/input_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        api_offsets = read("reverse/docs/api_offsets.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, readme, input_notes, c200_notes, api_offsets, catalog_tool])
 
@@ -2884,9 +2909,9 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_mem_alloc_free_c200_locking_and_ownership_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        readme = read("sdk/doc/README.md")
-        memory_notes = read("sdk/doc/memory_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        readme = read("reverse/docs/README.md")
+        memory_notes = read("reverse/docs/memory_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = header + "\n" + readme + "\n" + memory_notes + "\n" + c200_notes + "\n" + catalog_tool
         self.assertIn("static inline void *bda_alloc(bda_size_t size)", header)
@@ -2953,10 +2978,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("栈指针", memory_notes)
 
     def test_mem_alloc_example_checks_failure_and_frees_owned_pointer(self) -> None:
-        source = read("sdk/api/examples/mem_alloc_demo.c")
-        memory_notes = read("sdk/doc/memory_notes.md")
-        sdk_readme = read("sdk/README.md")
-        docs_readme = read("sdk/doc/README.md")
+        source = read("reverse/examples/mem_alloc_demo.c")
+        memory_notes = read("reverse/docs/memory_notes.md")
+        sdk_readme = read("docs/sdk_api_layout.md")
+        docs_readme = read("reverse/docs/README.md")
         combined_docs = memory_notes + "\n" + sdk_readme + "\n" + docs_readme
 
         self.assertIn("mem_alloc_demo.c", combined_docs)
@@ -3131,7 +3156,7 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_rect_prepare_has_wrapper_after_c200_abi_confirmation(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        picture_notes = read("sdk/doc/picture_notes.md")
+        picture_notes = read("reverse/docs/picture_notes.md")
         self.assertIn("BDA_GUI_RECT_PREPARE_LIKE", header)
         self.assertIn("bda_gui_rect_prepare_like", header)
         self.assertIn("wrapper 通过 `bda_call5`", picture_notes)
@@ -3167,8 +3192,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_diskinfo_drive_and_output_layout_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         combined = "\n".join([header, fs_notes, c200_notes, catalog_tool])
         self.assertIn("static inline int bda_fs_diskinfo_like(u32 drive, bda_fs_disk_info_like_t *info)", header)
@@ -3181,7 +3206,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("info+0x04", c200_notes)
         self.assertIn("info+0x08", c200_notes)
         self.assertIn("info+0x0c = 0x200", c200_notes)
-        self.assertIn("u64 bda_fs_disk_free_bytes64_like(const bda_fs_disk_info_like_t *info)", read("sdk/doc/README.md"))
+        self.assertIn("u64 bda_fs_disk_free_bytes64_like(const bda_fs_disk_info_like_t *info)", read("reverse/docs/README.md"))
         self.assertIn("u64 free_bytes = bda_fs_disk_free_bytes64_like(&info);", fs_notes)
         self.assertIn("32-bit return value", fs_notes)
         self.assertIn("64-bit helper", fs_notes)
@@ -3194,8 +3219,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_fs_findnext_and_findclose_cursor_paths_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        fs_notes = read("sdk/doc/fs_notes.md")
-        c200_notes = read("sdk/doc/c200_api_function_notes.md")
+        fs_notes = read("reverse/docs/fs_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
         catalog_tool = read("reverse/bda_api_catalog.py")
         self.assertIn("bda_fs_findfirst_like(const char *pattern, u32 attr, bda_fs_find_data_like_t *find_data)", header)
         self.assertIn("0x20a byte 临时 path buffer", header + "\n" + fs_notes)
@@ -3330,8 +3355,8 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_thunder_source_api_mapping_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
-        notes = read("sdk/doc/thunder_api_notes.md")
-        inventory = read("sdk/doc/thunder_api_inventory.md")
+        notes = read("reverse/docs/thunder_api_notes.md")
+        inventory = read("reverse/docs/thunder_api_inventory.md")
         report = read("reverse/reports/thunder_bda_report.md")
 
         for name in [

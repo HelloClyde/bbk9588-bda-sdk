@@ -8,7 +8,7 @@
  * independent BDA has dynamically exercised its exact ABI and produced a
  * reproducible observable result. Static disassembly, an original-app call
  * site, successful compilation, or a non-crashing run is not sufficient.
- * Evidence and usage notes live in sdk/doc/verified/. See sdk/include/README.md.
+ * Evidence and usage notes live in docs/verified/. See docs/verified/public_api_policy.md.
  */
 
 typedef unsigned char u8;

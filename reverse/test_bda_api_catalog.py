@@ -12,7 +12,7 @@ from bda_api_catalog import inventory_totals, parse_sdk_defines, write_markdown
 
 class BdaApiCatalogTest(unittest.TestCase):
     def test_parse_sdk_defines_skips_runtime_table_addresses(self) -> None:
-        defs = parse_sdk_defines(Path("sdk/api/bda_sdk.h"))
+        defs = parse_sdk_defines(Path("reverse/bda_research_sdk.h"))
 
         self.assertIn(("GUI", 0x2B8), defs)
         self.assertIn("BDA_GUI_MSGBOX", defs[("GUI", 0x2B8)])
@@ -45,14 +45,14 @@ class BdaApiCatalogTest(unittest.TestCase):
         self.assertNotIn("中文说明", text)
 
     def test_checked_in_catalog_matches_generator_output(self) -> None:
-        defs = parse_sdk_defines(Path("sdk/api/bda_sdk.h"))
+        defs = parse_sdk_defines(Path("reverse/bda_research_sdk.h"))
         totals, apps = inventory_totals(Path("reverse/reports/bda_inventory.json"))
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "api_catalog.md"
             write_markdown(out, defs, totals, apps)
             generated = out.read_text(encoding="utf-8")
 
-        checked_in = Path("sdk/doc/api_catalog.md").read_text(encoding="utf-8")
+        checked_in = Path("reverse/docs/api_catalog.md").read_text(encoding="utf-8")
         self.assertEqual(generated, checked_in)
 
 

@@ -8,7 +8,7 @@
 - BDA 是 flat MIPS32 little-endian image，不是 ELF；loader 不处理 relocation。
 - builder 将 `.bss` 作为零字节写进 flat image。
 
-完整 header 和固件地址见 `sdk/doc/bda_header_notes.md`。
+完整 header 和固件地址见 `reverse/docs/bda_header_notes.md`。
 
 ## Build
 

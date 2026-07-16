@@ -243,7 +243,7 @@ def write_markdown(
     lines: list[str] = []
     lines.append("# BDA API 覆盖表")
     lines.append("")
-    lines.append("本表由 `reverse/bda_api_catalog.py` 生成，合并了 `reverse/reports/bda_inventory.json` 的原机 BDA call inventory 和 `sdk/api/bda_sdk.h` 里的 SDK 命名。")
+    lines.append("本表由 `reverse/bda_api_catalog.py` 生成，合并了 `reverse/reports/bda_inventory.json` 的原机 BDA call inventory 和 `reverse/bda_research_sdk.h` 里的 SDK 命名。")
     lines.append("")
     lines.append("注意：inventory 里的 offset 统计是未分类的 indirect call offset，不能单独证明属于 GUI/FS/SYS/MEM/RES 哪张 table；table name 来自 SDK 已命名项和人工逆向笔记。")
     lines.append("因此表中的统计列表示“同 offset 在原机 BDA 中出现的总体热度”，不是该 table entry 已经独占确认的调用次数。")
@@ -293,8 +293,8 @@ def main() -> None:
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     ap.add_argument("--inventory", type=Path, default=Path("reverse") / "reports" / "bda_inventory.json", help="原机 BDA inventory JSON")
-    ap.add_argument("--sdk", type=Path, default=Path("sdk") / "api" / "bda_sdk.h", help="SDK header")
-    ap.add_argument("-o", "--output", type=Path, default=Path("sdk") / "doc" / "api_catalog.md", help="输出 Markdown 文件")
+    ap.add_argument("--sdk", type=Path, default=Path("reverse") / "bda_research_sdk.h", help="SDK header")
+    ap.add_argument("-o", "--output", type=Path, default=Path("reverse") / "docs" / "api_catalog.md", help="输出 Markdown 文件")
     ns = ap.parse_args()
 
     sdk_defs = parse_sdk_defines(ns.sdk)

@@ -34,8 +34,8 @@ MEM  0x81c16bb0
 因此源码只用于恢复 `WindowCreate`、`WindowInvalidateWindow`、`DrawBmpIdEx`、
 `FSFileOpen` 等 high-level 名称和用途。table offset、MIPS o32 参数和返回值仍由
 BDA 调用点与 C200 实现确认。开发者映射和调用示例见
-`sdk/doc/thunder_api_notes.md`，完整 291-call/75-entry 表见
-`sdk/doc/thunder_api_inventory.md`。
+`reverse/docs/thunder_api_notes.md`，完整 291-call/75-entry 表见
+`reverse/docs/thunder_api_inventory.md`。
 
 ## 外部文件
 

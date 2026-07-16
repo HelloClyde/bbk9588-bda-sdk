@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static char g_message[320];
 

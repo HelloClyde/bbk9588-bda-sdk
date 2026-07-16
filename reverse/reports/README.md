@@ -1,6 +1,6 @@
 # BDA 逆向报告
 
-本目录存放原机内置原生 BDA 应用的逐应用逆向报告和清点索引。这里的材料用于支撑 `sdk/doc` 中的 SDK API 命名、结构体字段和风险说明。
+本目录存放原机内置原生 BDA 应用的逐应用逆向报告和清点索引。这里的材料用于支撑 `docs` 中的 SDK API 命名、结构体字段和风险说明。
 
 ## 生成索引
 
@@ -42,13 +42,13 @@
 - `reverse/reports/sango_bda_report.md`
 - `reverse/reports/schedule_bda_report.md`
 - `reverse/reports/ninecourse_bda_report.md`
-- `sdk/doc/element_bda_notes.md`
-- `sdk/doc/gameboy_notes.md`
-- `sdk/doc/bbvm_notes.md`
-- `sdk/doc/game_framework_notes.md`
-- `sdk/doc/picture_notes.md`
-- `sdk/doc/paint_notes.md`
-- `sdk/doc/showcase_notes.md`
-- `sdk/doc/usb_debug_notes.md`
+- `reverse/docs/element_bda_notes.md`
+- `reverse/docs/gameboy_notes.md`
+- `reverse/docs/bbvm_notes.md`
+- `reverse/docs/game_framework_notes.md`
+- `reverse/docs/picture_notes.md`
+- `reverse/docs/paint_notes.md`
+- `reverse/docs/showcase_notes.md`
+- `reverse/docs/usb_debug_notes.md`
 
 最后一组是面向 SDK 的专题笔记，不是最终逐应用报告。后续整理时应继续把每条 SDK 结论链接回支持它的原机 BDA 证据。

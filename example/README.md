@@ -1,0 +1,56 @@
+# 已验证 BDA 示例
+
+本目录只收录已经在 BBK 9588 真机或 8013 完整 NAND 模拟器中形成运行闭环的
+开发者示例。逆向候选和危险探针保留在 `reverse/examples/`，不会混入这里。
+
+所有源码默认只包含公开头 `sdk/include/bda_sdk.h`，不会访问
+`reverse/bda_research_sdk.h`。
+
+每个叶子目录中的 `.bda` 都由同目录 `.c` 构建，并已通过 header、entry、checksum 和
+图标区静态校验：
+
+```text
+basic/hello_world/        hello_world_msgbox.c + HelloWorld.bda
+filesystem/fs_write/     fs_write_demo.c + FsWrite.bda
+input/key_polling/        key_msgbox_demo.c + KeyInput.bda
+input/touch_press/        touch_press_demo.c + TouchPress.bda
+input/touch_crosshair/    touch_crosshair_demo.c + TouchCrosshair.bda
+graphics/primitives/      graphics_primitives_demo.c + GraphicsPrimitives.bda
+games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
+```
+
+| 示例 | 能力 | 验证环境 | 说明 |
+|---|---|---|---|
+| `basic/hello_world/` | Message Box | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
+| `filesystem/fs_write/` | 文件写入、关闭、重开、读回 | 模拟器 | [API 文档](../docs/verified/fs_write_api.md) |
+| `input/key_polling/` | 六个实体键轮询 | 模拟器 | [API 文档](../docs/verified/input_polling_api.md) |
+| `input/touch_press/` | 触摸按下、抬起状态 | 真机 | [API 文档](../docs/verified/touch_press_api.md) |
+| `input/touch_crosshair/` | 触摸坐标、无闪烁重绘、窗口退出 | 真机 | [生命周期教程](../docs/verified/touch_window_lifecycle_api.md) |
+| `graphics/primitives/` | 点、线、圆、矩形和文字 | 模拟器 | [API 文档](../docs/verified/graphics_primitives_api.md) |
+| `games/minesweeper/` | 双缓冲、VX、色键、dirty rect、tick | 模拟器 | [游戏绘图教程](../docs/verified/game_rendering_api.md) |
+
+## 构建
+
+普通示例可直接打包：
+
+```powershell
+python -m bda_packer example\basic\hello_world\hello_world_msgbox.c `
+  --title HelloWorld --category 9 `
+  -o example\basic\hello_world\HelloWorld.bda
+```
+
+扫雷带自定义图标，并放入“娱乐天地”分类：
+
+```powershell
+python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
+  --title MinesV1 --category 4 `
+  --icon-png example\games\minesweeper\minesweeper_icon.png `
+  -o example\games\minesweeper\MinesweeperV1.bda
+```
+
+![扫雷运行画面](../docs/verified/assets/game_rendering_minesweeper.png)
+
+## 验证边界
+
+“已验证”只覆盖相应文档写明的固件和环境。模拟器通过不自动等于真机通过；示例也不
+代表 `reverse/bda_research_sdk.h` 中的全部研究接口已经稳定。

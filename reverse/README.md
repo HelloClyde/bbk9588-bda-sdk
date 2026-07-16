@@ -89,7 +89,7 @@ python reverse\bda_table_call_scan.py "应用\程序\雷霆战机.bda" `
 ```powershell
 python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" `
   --title "雷霆战机.bda" `
-  -o sdk\doc\thunder_api_inventory.md
+  -o reverse\docs\thunder_api_inventory.md
 ```
 
 该工具保留 table 分类和调用次数，合并 `bda_sdk.h` 名称，并从 `C200.bin`

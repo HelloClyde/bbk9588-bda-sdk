@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static const char *CFG_PATH = "A:\\gba\\gba.cfg";
 static const char *CFG_PATH_ALT = "a:\\gba\\gba.cfg";

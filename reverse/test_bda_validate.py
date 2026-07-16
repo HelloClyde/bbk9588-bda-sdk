@@ -18,7 +18,7 @@ class BdaValidateTest(unittest.TestCase):
         self.out_dir = Path("build") / "test_validate"
         self.out_dir.mkdir(parents=True, exist_ok=True)
         data = build_bda(
-            Path("sdk/api/examples/hello_msgbox.c"),
+            Path("reverse/examples/hello_msgbox.c"),
             "ValHello",
             9,
             bundled_prefix() or "mipsel-none-elf-",

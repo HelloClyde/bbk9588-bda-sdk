@@ -150,7 +150,7 @@ def main() -> None:
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     ap.add_argument("bda", type=Path, help="要分析的 BDA 文件")
     ap.add_argument("--root", type=Path, default=Path("."), help="仓库根目录")
-    ap.add_argument("--sdk", type=Path, default=Path("sdk") / "api" / "bda_sdk.h", help="SDK header")
+    ap.add_argument("--sdk", type=Path, default=Path("reverse") / "bda_research_sdk.h", help="SDK header")
     ap.add_argument("--title", help="报告标题；默认使用 BDA 文件名")
     ap.add_argument("-o", "--output", type=Path, required=True, help="输出 Markdown")
     ns = ap.parse_args()

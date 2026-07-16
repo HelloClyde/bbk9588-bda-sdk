@@ -138,7 +138,7 @@ buffer，传 `a2=1, a3=stack+0x10`，然后分别读取 `stack+0x34` 或
 `stack+0x14` 的 byte 与应用全局变量比较。C200 侧确认该入口会检查
 signed 16-bit volume/index、转换 block/cluster 参数，并调用内部
 `0x8017fbc0(...)` 读到调用者 buffer。它仍不应公开为 SDK wrapper；详见
-`sdk/doc/fs_notes.md` 和 `sdk/doc/c200_api_function_notes.md`。
+`reverse/docs/fs_notes.md` 和 `reverse/docs/c200_api_function_notes.md`。
 
 ## 对 SDK 的含义
 

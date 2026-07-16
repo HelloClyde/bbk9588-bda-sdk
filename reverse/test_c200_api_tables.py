@@ -19,11 +19,11 @@ class C200ApiTablesTest(unittest.TestCase):
         except SystemExit as exc:
             self.skipTest(str(exc))
 
-        catalog = build_catalog(Path("."), Path("sdk/api/bda_sdk.h"))
+        catalog = build_catalog(Path("."), Path("reverse/bda_research_sdk.h"))
         rows = catalog["rows"]
         unknown_rows = catalog["unknown_candidate_rows"]
 
-        self.assertEqual(len(rows), len(parse_sdk_defines(Path("sdk/api/bda_sdk.h"))))
+        self.assertEqual(len(rows), len(parse_sdk_defines(Path("reverse/bda_research_sdk.h"))))
         self.assertGreater(len(unknown_rows), 0)
         self.assertTrue(all(row["target_in_c200"] for row in rows))
         self.assertTrue(all(row["target_in_c200"] for row in unknown_rows))
@@ -145,7 +145,7 @@ class C200ApiTablesTest(unittest.TestCase):
         except SystemExit as exc:
             self.skipTest(str(exc))
 
-        catalog = build_catalog(Path("."), Path("sdk/api/bda_sdk.h"))
+        catalog = build_catalog(Path("."), Path("reverse/bda_research_sdk.h"))
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -173,7 +173,7 @@ class C200ApiTablesTest(unittest.TestCase):
         except SystemExit as exc:
             self.skipTest(str(exc))
 
-        catalog = build_catalog(Path("."), Path("sdk/api/bda_sdk.h"))
+        catalog = build_catalog(Path("."), Path("reverse/bda_research_sdk.h"))
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -181,7 +181,7 @@ class C200ApiTablesTest(unittest.TestCase):
             write_markdown(catalog, out)
             generated = out.read_text(encoding="utf-8")
 
-        checked_in = Path("sdk/doc/system_api_tables.md").read_text(encoding="utf-8")
+        checked_in = Path("reverse/docs/system_api_tables.md").read_text(encoding="utf-8")
         self.assertEqual(generated, checked_in)
 
     def test_disasm_helper_finds_named_api_with_note(self) -> None:
@@ -190,7 +190,7 @@ class C200ApiTablesTest(unittest.TestCase):
         except SystemExit as exc:
             self.skipTest(str(exc))
 
-        catalog = build_catalog(Path("."), Path("sdk/api/bda_sdk.h"))
+        catalog = build_catalog(Path("."), Path("reverse/bda_research_sdk.h"))
         row = find_row(catalog, "BDA_GUI_MSGBOX", None, None)
 
         self.assertEqual(row["table"], "GUI")

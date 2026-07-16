@@ -10,9 +10,9 @@
 应用/程序/飞天音乐.bda
 reverse/reports/music_layout.json
 reverse/reports/music_calls.txt
-sdk/doc/media_notes.md
-sdk/doc/gameboy_notes.md
-sdk/doc/system_bin_notes.md
+reverse/docs/media_notes.md
+reverse/docs/gameboy_notes.md
+reverse/docs/system_bin_notes.md
 ```
 
 ## 头部和布局

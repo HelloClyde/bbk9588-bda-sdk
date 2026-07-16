@@ -222,9 +222,9 @@ def main() -> None:
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     ap.add_argument("--root", type=Path, default=Path("."), help="仓库根目录")
-    ap.add_argument("--sdk", type=Path, default=Path("sdk") / "api" / "bda_sdk.h", help="SDK header")
+    ap.add_argument("--sdk", type=Path, default=Path("reverse") / "bda_research_sdk.h", help="SDK header")
     ap.add_argument("--inventory", type=Path, default=Path("reverse") / "reports" / "bda_inventory.json", help="原机 BDA inventory JSON")
-    ap.add_argument("-o", "--output", type=Path, default=Path("sdk") / "doc" / "system_api_tables.md", help="输出 Markdown 文件")
+    ap.add_argument("-o", "--output", type=Path, default=Path("reverse") / "docs" / "system_api_tables.md", help="输出 Markdown 文件")
     ap.add_argument("--json-out", type=Path, help="可选 JSON 输出路径")
     ns = ap.parse_args()
 

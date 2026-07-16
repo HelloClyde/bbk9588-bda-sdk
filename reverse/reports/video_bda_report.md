@@ -14,8 +14,8 @@ reverse/reports/video_layout.json
 reverse/reports/video_alt_layout.json
 reverse/reports/video_calls.txt
 reverse/reports/video_alt_calls.txt
-sdk/doc/media_notes.md
-sdk/doc/system_bin_notes.md
+reverse/docs/media_notes.md
+reverse/docs/system_bin_notes.md
 ```
 
 ## 头部和布局

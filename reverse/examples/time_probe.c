@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static bda_sys_alarm_record_like_t g_due_alarm_data;
 static bda_sys_alarm_record_like_t g_alarm_data[3];

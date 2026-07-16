@@ -11,8 +11,8 @@
 应用/程序/闹钟.bda
 reverse/reports/alarm_layout.json
 reverse/reports/alarm_calls.txt
-sdk/doc/time_notes.md
-sdk/doc/window_notes.md
+reverse/docs/time_notes.md
+reverse/docs/window_notes.md
 ```
 
 ## 头部和布局

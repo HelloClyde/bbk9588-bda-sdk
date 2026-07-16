@@ -70,7 +70,7 @@ def main() -> None:
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
     ap.add_argument("--root", type=Path, default=Path("."), help="仓库根目录")
-    ap.add_argument("--sdk", type=Path, default=Path("sdk") / "api" / "bda_sdk.h", help="SDK 头文件")
+    ap.add_argument("--sdk", type=Path, default=Path("reverse") / "bda_research_sdk.h", help="SDK 头文件")
     ap.add_argument("--name", help="SDK 宏名，例如 BDA_GUI_MSGBOX")
     ap.add_argument("--table", choices=["GUI", "FS", "SYS", "MEM", "RES"], help="API 表名")
     ap.add_argument("--offset", type=lambda text: int(text, 0), help="表内 offset，例如 0x2b8")

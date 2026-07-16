@@ -42,7 +42,7 @@ class BdaHeaderTest(unittest.TestCase):
 
     def test_build_clis_report_missing_source_in_chinese(self) -> None:
         missing = Path("build") / "test_missing_source" / "missing.c"
-        existing_source = Path("sdk/api/examples/hello_msgbox.c")
+        existing_source = Path("reverse/examples/hello_msgbox.c")
         missing_icon = Path("build") / "test_missing_source" / "missing.png"
         commands = [
             [
@@ -261,7 +261,7 @@ class BdaHeaderTest(unittest.TestCase):
 
         original.write_bytes(
             build_bda(
-                Path("sdk/api/examples/hello_msgbox.c"),
+                Path("reverse/examples/hello_msgbox.c"),
                 "Orig",
                 9,
                 TOOLCHAIN_PREFIX,
@@ -303,7 +303,7 @@ class BdaHeaderTest(unittest.TestCase):
         out_dir.mkdir(parents=True, exist_ok=True)
         bad = out_dir / "BadChecksum.bda"
         fixed = out_dir / "FixedChecksum.bda"
-        data = build_bda(Path("sdk/api/examples/hello_msgbox.c"), "FixMe", 9, TOOLCHAIN_PREFIX, None, (0, 0, 0))
+        data = build_bda(Path("reverse/examples/hello_msgbox.c"), "FixMe", 9, TOOLCHAIN_PREFIX, None, (0, 0, 0))
         data[0x84:0x88] = b"\0\0\0\0"
         bad.write_bytes(data)
         self.assertFalse(validate_bda(bad)["checksum_ok"])
@@ -332,7 +332,7 @@ class BdaHeaderTest(unittest.TestCase):
         path = out_dir / "NoSig.bda"
         path.write_bytes(
             build_bda(
-                Path("sdk/api/examples/hello_msgbox.c"),
+                Path("reverse/examples/hello_msgbox.c"),
                 "NoSig",
                 9,
                 TOOLCHAIN_PREFIX,

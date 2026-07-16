@@ -10,9 +10,9 @@
 应用/程序/时间.bda
 reverse/reports/time_layout.json
 reverse/reports/time_calls.txt
-sdk/doc/time_notes.md
-sdk/doc/text_notes.md
-sdk/doc/window_notes.md
+reverse/docs/time_notes.md
+reverse/docs/text_notes.md
+reverse/docs/window_notes.md
 ```
 
 ## 头部和布局

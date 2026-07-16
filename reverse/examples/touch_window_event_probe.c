@@ -1,9 +1,9 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 /*
  * Candidate touch-message probe. Build with:
  * python -m bda_packer reverse/examples/touch_window_event_probe.c
- *   --title TouchXY --category 4 -I sdk/api -o build/TouchXY.bda
+ *   --title TouchXY --category 4 -I reverse -o build/TouchXY.bda
  */
 
 #define SCREEN_WIDTH 240

@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320

@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "../bda_research_sdk.h"
 
 static bda_res_state_like_t g_res_state;
 

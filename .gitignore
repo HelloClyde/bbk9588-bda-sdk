@@ -31,6 +31,7 @@ venv/
 # Binary outputs that may be generated inside the source tree.
 *.bda
 *.BDA
+!/example/**/*.bda
 *.dba
 *.DBA
 *.dlx

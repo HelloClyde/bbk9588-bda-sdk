@@ -8,9 +8,9 @@
 应用/程序/记事本.bda
 reverse/reports/bda_inventory.json
 reverse/reports/notepad_calls.txt
-sdk/doc/text_notes.md
-sdk/doc/window_notes.md
-sdk/doc/fs_notes.md
+reverse/docs/text_notes.md
+reverse/docs/window_notes.md
+reverse/docs/fs_notes.md
 ```
 
 这份报告还不是记事本全部业务逻辑的完整逆向，但已经固定短标签绘制、`medit`

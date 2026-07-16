@@ -10,9 +10,9 @@
 应用/程序/我的相册.bda
 reverse/reports/album_layout.json
 reverse/reports/album_calls.txt
-sdk/doc/picture_notes.md
-sdk/doc/media_notes.md
-sdk/doc/fs_notes.md
+reverse/docs/picture_notes.md
+reverse/docs/media_notes.md
+reverse/docs/fs_notes.md
 ```
 
 ## 头部和布局

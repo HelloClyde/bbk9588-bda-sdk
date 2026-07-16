@@ -12,6 +12,16 @@ from bda_validate import validate_bda
 
 
 class SdkExamplesTest(unittest.TestCase):
+    PREBUILT_EXAMPLES = [
+        ("example/basic/hello_world/HelloWorld.bda", "HelloWorld", 9),
+        ("example/filesystem/fs_write/FsWrite.bda", "FsWrite", 9),
+        ("example/input/key_polling/KeyInput.bda", "KeyInput", 9),
+        ("example/input/touch_press/TouchPress.bda", "Touch", 9),
+        ("example/input/touch_crosshair/TouchCrosshair.bda", "TouchXY", 9),
+        ("example/graphics/primitives/GraphicsPrimitives.bda", "Graphics", 9),
+        ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
+    ]
+
     @classmethod
     def setUpClass(cls) -> None:
         prefix = bundled_prefix() or "mipsel-none-elf-"
@@ -58,50 +68,68 @@ class SdkExamplesTest(unittest.TestCase):
         return report
 
     def test_hello_msgbox_example_builds(self) -> None:
-        self.build_and_validate("sdk/api/examples/hello_msgbox.c", "HelloC")
+        self.build_and_validate("reverse/examples/hello_msgbox.c", "HelloC")
+
+    def test_checked_in_verified_bdas_validate(self) -> None:
+        for path, title, category in self.PREBUILT_EXAMPLES:
+            report = validate_bda(Path(path))
+            self.assertTrue(report["ok"], path)
+            self.assertEqual(report["title"], title, path)
+            self.assertEqual(report["category"], category, path)
+
+    def test_verified_example_leaf_directories_pair_source_and_bda(self) -> None:
+        expected_bdas = {Path(path) for path, _, _ in self.PREBUILT_EXAMPLES}
+        actual_bdas = set(Path("example").rglob("*.bda"))
+        self.assertEqual(actual_bdas, expected_bdas)
+
+        for bda_path in expected_bdas:
+            sources = list(bda_path.parent.glob("*.c"))
+            binaries = list(bda_path.parent.glob("*.bda"))
+            self.assertEqual(len(sources), 1, bda_path.parent)
+            self.assertEqual(binaries, [bda_path], bda_path.parent)
 
     def test_gui_rect_contains_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/gui_rect_contains_demo.c", "RectDemo", ("sdk/api",)
+            "reverse/examples/gui_rect_contains_demo.c", "RectDemo", ("reverse",)
         )
 
     def test_gui_screen_width_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/gui_screen_width_demo.c", "WidthDemo", ("sdk/api",)
+            "reverse/examples/gui_screen_width_demo.c", "WidthDemo", ("reverse",)
         )
 
     def test_input_state_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/input_state_demo.c", "Input", ("sdk/api",)
+            "reverse/examples/input_state_demo.c", "Input", ("reverse",)
         )
 
     def test_mem_alloc_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/mem_alloc_demo.c", "MemDemo", ("sdk/api",)
+            "reverse/examples/mem_alloc_demo.c", "MemDemo", ("reverse",)
         )
 
     def test_fs_read_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/fs_read_demo.c", "FsRead", ("sdk/api",)
+            "reverse/examples/fs_read_demo.c", "FsRead", ("reverse",)
         )
 
     def test_fs_read_raw_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/fs_read_raw_demo.c", "FsRaw", ("sdk/api",)
+            "reverse/examples/fs_read_raw_demo.c", "FsRaw", ("reverse",)
         )
 
     def test_fs_write_example_builds(self) -> None:
-        self.build_and_validate("sdk/api/examples/fs_write_demo.c", "FsWrite")
+        self.build_and_validate("example/filesystem/fs_write/fs_write_demo.c", "FsWrite")
 
     def test_key_msgbox_example_builds(self) -> None:
-        self.build_and_validate("sdk/api/examples/key_msgbox_demo.c", "KeyInput")
+        self.build_and_validate("example/input/key_polling/key_msgbox_demo.c", "KeyInput")
 
     def test_touch_press_example_builds(self) -> None:
-        self.build_and_validate("sdk/api/examples/touch_press_demo.c", "Touch")
+        self.build_and_validate("example/input/touch_press/touch_press_demo.c", "Touch")
 
     def test_touch_crosshair_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/touch_crosshair_demo.c", "TouchXY"
+            "example/input/touch_crosshair/touch_crosshair_demo.c", "TouchXY"
         )
 
     def test_touch_stage_v12_probe_builds(self) -> None:
@@ -165,36 +193,36 @@ class SdkExamplesTest(unittest.TestCase):
         )
 
     def test_graphics_primitives_example_builds(self) -> None:
-        self.build_and_validate("sdk/api/examples/graphics_primitives_demo.c", "Graphics")
+        self.build_and_validate("example/graphics/primitives/graphics_primitives_demo.c", "Graphics")
 
     def test_fs_find_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/fs_find_demo.c", "FsFind", ("sdk/api",)
+            "reverse/examples/fs_find_demo.c", "FsFind", ("reverse",)
         )
 
     def test_fs_diskinfo_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/fs_diskinfo_demo.c", "FsDisk", ("sdk/api",)
+            "reverse/examples/fs_diskinfo_demo.c", "FsDisk", ("reverse",)
         )
 
     def test_fs_status_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/fs_status_demo.c", "FsStat", ("sdk/api",)
+            "reverse/examples/fs_status_demo.c", "FsStat", ("reverse",)
         )
 
     def test_res_state_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/res_state_demo.c", "ResState", ("sdk/api",)
+            "reverse/examples/res_state_demo.c", "ResState", ("reverse",)
         )
 
     def test_tile_blit_probe_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/tile_blit_probe.c", "TileBlit", ("sdk/api",)
+            "reverse/examples/tile_blit_probe.c", "TileBlit", ("reverse",)
         )
 
     def test_time_probe_builds(self) -> None:
         self.build_and_validate(
-            "reverse/examples/time_probe.c", "TimeProbe", ("sdk/api",)
+            "reverse/examples/time_probe.c", "TimeProbe", ("reverse",)
         )
 
     def test_game_api_probe_builds(self) -> None:
@@ -290,22 +318,22 @@ class SdkExamplesTest(unittest.TestCase):
 
     def test_showcase_stage_probe_builds(self) -> None:
         self.build_and_validate(
-            "reverse/examples/showcase_stage_probe.c", "StageProbe", ("sdk/api",)
+            "reverse/examples/showcase_stage_probe.c", "StageProbe", ("reverse",)
         )
 
     def test_file_selector_probe_builds(self) -> None:
         self.build_and_validate(
-            "reverse/examples/file_selector_probe.c", "FileSel", ("sdk/api",)
+            "reverse/examples/file_selector_probe.c", "FileSel", ("reverse",)
         )
 
     def test_minesweeper_example_builds(self) -> None:
         self.build_and_validate(
-            "sdk/api/examples/minesweeper_bda.c",
+            "example/games/minesweeper/minesweeper_bda.c",
             "Mines",
             category=4,
-            icon_png="sdk/assets/minesweeper_icon.png",
+            icon_png="example/games/minesweeper/minesweeper_icon.png",
         )
-        source = Path("sdk/api/examples/minesweeper_bda.c").read_text(
+        source = Path("example/games/minesweeper/minesweeper_bda.c").read_text(
             encoding="utf-8"
         )
         self.assertIn("#define BOARD_WIDTH 9", source)
@@ -365,7 +393,7 @@ int bda_main(void) {
         output = self.out_dir / "Call5Probe.bda"
         source.write_text(
             """
-#include "bda_sdk.h"
+#include "bda_research_sdk.h"
 
 static u16 g_buf[4];
 
@@ -389,7 +417,7 @@ int bda_main(void) {
                 "--category",
                 "9",
                 "-I",
-                "sdk/api",
+                "reverse",
                 "-o",
                 str(output),
             ]
