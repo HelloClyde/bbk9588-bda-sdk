@@ -20,6 +20,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_sdk_layout_is_split_from_reverse_workspace(self) -> None:
         self.assertTrue((ROOT / "reverse" / "bda_research_sdk.h").is_file())
         self.assertTrue((ROOT / "sdk" / "include" / "bda_sdk.h").is_file())
+        self.assertTrue((ROOT / "sdk" / "include" / "bda_controls.h").is_file())
         self.assertTrue((ROOT / "docs" / "README.md").is_file())
         self.assertTrue((ROOT / "example" / "README.md").is_file())
         sdk_files = sorted(
@@ -27,7 +28,9 @@ class SdkDocsTest(unittest.TestCase):
             for path in (ROOT / "sdk").rglob("*")
             if path.is_file()
         )
-        self.assertEqual(sdk_files, ["include/bda_sdk.h"])
+        self.assertEqual(
+            sdk_files, ["include/bda_controls.h", "include/bda_sdk.h"]
+        )
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
         public_docs = sorted(path.name for path in (ROOT / "docs").glob("*.md"))
@@ -37,6 +40,7 @@ class SdkDocsTest(unittest.TestCase):
             verified_docs,
             [
                 "README.md",
+                "controls_api.md",
                 "file_selector_api.md",
                 "fs_write_api.md",
                 "game_rendering_api.md",
@@ -69,10 +73,12 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("# SDK API 目录", sdk_readme)
         self.assertIn("只保存 API header", sdk_readme)
         self.assertIn("sdk/include/bda_sdk.h", sdk_readme)
+        self.assertIn("sdk/include/bda_controls.h", sdk_readme)
         self.assertIn("reverse/bda_research_sdk.h", sdk_readme)
         self.assertIn("example/README.md", sdk_readme)
         self.assertIn("docs/README.md", sdk_readme)
         self.assertIn('#include "bda_sdk.h"', sdk_readme)
+        self.assertIn('#include "bda_controls.h"', sdk_readme)
         self.assertIn('Path("reverse") / "bda_research_sdk.h"', catalog_tool)
         self.assertIn('Path("reverse") / "docs" / "api_catalog.md"', catalog_tool)
         self.assertIn('Path("reverse") / "bda_research_sdk.h"', c200_table_tool)
@@ -110,6 +116,54 @@ class SdkDocsTest(unittest.TestCase):
             "模拟器应用逆向",
         ]:
             self.assertNotIn(phrase, combined)
+
+    def test_public_controls_header_matches_verified_scope(self) -> None:
+        header = read("sdk/include/bda_controls.h")
+        docs = read("docs/verified/controls_api.md") + "\n" + read(
+            "docs/tutorials/custom_controls.md"
+        )
+
+        self.assertIn('#include "bda_sdk.h"', header)
+        self.assertNotIn("_like", header.lower())
+        self.assertNotIn('"treeview"', header)
+        self.assertNotIn('"SLIDERCTRL"', header)
+        self.assertIn("treeview", docs)
+        self.assertIn("SLIDERCTRL", docs)
+
+        functions = sorted(
+            set(
+                re.findall(
+                    r"^static inline [^\n]+?\b(bda_[A-Za-z0-9_]+)\s*\(",
+                    header,
+                    re.M,
+                )
+            )
+        )
+        defines = sorted(
+            set(re.findall(r"^#define\s+(BDA_[A-Z0-9_]+)\b", header, re.M))
+        )
+        self.assertGreaterEqual(len(functions), 20)
+        self.assertGreaterEqual(len(defines), 30)
+        self.assertEqual([name for name in functions if name not in docs], [])
+        self.assertEqual(
+            [
+                name
+                for name in defines
+                if name != "BDA_CONTROLS_H"
+                and not name.startswith("BDA_CONTROLS_INTERNAL_")
+                and name not in docs
+            ],
+            [],
+        )
+
+        for example in [
+            "example/gui/control_gallery/control_gallery_demo.c",
+            "example/gui/custom_control/custom_control_demo.c",
+            "example/gui/gif_player/gif_player_demo.c",
+        ]:
+            source = read(example)
+            self.assertIn('#include "bda_controls.h"', source)
+            self.assertNotIn("bda_sdk_internal_", source)
 
     def test_front_door_build_examples_use_sdk_sources(self) -> None:
         combined = read("README.md") + "\n" + read("reverse/docs/README.md")
@@ -2566,7 +2620,8 @@ class SdkDocsTest(unittest.TestCase):
             "frontend 文件 API 写入其持久 worker copy",
             "不要把 `Config.inf` 当成 BDA app 的有效注册机制",
             "Public Wrapper 快览",
-            "普通应用以 `sdk/include/bda_sdk.h` 为唯一公开清单",
+            "普通应用以 `sdk/include/bda_sdk.h` 和按需包含的",
+            "`sdk/include/bda_controls.h` 为公开",
             "从原机应用调用点和 C200 切片整理出的 wrapper",
             "用于 low-level probe 或复刻原机调用形状的 table call",
             "不要把未知 offset 当成稳定 API",

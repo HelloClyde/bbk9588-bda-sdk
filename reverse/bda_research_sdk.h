@@ -706,7 +706,7 @@ static inline int bda_confirm(const char *title, const char *message) {
 
 /*
  * control/window create wrapper。参数顺序来自 C200 和原机 call site；class_name 常见值包括
- * "butn"、"tbar"、"sbar"、"medit"。这个 wrapper 只固定 ABI；创建复杂 control
+ * sdk/include/bda_controls.h 中动态验证的真实类名。这个 wrapper 只固定 ABI；创建复杂 control
  * 仍需要真实 parent/frame lifecycle。不要在裸 bda_main() 中用 parent=0 创建
  * edit/listbox 当作 GUI bootstrap；这类 probe 已有真机重启记录。
  * 返回 handle 后才能在同一生命周期内 send/notify/destroy。
