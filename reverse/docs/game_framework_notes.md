@@ -344,12 +344,14 @@ SYS +0x08c
 
 `雷霆战机.bda` `0x81c11188` 和 `决战坦克.bda` `0x81c04548` 附近会构造包
 chunk descriptor 并进入 SYS 音效调用簇。后续路径调用
-`SYS+0x40/+0x44/+0x58/+0x5c/+0x60/+0x64/+0x68` 做状态、播放、释放类操作。
+`SYS+0x58/+0x5c/+0x60/+0x64/+0x68` 做 package sound 状态、播放、释放类操作；
+`SYS+0x40/+0x44` 是共享的 PCM attenuation set/get。
 
 这和 `GAMEBOY.BDA` 的 raw PCM-like `SYS+0x74/+0x78` 流式路径不同。对游戏来说，
-系统可能提供了 high-level 打包音效 helper。`bda_sdk.h` 目前以
-`bda_sys_package_sound_*_like()` 形式暴露，但 descriptor 布局仍需 hardware probe；
-`op40(sound_id)` 只写全局 sound id 并置 pending flag，`op44()` 只触发内部 helper。
+系统可能提供了 high-level 打包音效 helper。`bda_sdk.h` 目前只把
+`+0x058..+0x068` 以 `bda_sys_package_sound_*_like()` 形式暴露，descriptor 布局仍需
+hardware probe。`+0x040/+0x044` 已动态确认为 PCM attenuation，不属于 descriptor
+操作簇。
 `+0x050/+0x054` 在 C200 中都是立即返回 `1` 的 stub，SDK 不公开这两个 offset，
 也不应把它们当作兼容、加载或释放 API。
 
@@ -361,8 +363,8 @@ chunk descriptor 并进入 SYS 音效调用簇。后续路径调用
 gFly_soundState = %d
 descriptor stride 0x20
 loop bound 0x14 chunks
-SYS+0x044 会保存一个 byte，后续由 SYS+0x040 复用
-SYS+0x040 接收该 byte，或接收计算出来的小 sound id
+SYS+0x044 读取 effective attenuation，后续由 SYS+0x040 复用
+SYS+0x040 接收该值，或接收 0x75 - (index * 13)
 SYS+0x064 和 SYS+0x068 反复成对出现
 ```
 
@@ -371,8 +373,8 @@ SYS+0x064 和 SYS+0x068 反复成对出现
 ```text
 descriptor stride 0x20
 loop bound 0x14 chunks
-SYS+0x044 会把一个 byte 保存到 0x81c1288c
-SYS+0x040 接收该 byte，或接收 0x75 - (index * 13)
+SYS+0x044 返回 effective attenuation 并保存到 0x81c1288c
+SYS+0x040 接收该值，或接收 0x75 - (index * 13)
 ```
 
 不要把这套逻辑推广到所有 `.lib` 游戏包。`sango_bda_report.md` 引用

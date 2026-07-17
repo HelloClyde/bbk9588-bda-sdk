@@ -1,6 +1,6 @@
 # 游戏系统 API 验证进度
 
-更新时间：2026-07-16
+更新时间：2026-07-18
 
 > 研究头兼容说明：`reverse/bda_research_sdk.h` 暂时保留
 > `bda_gui_tick_count_25ms_like()`、`bda_gui_tick_elapsed_25ms_like()`、
@@ -16,8 +16,9 @@
 
 模拟器通过不自动等于真机通过，也不会让全部候选 API 自动进入公开 SDK。V6/V8/V9、
 V19-V21 和完整扫雷闭环重复确认的 compatible context、VX、context copy、洋红色键、
-dirty rect 与 25 ms tick 已按“模拟器稳定”等级进入 `sdk/include/bda_sdk.h`；验证环境仍
-明确标注为 8013，真机栏保持待测。其余 probe 继续只访问逆向研究 header。
+dirty rect 与 25 ms tick 已按“模拟器稳定”等级进入 `sdk/include/bda_sdk.h`。raw PCM
+open/write 与固件绑定 stop/reopen 已进入 `sdk/include/bda_audio.h`；验证环境仍明确标注
+为 8013，真机栏保持待测。其余 probe 继续只访问逆向研究 header。
 
 ## 总表
 
@@ -53,7 +54,8 @@ dirty rect 与 25 ms tick 已按“模拟器稳定”等级进入 `sdk/include/b
 | RGB565 color key | GUI `+0x418` 末参数 | 是 | V20/V21 通过 | 待测 | 0 禁用透明键；0xf81f 跳过洋红 source pixel，alpha 待测 |
 | dirty rectangle 局部提交 | GUI `+0x418/+0x074` | 是 | V21 通过 | 待测 | clean 恢复旧区域，back 合成新位置，只提交新旧位置的最小外接矩形 |
 | PCM 音频写入 | SYS `+0x06c/+0x074/+0x078` | 是 | V2 通过 | 待测 | 22050 Hz/16-bit/mono，8 批均消费 1024 byte |
-| PCM 音频清理 | SYS `+0x0a0/+0x08c` | 部分 | V2 未闭环 | 待测 | 调用返回后 DMA 仍运行，不能命名为 stop/close |
+| PCM 音频清理 | SYS `+0x0a0` + C200 `0x80195b24(0)` | 是 | V4/V5 通过 | 待测 | 立即 stop、timer 停止、reopen/write/stop 闭环；固定 VA 绑定当前固件 |
+| PCM 衰减 | SYS `+0x040/+0x044` | 是 | V1 通过 | 待测 | set 下一次 write 生效；effective 0..96、步进 3；0 full scale、96 near-silent |
 | JPEG decode | GUI `+0x808` | 是 | V7 通过 | 待测 | mode 0/1 均解码官方 JPEG，独立 source 可渲染并释放 |
 | 安全存档 | FS seek/rename/mkdir/stat | 部分 | 待测 | 待测 | 基础 open/read/write/close 已真机验证 |
 
@@ -202,10 +204,99 @@ dropped_packets=0
 `playing=true`、`timer_running=true`，并继续产生 underrun packet。因此：
 
 - `SYS+0x0a0` 当前只能称为 flush/config helper，不能称为 stop。
-- `SYS+0x08c` 会处理 `0x80362830` 中的 system resource id 后重新初始化内部状态，
-  不能单独当作 raw PCM close。
-- 在真正的停止顺序恢复前，游戏 SDK 不能公开“完整音频生命周期已验证”的结论。
+- `SYS+0x08c` 会处理 `0x80362830` 中的高层 resource state；V3-V5 证明 raw open
+  前后该 state 的前四个 word 始终为零，因此它不能当作 raw PCM close。
+- 完整停止顺序已经由后续 V4/V5 恢复，V2 保留为反例。
 - 本次探针结束后通过模拟器 reset 停止专用 NAND 的残留 DMA，不把该状态带入后续测试。
+
+## GameAudioCleanupProbeV3-V5
+
+源码：`reverse/examples/game_audio_cleanup_probe.c`
+
+V3 先让 8 个 1024-byte block 排空，再按 GAMEBOY 的正常清理顺序只调用
+`SYS+0x0a0`。BDA 已返回菜单，DMA completion/rearm 固定为 `8/7`，但模拟器仍持续
+产生 underrun packet：
+
+```text
+playing=true
+timer_running=true
+AICFR=0x00001f31
+AICCR=0x00094802
+```
+
+静态反查定位到 `0x80195b24`：raw open 自身在初始化阶段调用的 AIC reset primitive。
+它清除 `AICFR.ENB`、`AICCR.ERPL` 及相关模式位，但没有对应 SYS table entry。
+
+V4 在 `SYS+0x0a0` 后调用 `0x80195b24(0)`，结果连续观测 12 秒保持：
+
+```text
+playing=false
+timer_running=false
+dma_completion_count=8
+dma_rearm_count=7
+received_packets=166 (不再增长)
+AICFR=0x00001830
+AICCR=0x00094800
+```
+
+V5 继续覆盖“8 block 后立即 stop -> reopen -> 再写 4 block -> 再 stop”。实时日志完整
+结束，`FAILURES=0`、`RESULT=PASS`，程序返回背单词菜单；最终累计 DMA 为 `11/10`，
+音频包固定为 160，15 秒内没有增长。由此确认当前固件的公开生命周期：
+
+```text
+SYS+0x06c open -> SYS+0x074 ready -> SYS+0x078 write
+-> SYS+0x0a0 finish/config -> C200 0x80195b24(0) AIC reset
+```
+
+该闭环已进入 `sdk/include/bda_audio.h`。公开名称为 `bda_audio_stop()`；固定内部 VA
+只适用于当前 kj409588/C200 固件，该限制保留在头文件注释和验证文档中。开发文档见
+`docs/verified/audio_pcm_api.md`。
+
+## GameAudioVolumeProbeV1
+
+源码：`reverse/examples/game_audio_volume_probe.c`
+
+输出：`A:\应用\数据\游戏\GAMEVOL1.TXT`
+
+构建目标：`build/GameAudioVolumeProbeV1.bda`
+
+静态链确认 `SYS+0x040` 写 `0x80474308` pending value 并置
+`0x806c4790 = 1`。下一次 `SYS+0x078` write 调用 `0x80195f58`，将输入限制到
+`0..98` 后量化为 `floor(value / 3)` 档；`0x80195fc8` 再按该档位通过 33-entry
+callback table 原地缩放 16-bit PCM。`SYS+0x044` 返回当前档位乘 3。
+
+动态测试依次请求 `-1/0/1/2/3/48/97/98/120`，getter 全部得到预期 effective
+value。固定输入峰值 12000 的关键结果：
+
+```text
+REQ=-1 AFTER=0  PEAK=12000
+REQ=3  AFTER=3  PEAK=11625
+REQ=48 AFTER=48 PEAK=6000
+REQ=98 AFTER=96 PEAK=46
+REQ=120 AFTER=96 PEAK=46
+RESTORED=0
+FAILURES=0
+RESULT=PASS
+```
+
+因此 `+0x040/+0x044` 不是 package sound id 操作，而是 PCM attenuation set/get：
+`0` 是 full scale，`96` 是 near-silent，不保证绝对静音。setter 只写 pending value，
+必须由下一次 PCM write 应用。探针结束前用 silent block 恢复原值，再执行完整 stop。
+
+程序返回菜单后连续 4 秒保持：
+
+```text
+playing=false
+timer_running=false
+received_packets=15 (不再增长)
+dma_completion_count=10
+dma_rearm_count=9
+AICFR=0x00001830
+AICCR=0x00094800
+```
+
+该闭环已以 `bda_audio_set_attenuation()` / `bda_audio_get_attenuation()` 进入
+`sdk/include/bda_audio.h`；真机仍待验证。
 
 ## GameGraphicsProbeV3
 

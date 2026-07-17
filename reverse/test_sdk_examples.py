@@ -24,6 +24,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
         ("example/system/file_selector/FileSelector.bda", "FileSelect", 9),
         ("example/system/confirm_dialog/ConfirmDialog.bda", "Confirm", 9),
+        ("example/system/audio_pcm/AudioPcm.bda", "AudioPCM", 9),
         ("example/gui/control_gallery/ControlGallery.bda", "Controls", 9),
         ("example/gui/custom_control/CustomControl.bda", "CustomCtrl", 9),
         ("example/gui/gif_player/GifPlayer.bda", "GifPlayer", 9),
@@ -227,6 +228,11 @@ class SdkExamplesTest(unittest.TestCase):
             "example/system/runtime_services/runtime_services_demo.c", "RuntimeSvc"
         )
 
+    def test_audio_pcm_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/audio_pcm/audio_pcm_demo.c", "AudioPCM"
+        )
+
     def test_gam4980_runtime_admission_probe_builds(self) -> None:
         self.build_and_validate(
             "reverse/examples/gam4980_runtime_api_probe.c", "G498RunV1"
@@ -272,6 +278,16 @@ class SdkExamplesTest(unittest.TestCase):
 
     def test_game_audio_probe_builds(self) -> None:
         self.build_and_validate("reverse/examples/game_audio_probe.c", "GameAudioV2")
+
+    def test_game_audio_cleanup_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/game_audio_cleanup_probe.c", "GameAudioV5"
+        )
+
+    def test_game_audio_volume_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/game_audio_volume_probe.c", "GameVolV1"
+        )
 
     def test_game_graphics_probe_builds(self) -> None:
         self.build_and_validate("reverse/examples/game_graphics_probe.c", "GameGfxV3")

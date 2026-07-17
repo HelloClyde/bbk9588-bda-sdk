@@ -62,7 +62,7 @@ SYS +0x02c  13 次
 
 ### Raw audio 状态操作
 
-`GAMEBOY.BDA` 使用更 low-level 的采样流路径，SDK 中当前暴露：
+`GAMEBOY.BDA` 使用更 low-level 的采样流路径。研究头保留原始表入口：
 
 ```c
 void bda_sys_audio_open_like(u32 device, u32 format, u32 channels);
@@ -106,11 +106,15 @@ object，调用内部关闭/释放 helper，把全局 pointer 清零，再进入
 按无参数 `void bda_sys_audio_reset_like(void)` 暴露，不假设 return value 有效。
 
 `SYS+0x0a0 -> 0x801891e8` 同样是无参数 wrapper，内部连续调用
-`0x80195db0`、`0x80195db8`、`0x80195170`，更像 drain/flush sample queue。SDK
-按 `void bda_sys_audio_flush_like(void)` 暴露。
+`0x80195db0`、`0x80195db8`、`0x80195170`。V3 动态证明它不会清除 AIC replay/global
+enable：DMA queue 不再 rearm 后仍持续产生 underrun。因此研究头按
+`void bda_sys_audio_flush_like(void)` 暴露，但不能单独当作 stop。
 
-这两个接口只适合和 raw audio open/ready/write 生命周期一起使用；不要把它们
-当作飞天音乐/数码录音那组 high-level 播放器后端的 reset/stop API。
+V4/V5 已确认当前 C200 的完整停止顺序是 `SYS+0x0a0` 后调用内部 AIC reset
+`0x80195b24(0)`；后者没有 system table entry。公开头 `sdk/include/bda_audio.h`
+将两步封装为 `bda_audio_stop()`，并提供已验证的 `bda_audio_open_pcm()`、
+`bda_audio_ready()` 和 `bda_audio_write()`。固定 VA 只适用于当前 kj409588/C200 固件；
+不要把这组接口套用到飞天音乐/数码录音的 high-level 播放器后端。
 
 ### 游戏打包音效
 
@@ -124,7 +128,7 @@ object，调用内部关闭/释放 helper，把全局 pointer 清零，再进入
 并使用：
 
 ```text
-SYS +0x040/+0x044/+0x050/+0x054/+0x058/+0x05c/+0x060/+0x064/+0x068/+0x08c
+SYS +0x040/+0x044 attenuation，+0x050/+0x054 stub，+0x058/+0x05c/+0x060/+0x064/+0x068 package sound
 ```
 
 `决战坦克.bda` 交叉验证了同一族调用：
@@ -133,16 +137,17 @@ SYS +0x040/+0x044/+0x050/+0x054/+0x058/+0x05c/+0x060/+0x064/+0x068/+0x08c
 \TankSound.lib
 descriptor stride 0x20
 loop bound 0x14 chunks
-SYS+0x044 会把一个 byte 保存到 0x81c1288c
-SYS+0x040 接收该 byte，或接收 0x75 - (index * 13)
+SYS+0x044 读取当前 PCM attenuation
+SYS+0x040 接收该值，或接收 0x75 - (index * 13)
 ```
 
 C200 table entry 给出一个关键修正：`SYS+0x050` 和 `SYS+0x054` 当前都只是立即返回
 `1` 的 stub，不能把它们单独当作已确认 loader/free API。真正有明显行为的
-wrapper 是 `SYS+0x040/+0x044/+0x058/+0x05c/+0x060/+0x064/+0x068`；这些 wrapper 会读写
+package sound wrapper 是 `SYS+0x058/+0x05c/+0x060/+0x064/+0x068`；它们会读写
 `0x804c4ba4/0x804c4ba8` 一带的全局状态，或调用内部音频释放/状态函数。
-`SYS+0x040` 只确认会 clamp 并写入 sound id/pending flag，`SYS+0x044`
-只确认会触发内部 helper。
+`SYS+0x040/+0x044` 已由 `GameVolV1` 排除出 package sound 簇：它们分别设置 pending
+PCM attenuation 和读取 effective attenuation。下一次 raw write 才应用 setter；
+effective range 为 `0..96`、步进 3，数值越大越安静。
 `SYS+0x024/+0x048/+0x04c` 在 C200 中也是 stub，不应命名为声音加载、兼容或
 flush API。
 

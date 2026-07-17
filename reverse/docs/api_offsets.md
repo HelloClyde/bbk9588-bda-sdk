@@ -603,11 +603,16 @@ SYS +0x094  不公开；raw audio state 写入 helper，会复制调用者结构
 SYS +0x0a0  audio flush/drain 类
 ```
 
+PCM 衰减：
+
+```text
+SYS +0x040  BDA_SYS_AUDIO_ATTENUATION_SET_LIKE；写 pending attenuation，下一次 PCM write 应用
+SYS +0x044  BDA_SYS_AUDIO_ATTENUATION_GET_LIKE；返回 effective 0..96，步进 3
+```
+
 打包声音/游戏音效还有：
 
 ```text
-SYS +0x040  BDA_SYS_PACKAGE_SOUND_OP40_LIKE；打包音效 low-level op40，clamp sound_id 到 0..0x62 并置 pending flag
-SYS +0x044  BDA_SYS_PACKAGE_SOUND_OP44_LIKE；打包音效 low-level op44，无参数内部 helper
 SYS +0x058
 SYS +0x05c
 SYS +0x060
@@ -615,7 +620,7 @@ SYS +0x064
 SYS +0x068
 ```
 
-这些名称仍偏保守，主要依据原机游戏路径和 C200 table entry。`SYS+0x050` 曾被
+打包音效名称仍偏保守，主要依据原机游戏路径和 C200 table entry。`SYS+0x050` 曾被
 误认为 loader wrapper，但 C200 中它只是立即返回 `1` 的 stub，因此不再作为 SDK
 公共 offset 暴露。
 

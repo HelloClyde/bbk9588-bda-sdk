@@ -648,13 +648,41 @@ system function VA：`0x8018ef04`
 - 原机游戏报告中保留 `SYS+0x050` 调用点记录，但它只能说明应用触达了音效调用簇，
   不能证明该 offset 自身完成加载。
 
-### SYS +0x040 / +0x044 / +0x058 / +0x05c / +0x060 / +0x064 / +0x068: 打包音效操作簇
+### SYS +0x040 / +0x044: raw PCM attenuation set/get
 
 system function VA：
 
 ```text
 SYS+0x040 -> 0x8018921c
 SYS+0x044 -> 0x80189248
+```
+
+当前证据：
+
+- `SYS+0x040(attenuation)` 把负数 clamp 到 `0`，把大于等于 `99` 的值 clamp
+  到 `98`，随后写 `0x806c4790 = 1` 和 `0x80474308 = pending attenuation`。
+- 下一次 `SYS+0x078` write 在 `0x80194638` 发现 pending flag 后调用
+  `0x80195f58`。该函数按 `floor(value / 3)` 保存档位，再由 `0x80195fc8`
+  选择 33-entry 16-bit PCM scaling callback 原地处理调用者 buffer。
+- `SYS+0x044()` 调用 `0x80195fb4`，返回当前档位乘 3，因此 effective range 是
+  `0..96`、步进 3。它读取的是已应用值，不是尚未消费的 pending value。
+- `GameVolV1` 动态测试 `-1/0/1/2/3/48/97/98/120` 全部通过。输入峰值 12000
+  在 effective attenuation `0/3/48/96` 时变为 `12000/11625/6000/46`。
+  这证明数值表示 attenuation：`0` 是 full scale，`96` 是 near-silent。
+
+开发建议：
+
+- 公开 SDK 使用 `bda_audio_set_attenuation()` / `bda_audio_get_attenuation()`；
+  不再保留错误的 package sound op40/op44 名称。
+- setter 在下一次 PCM write 才生效。退出前恢复原值时，必须提交一个 silent block
+  消费 pending value，然后再 stop。
+- `96` 仍有极小非零输出，不能命名为绝对 mute。
+
+### SYS +0x058 / +0x05c / +0x060 / +0x064 / +0x068: 打包音效操作簇
+
+system function VA：
+
+```text
 SYS+0x058 -> 0x8018ecb4
 SYS+0x05c -> 0x8018e958
 SYS+0x060 -> 0x8018ee98
@@ -665,11 +693,6 @@ SYS+0x068 -> 0x8018ee18
 当前证据：
 
 - 这些 entry 会读写 `0x804c4ba4`、`0x804c4ba8` 等全局音效状态，不是空 stub。
-- `SYS+0x040(sound_id)` 先把负数 clamp 到 `0`，再把大于等于 `0x63` 的值
-  clamp 到 `0x62`；随后写 `0x806c4790 = 1` 和 `0x80474308 = sound_id`。
-  它不构造稳定 return value。
-- `SYS+0x044()` 不读取调用者参数，只调用内部 helper `0x80195fb4`；没有稳定
-  return value。
 - `SYS+0x058` 只读取 `a0=descriptor`。它读取 descriptor 的 `+0x00/+0x08`，
   调用内部音频/任务 helper；成功时写 `0x804c4ba4 = 1` 并返回 `1`，
   已经初始化时返回 `0`。
@@ -689,9 +712,8 @@ SYS+0x068 -> 0x8018ee18
 - 这些入口暂保留 `_LIKE` 名称，因为 descriptor 布局和播放/停止时序仍需硬件
   probe 确认。
 - 当前 SDK 签名只固定 C200 已确认的 ABI：
-  `op40(sound_id)`、`op44(void)`、`op58(descriptor)`、
-  `op5c(slot, descriptor, a2, flags)`、`op60(void)`、`op64(void)`、
-  `op68(void)`。
+  `op58(descriptor)`、`op5c(slot, descriptor, a2, flags)`、`op60(void)`、
+  `op64(void)`、`op68(void)`。
 - custom 游戏若只需要简单声音，优先使用 GAMEBOY raw audio 路径；复刻原机游戏
   音效包时，再研究这组 SYS 调用。
 
@@ -792,7 +814,8 @@ SYS+0x0a0 -> 0x801891e8
   state 区域，最后清 `0x804781b4` 并返回 `1`。这是全局 raw audio state 写入
   helper，不是只读 probe。
 - `SYS+0x0a0` 入口同样不读取调用者参数。它依次调用 `0x80195db0`、
-  `0x80195db8`、`0x80195170`，形态更像 drain/flush 当前音频队列。
+  `0x80195db8`、`0x80195170`；V3 动态证明它不清除 AIC replay/global enable，
+  不能独立命名为 stop。
 - 两个 entry 都没有稳定 return value 约定；C200 disasm 也没有显示它们向调用者返回可用状态码。
 
 开发建议：
@@ -803,8 +826,11 @@ SYS+0x0a0 -> 0x801891e8
   pointer 做 probe，不要写入该结构，也不要把它当 high-level 播放器对象。
 - SDK 不公开 `SYS+0x094` wrapper。不要把它命名为 audio state setter、resume
   或 high-level player restore；普通 BDA 不应写入 `0x80362830` 全局 state。
-- 这两个入口应和 `bda_sys_audio_open_like()`、`bda_sys_audio_ready_like()`、
-  `bda_sys_audio_write_like()` 组成 raw sample streaming 生命周期。
+- `SYS+0x08c` 和 `SYS+0x0a0` 都不能独立完成 raw close。V3-V5 证明 raw open
+  不写 `0x80362830` 的前四个 state word，且 `+0x0a0` 后 AIC timer 仍运行。
+- 当前固件的完整停止顺序是 `SYS+0x0a0` 后调用内部 `0x80195b24(0)`；公开头
+  `bda_audio.h` 将其封装为固件绑定的 `bda_audio_stop()`。SDK 本身只面向 9588，
+  因此公开方法名不重复设备型号。
 - 不要把它们套用到飞天音乐/数码录音的 high-level 播放器后端；那些应用还使用
   `SYS+0x020/+0x02c/+0x034/+0x038/+0x094` 等另一组未公开 offset。
 

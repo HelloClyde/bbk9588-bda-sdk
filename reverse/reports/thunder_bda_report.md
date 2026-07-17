@@ -202,8 +202,9 @@ SYS+0x064  常与 SYS+0x068 成对
 SYS+0x068  常跟在 SYS+0x064 后，接近停止/提交/释放类操作
 ```
 
-`SYS+0x044` 会把一个字节保存到 `0x81c16bc4`，后续 `SYS+0x040` 接收这个字节
-或计算得到的小音效 id。这更像音效选择或通道/状态控制。
+`SYS+0x044` 返回 effective PCM attenuation 并保存到 `0x81c16bc4`，后续
+`SYS+0x040` 接收这个值或按游戏设置重新计算。`GameVolV1` 已证明这两个 offset
+是共享的 raw PCM attenuation get/set，不属于 package sound descriptor 操作。
 
 C200 交叉验证带来一个重要修正：运行时表里的 `SYS+0x050` 和 `SYS+0x054`
 当前都是立即返回 `1` 的 stub，不能把它们单独命名为“加载器”。真正有明显行为
@@ -217,7 +218,7 @@ C200 交叉验证带来一个重要修正：运行时表里的 `SYS+0x050` 和 `
 
 ```text
 1. 显示 shell 仍使用相同的内嵌 VX 和 GUI 渲染调用簇
-2. 打包音效主要走 SYS+0x058..0x068，而不是 GAMEBOY 的 raw PCM 路径
+2. 打包音效 descriptor 生命周期主要走 SYS+0x058..0x068；+0x040/+0x044 是共享衰减控制
 3. 游戏里的 .lib 文件是运行时数据包
 4. 自定义游戏可以先忽略打包音效路径，使用 raw audio；若要复刻原机游戏音效，
    应继续研究这组 SYS 调用

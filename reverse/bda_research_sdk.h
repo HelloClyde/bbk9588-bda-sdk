@@ -275,8 +275,8 @@ static inline u8 bda_sys_alarm_record_enable_flag_like(const bda_sys_alarm_recor
 #define BDA_SYS_KEYCODE_RAW_LIKE 0x088u
 #define BDA_SYS_AUDIO_RESET_LIKE 0x08cu
 #define BDA_SYS_AUDIO_STATE_LIKE 0x090u
-#define BDA_SYS_PACKAGE_SOUND_OP40_LIKE 0x040u
-#define BDA_SYS_PACKAGE_SOUND_OP44_LIKE 0x044u
+#define BDA_SYS_AUDIO_ATTENUATION_SET_LIKE 0x040u
+#define BDA_SYS_AUDIO_ATTENUATION_GET_LIKE 0x044u
 #define BDA_SYS_PACKAGE_SOUND_OP58_LIKE 0x058u
 #define BDA_SYS_PACKAGE_SOUND_OP5C_LIKE 0x05cu
 #define BDA_SYS_PACKAGE_SOUND_OP60_LIKE 0x060u
@@ -2326,19 +2326,21 @@ static inline void *bda_sys_audio_state_like(void) {
 }
 
 /*
- * 原机游戏的打包音效操作簇。descriptor/slot 布局未完全确认，因此只暴露
- * 按 offset 命名的 low-level wrapper；不要把它们当作稳定的 high-level sound API。
- * OP40 会把 sound_id clamp 到 0..0x62 后写入固件全局状态；OP44 不读取参数，
- * 只触发内部 helper。二者都没有稳定 return value。
+ * Raw PCM attenuation。set 会先写 pending value，下一次 audio write 才应用；
+ * firmware 将输入 clamp 到 0..98，再向下量化到 3 的倍数。0 是 full scale，
+ * 96 是 near-silent。get 返回当前已应用的 0..96 effective value。
  */
-static inline void bda_sys_package_sound_op40_like(u32 sound_id) {
-    (void)bda_call1(bda_sys_table(), BDA_SYS_PACKAGE_SOUND_OP40_LIKE, sound_id);
+static inline void bda_sys_audio_attenuation_set_like(s32 attenuation) {
+    (void)bda_call1(
+        bda_sys_table(), BDA_SYS_AUDIO_ATTENUATION_SET_LIKE, (u32)attenuation
+    );
 }
 
-static inline void bda_sys_package_sound_op44_like(void) {
-    (void)bda_call0(bda_sys_table(), BDA_SYS_PACKAGE_SOUND_OP44_LIKE);
+static inline int bda_sys_audio_attenuation_get_like(void) {
+    return bda_call0(bda_sys_table(), BDA_SYS_AUDIO_ATTENUATION_GET_LIKE);
 }
 
+/* Package-sound descriptor lifecycle; layout and playback order remain open. */
 static inline int bda_sys_package_sound_op58_like(const void *descriptor) {
     return bda_call1(bda_sys_table(), BDA_SYS_PACKAGE_SOUND_OP58_LIKE, (u32)descriptor);
 }

@@ -155,8 +155,8 @@
 | RES | +0x090 | `BDA_RES_GET_STATE_LIKE` | 143 | 42 | 中 | 资源/图片状态 snapshot；C200 从 0xb0003004 取状态源，向 out_state 写 7 个 word，无稳定 return value。 |
 | RES | +0x094 | `BDA_RES_ENTRY_094_LIKE` | 1987 | 54 | 中 | trace/log；历史 DLX loader 名称已废弃。 |
 | SYS | +0x004 | `BDA_SYS_CLOSE_LIKE` | 1178 | 54 | 中 | 内部 system resource close；C200 使用 resource_id 1..10 查资源表并调用 close callback，不是 app exit。 |
-| SYS | +0x040 | `BDA_SYS_PACKAGE_SOUND_OP40_LIKE` | 5702 | 52 | 中 | 打包音效 low-level op40；C200 clamp a0 到 0..0x62，写 sound id 全局状态并置 pending flag。 |
-| SYS | +0x044 | `BDA_SYS_PACKAGE_SOUND_OP44_LIKE` | 305 | 27 | 中 | 打包音效 low-level op44；C200 不读取参数，只调用内部 helper，无稳定 return value。 |
+| SYS | +0x040 | `BDA_SYS_AUDIO_ATTENUATION_SET_LIKE` | 5702 | 52 | 中 | raw PCM attenuation setter；C200 clamp 到 0..98，写 pending value，下一次 audio write 量化并应用。 |
+| SYS | +0x044 | `BDA_SYS_AUDIO_ATTENUATION_GET_LIKE` | 305 | 27 | 中 | raw PCM attenuation getter；C200 无参数，返回当前 effective attenuation（0..96，步进 3）。 |
 | SYS | +0x058 | `BDA_SYS_PACKAGE_SOUND_OP58_LIKE` | 16 | 3 | 中 | 打包音效 init/start；C200 使用 a0=descriptor，成功置 0x804c4ba4 并返回 1。 |
 | SYS | +0x05c | `BDA_SYS_PACKAGE_SOUND_OP5C_LIKE` | 28 | 10 | 中 | 打包音效 descriptor 操作；C200 使用 slot,descriptor,a2,flags 四参数。 |
 | SYS | +0x060 | `BDA_SYS_PACKAGE_SOUND_OP60_LIKE` | 20 | 9 | 中 | 打包音效状态置位；C200 无参数，0x804c4ba8 从 0 置 1 时返回 1。 |
