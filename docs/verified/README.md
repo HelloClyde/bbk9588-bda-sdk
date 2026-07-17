@@ -14,7 +14,7 @@
 
 当前已验证：
 
-- [Message Box API](msgbox_api.md)：standalone BDA 使用 `GUI+0x2b8` 显示标题、正文和确认按钮。
+- [Message Box 与确认框 API](msgbox_api.md)：`GUI+0x2b8` 的单按钮消息框、是/否布局及返回值。
 - [文件写入 API](fs_write_api.md)：`fopen/fwrite/tell/error/close/reopen/read` 写入闭环。
 - [实体键轮询 API](input_polling_api.md)：`GUI+0x5d4` 六键状态包和 Linux keycode 映射。
 - [触摸按下/抬起 API](touch_press_api.md)：`kj409588/C200` 固件绑定的 pen GPIO 电平查询。

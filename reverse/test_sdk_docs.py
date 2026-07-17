@@ -1050,6 +1050,10 @@ class SdkDocsTest(unittest.TestCase):
         verified = read("docs/verified/msgbox_api.md")
         index = read("docs/verified/README.md")
         source = read("example/basic/hello_world/hello_world_msgbox.c")
+        confirm_source = read(
+            "example/system/confirm_dialog/confirm_dialog_probe.c"
+        )
+        public_header = read("sdk/include/bda_sdk.h")
         for phrase in [
             "GUI +0x2b8",
             "0x800c6544",
@@ -1057,13 +1061,29 @@ class SdkDocsTest(unittest.TestCase):
             'bda_msgbox("HelloWorld", "HelloWorld")',
             "A91EF6F90A2CE32E7F4F1CEB31E4CDCAC3499F4A8B630DD03BA9DFA45E9E0B60",
             "新增第 11 个文件不会展示",
-            "return value、非零 `flags`",
+            "LEFT=0x00000006",
+            "RIGHT=0x00000007",
+            "running=true",
+            "invalid=0",
+            "退出键返回值",
             "原版 NAND SHA-256 保持",
         ]:
             self.assertIn(phrase, verified)
         self.assertIn("msgbox_api.md", index)
         self.assertIn('bda_msgbox("HelloWorld", "HelloWorld")', source)
+        self.assertIn("bda_confirm(", confirm_source)
+        self.assertIn("BDA_DIALOG_RESULT_YES", confirm_source)
+        self.assertIn("#define BDA_MSGBOX_TYPE_YES_NO  2u", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_YES   6", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_NO    7", public_header)
+        self.assertIn("static inline int bda_confirm(", public_header)
         self.assertTrue((ROOT / "docs/verified/assets/msgbox_hello_world_verified.png").is_file())
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/msgbox_confirm_yes_no_verified.png").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/msgbox_confirm_result_verified.png").is_file()
+        )
 
     def test_gameboy_extended_gui_helpers_match_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")

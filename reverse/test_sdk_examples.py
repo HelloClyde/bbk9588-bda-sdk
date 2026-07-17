@@ -23,6 +23,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
         ("example/system/file_selector/FileSelector.bda", "FileSelect", 9),
+        ("example/system/confirm_dialog/ConfirmDialog.bda", "Confirm", 9),
     ]
 
     @classmethod
@@ -347,6 +348,11 @@ class SdkExamplesTest(unittest.TestCase):
     def test_file_selector_probe_builds(self) -> None:
         self.build_and_validate(
             "reverse/examples/file_selector_probe.c", "FileSel", ("reverse",)
+        )
+
+    def test_confirm_dialog_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/confirm_dialog/confirm_dialog_probe.c", "Confirm"
         )
 
     def test_public_file_selector_example_builds(self) -> None:

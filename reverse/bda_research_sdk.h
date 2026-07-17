@@ -41,6 +41,11 @@ typedef unsigned long long u64;
 #define BDA_INPUT_PACKET_ESCAPE_INDEX 4u
 #define BDA_INPUT_PACKET_ENTER_INDEX  5u
 
+#define BDA_MSGBOX_TYPE_OK      0u
+#define BDA_MSGBOX_TYPE_YES_NO  2u
+#define BDA_DIALOG_RESULT_YES   6
+#define BDA_DIALOG_RESULT_NO    7
+
 #define BDA_GUI_MSGBOX 0x2b8u
 #define BDA_GUI_CREATE 0x1a4u
 #define BDA_GUI_SEND   0x040u
@@ -692,7 +697,11 @@ static inline int bda_msgbox_ex(void *parent, const char *title, const char *mes
 }
 
 static inline int bda_msgbox(const char *title, const char *message) {
-    return bda_msgbox_ex(0, title, message, 0);
+    return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_OK);
+}
+
+static inline int bda_confirm(const char *title, const char *message) {
+    return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_YES_NO);
 }
 
 /*

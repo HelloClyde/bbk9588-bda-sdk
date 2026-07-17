@@ -22,7 +22,7 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 
 | 能力 | 文档 | 验证环境 |
 |---|---|---|
-| Message Box | [msgbox_api.md](verified/msgbox_api.md) | 模拟器 |
+| Message Box 与是/否确认框 | [msgbox_api.md](verified/msgbox_api.md) | 模拟器 |
 | 文件写入与读回 | [fs_write_api.md](verified/fs_write_api.md) | 模拟器 |
 | 六键轮询 | [input_polling_api.md](verified/input_polling_api.md) | 模拟器 |
 | 触摸按下与抬起 | [touch_press_api.md](verified/touch_press_api.md) | 真机 |

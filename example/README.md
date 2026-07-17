@@ -20,6 +20,7 @@ graphics/picture_render/  picture_render_demo.c + PictureRender.bda
 games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
 system/runtime_services/  runtime_services_demo.c + RuntimeServices.bda
 system/file_selector/     file_selector_demo.c + FileSelector.bda
+system/confirm_dialog/    confirm_dialog_probe.c + ConfirmDialog.bda
 ```
 
 | 示例 | 能力 | 验证环境 | 说明 |
@@ -34,6 +35,7 @@ system/file_selector/     file_selector_demo.c + FileSelector.bda
 | `games/minesweeper/` | 双缓冲、VX、色键、dirty rect、tick | 模拟器 | [游戏绘图教程](../docs/verified/game_rendering_api.md) |
 | `system/runtime_services/` | heap、seek、目录和枚举 | 模拟器 | [API 文档](../docs/verified/runtime_services_api.md) |
 | `system/file_selector/` | 默认目录、后缀过滤和完整路径返回 | 模拟器 | [API 文档](../docs/verified/file_selector_api.md) |
+| `system/confirm_dialog/` | 系统是/否确认框及返回值 | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
 
 ## 构建
 

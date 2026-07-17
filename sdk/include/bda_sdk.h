@@ -43,6 +43,11 @@ typedef int (*bda_wndproc_t)(bda_handle_t, u32, u32, u32);
 #define BDA_MSG_TOUCH_COORDINATE    0x0001u
 #define BDA_MSG_TOUCH_RELEASE       0x0002u
 
+#define BDA_MSGBOX_TYPE_OK      0u
+#define BDA_MSGBOX_TYPE_YES_NO  2u
+#define BDA_DIALOG_RESULT_YES   6
+#define BDA_DIALOG_RESULT_NO    7
+
 typedef struct bda_frame_desc {
     u32 style;
     u32 internal28;
@@ -364,7 +369,11 @@ static inline int bda_msgbox_ex(
 }
 
 static inline int bda_msgbox(const char *title, const char *message) {
-    return bda_msgbox_ex(0, title, message, 0);
+    return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_OK);
+}
+
+static inline int bda_confirm(const char *title, const char *message) {
+    return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_YES_NO);
 }
 
 /* Basic heap allocation: MEM+0x008/+0x00c. */
