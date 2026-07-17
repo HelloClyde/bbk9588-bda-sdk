@@ -20,6 +20,8 @@ class SdkDocsTest(unittest.TestCase):
     def test_sdk_layout_is_split_from_reverse_workspace(self) -> None:
         self.assertTrue((ROOT / "reverse" / "bda_research_sdk.h").is_file())
         self.assertTrue((ROOT / "sdk" / "include" / "bda_sdk.h").is_file())
+        self.assertTrue((ROOT / "sdk" / "include" / "bda_controls.h").is_file())
+        self.assertTrue((ROOT / "sdk" / "include" / "bda_audio.h").is_file())
         self.assertTrue((ROOT / "docs" / "README.md").is_file())
         self.assertTrue((ROOT / "example" / "README.md").is_file())
         sdk_files = sorted(
@@ -27,7 +29,10 @@ class SdkDocsTest(unittest.TestCase):
             for path in (ROOT / "sdk").rglob("*")
             if path.is_file()
         )
-        self.assertEqual(sdk_files, ["include/bda_sdk.h"])
+        self.assertEqual(
+            sdk_files,
+            ["include/bda_audio.h", "include/bda_controls.h", "include/bda_sdk.h"],
+        )
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
         public_docs = sorted(path.name for path in (ROOT / "docs").glob("*.md"))
@@ -37,6 +42,8 @@ class SdkDocsTest(unittest.TestCase):
             verified_docs,
             [
                 "README.md",
+                "audio_pcm_api.md",
+                "controls_api.md",
                 "file_selector_api.md",
                 "fs_write_api.md",
                 "game_rendering_api.md",
@@ -69,10 +76,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("# SDK API 目录", sdk_readme)
         self.assertIn("只保存 API header", sdk_readme)
         self.assertIn("sdk/include/bda_sdk.h", sdk_readme)
+        self.assertIn("sdk/include/bda_controls.h", sdk_readme)
+        self.assertIn("sdk/include/bda_audio.h", sdk_readme)
         self.assertIn("reverse/bda_research_sdk.h", sdk_readme)
         self.assertIn("example/README.md", sdk_readme)
         self.assertIn("docs/README.md", sdk_readme)
         self.assertIn('#include "bda_sdk.h"', sdk_readme)
+        self.assertIn('#include "bda_controls.h"', sdk_readme)
+        self.assertIn('#include "bda_audio.h"', sdk_readme)
         self.assertIn('Path("reverse") / "bda_research_sdk.h"', catalog_tool)
         self.assertIn('Path("reverse") / "docs" / "api_catalog.md"', catalog_tool)
         self.assertIn('Path("reverse") / "bda_research_sdk.h"', c200_table_tool)
@@ -110,6 +121,79 @@ class SdkDocsTest(unittest.TestCase):
             "模拟器应用逆向",
         ]:
             self.assertNotIn(phrase, combined)
+
+    def test_public_controls_header_matches_verified_scope(self) -> None:
+        header = read("sdk/include/bda_controls.h")
+        docs = read("docs/verified/controls_api.md") + "\n" + read(
+            "docs/tutorials/custom_controls.md"
+        )
+
+        self.assertIn('#include "bda_sdk.h"', header)
+        self.assertNotIn("_like", header.lower())
+        self.assertNotIn('"treeview"', header)
+        self.assertNotIn('"SLIDERCTRL"', header)
+        self.assertIn("treeview", docs)
+        self.assertIn("SLIDERCTRL", docs)
+
+        functions = sorted(
+            set(
+                re.findall(
+                    r"^static inline [^\n]+?\b(bda_[A-Za-z0-9_]+)\s*\(",
+                    header,
+                    re.M,
+                )
+            )
+        )
+        defines = sorted(
+            set(re.findall(r"^#define\s+(BDA_[A-Z0-9_]+)\b", header, re.M))
+        )
+        self.assertGreaterEqual(len(functions), 20)
+        self.assertGreaterEqual(len(defines), 30)
+        self.assertEqual([name for name in functions if name not in docs], [])
+        self.assertEqual(
+            [
+                name
+                for name in defines
+                if name != "BDA_CONTROLS_H"
+                and not name.startswith("BDA_CONTROLS_INTERNAL_")
+                and name not in docs
+            ],
+            [],
+        )
+
+        for example in [
+            "example/gui/control_gallery/control_gallery_demo.c",
+            "example/gui/custom_control/custom_control_demo.c",
+            "example/gui/gif_player/gif_player_demo.c",
+        ]:
+            source = read(example)
+            self.assertIn('#include "bda_controls.h"', source)
+            self.assertNotIn("bda_sdk_internal_", source)
+
+    def test_public_audio_header_matches_verified_scope(self) -> None:
+        header = read("sdk/include/bda_audio.h")
+        docs = read("docs/verified/audio_pcm_api.md")
+        example = read("example/system/audio_pcm/audio_pcm_demo.c")
+
+        self.assertIn('#include "bda_sdk.h"', header)
+        self.assertNotIn("_like", header.lower())
+        for name in [
+            "bda_audio_open_pcm",
+            "bda_audio_ready",
+            "bda_audio_write",
+            "bda_audio_set_attenuation",
+            "bda_audio_get_attenuation",
+            "bda_audio_stop",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, docs)
+            self.assertIn(name, example)
+        self.assertIn("0x80195b24u", header)
+        self.assertIn("02a16107b11a3281067871c6fe3d4c289", docs)
+        self.assertNotIn("bda_sys_audio_reset_like", header)
+        self.assertNotIn("bda_sys_audio_flush_like", header)
+        self.assertIn('#include "bda_audio.h"', example)
+        self.assertNotIn("bda_sdk_internal_", example)
 
     def test_front_door_build_examples_use_sdk_sources(self) -> None:
         combined = read("README.md") + "\n" + read("reverse/docs/README.md")
@@ -866,8 +950,8 @@ class SdkDocsTest(unittest.TestCase):
         media_notes = read("reverse/docs/media_notes.md")
         game_notes = read("reverse/docs/game_framework_notes.md")
         combined = header + "\n" + c200_notes + "\n" + catalog_tool + "\n" + readme + "\n" + media_notes + "\n" + game_notes
-        self.assertIn("bda_sys_package_sound_op40_like(u32 sound_id)", header)
-        self.assertIn("bda_sys_package_sound_op44_like(void)", header)
+        self.assertIn("bda_sys_audio_attenuation_set_like(s32 attenuation)", header)
+        self.assertIn("bda_sys_audio_attenuation_get_like(void)", header)
         self.assertIn("bda_sys_package_sound_op58_like(const void *descriptor)", header)
         self.assertIn("bda_sys_package_sound_op5c_like(u32 slot, const void *descriptor, u32 a2, u32 flags)", header)
         self.assertIn("bda_sys_package_sound_op60_like(void)", header)
@@ -881,10 +965,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("SYS+0x040 -> 0x8018921c", c200_notes)
         self.assertIn("SYS+0x044 -> 0x80189248", c200_notes)
         self.assertIn("SYS+0x058 -> 0x8018ecb4", c200_notes)
-        self.assertIn("clamp 到 `0x62`", c200_notes)
+        self.assertIn("大于等于 `99` 的值 clamp", c200_notes)
         self.assertIn("0x806c4790 = 1", c200_notes)
-        self.assertIn("0x80474308 = sound_id", c200_notes)
-        self.assertIn("只调用内部 helper `0x80195fb4`", c200_notes)
+        self.assertIn("0x80474308 = pending attenuation", c200_notes)
+        self.assertIn("调用 `0x80195fb4`", c200_notes)
         self.assertIn("只读取 `a0=descriptor`", c200_notes)
         self.assertIn("a0=slot", c200_notes)
         self.assertIn("a1=descriptor", c200_notes)
@@ -892,8 +976,10 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("slot >= 8", c200_notes)
         self.assertIn("0x804c4ba8 == 0", c200_notes)
         self.assertIn("0x804c4ba8 != 0", c200_notes)
-        self.assertIn("op40(sound_id)", combined)
-        self.assertIn("op44(void)", combined)
+        self.assertIn("bda_audio_set_attenuation", combined)
+        self.assertIn("bda_audio_get_attenuation", combined)
+        self.assertNotIn("op40(sound_id)", combined)
+        self.assertNotIn("op44(void)", combined)
         self.assertIn("op58(descriptor)", combined)
         self.assertIn("slot,descriptor,a2,flags", combined)
         self.assertIn("op60(void)", combined)
@@ -1050,6 +1136,10 @@ class SdkDocsTest(unittest.TestCase):
         verified = read("docs/verified/msgbox_api.md")
         index = read("docs/verified/README.md")
         source = read("example/basic/hello_world/hello_world_msgbox.c")
+        confirm_source = read(
+            "example/system/confirm_dialog/confirm_dialog_probe.c"
+        )
+        public_header = read("sdk/include/bda_sdk.h")
         for phrase in [
             "GUI +0x2b8",
             "0x800c6544",
@@ -1057,13 +1147,29 @@ class SdkDocsTest(unittest.TestCase):
             'bda_msgbox("HelloWorld", "HelloWorld")',
             "A91EF6F90A2CE32E7F4F1CEB31E4CDCAC3499F4A8B630DD03BA9DFA45E9E0B60",
             "新增第 11 个文件不会展示",
-            "return value、非零 `flags`",
+            "LEFT=0x00000006",
+            "RIGHT=0x00000007",
+            "running=true",
+            "invalid=0",
+            "退出键返回值",
             "原版 NAND SHA-256 保持",
         ]:
             self.assertIn(phrase, verified)
         self.assertIn("msgbox_api.md", index)
         self.assertIn('bda_msgbox("HelloWorld", "HelloWorld")', source)
+        self.assertIn("bda_confirm(", confirm_source)
+        self.assertIn("BDA_DIALOG_RESULT_YES", confirm_source)
+        self.assertIn("#define BDA_MSGBOX_TYPE_YES_NO  2u", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_YES   6", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_NO    7", public_header)
+        self.assertIn("static inline int bda_confirm(", public_header)
         self.assertTrue((ROOT / "docs/verified/assets/msgbox_hello_world_verified.png").is_file())
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/msgbox_confirm_yes_no_verified.png").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/msgbox_confirm_result_verified.png").is_file()
+        )
 
     def test_gameboy_extended_gui_helpers_match_c200_abi(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -2546,7 +2652,9 @@ class SdkDocsTest(unittest.TestCase):
             "frontend 文件 API 写入其持久 worker copy",
             "不要把 `Config.inf` 当成 BDA app 的有效注册机制",
             "Public Wrapper 快览",
-            "普通应用以 `sdk/include/bda_sdk.h` 为唯一公开清单",
+            "普通应用以 `sdk/include/bda_sdk.h` 和按需包含的",
+            "`sdk/include/bda_controls.h`、",
+            "`sdk/include/bda_audio.h` 为公开清单",
             "从原机应用调用点和 C200 切片整理出的 wrapper",
             "用于 low-level probe 或复刻原机调用形状的 table call",
             "不要把未知 offset 当成稳定 API",

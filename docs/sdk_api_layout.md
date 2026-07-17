@@ -5,6 +5,8 @@
 
 ```text
 sdk/include/bda_sdk.h  动态验证后公开的稳定 API
+sdk/include/bda_controls.h  已验证控件与自定义控件 API
+sdk/include/bda_audio.h  已验证 raw PCM open/write/attenuation/stop API
 ```
 
 未验证的候选 API 单独保存在 `reverse/bda_research_sdk.h`。
@@ -13,6 +15,18 @@ sdk/include/bda_sdk.h  动态验证后公开的稳定 API
 
 ```c
 #include "bda_sdk.h"
+```
+
+需要内建或自定义控件时直接包含扩展头；它会自动包含基础头：
+
+```c
+#include "bda_controls.h"
+```
+
+需要 raw PCM 音频时包含独立音频头；它同样自动包含基础头：
+
+```c
+#include "bda_audio.h"
 ```
 
 只有 `reverse/examples/` 中的受控研究 probe 才显式传入 `-I reverse`；普通应用不应
@@ -26,3 +40,7 @@ sdk/include/bda_sdk.h  动态验证后公开的稳定 API
 - 堆、seek 与目录服务：[runtime_services_api.md](verified/runtime_services_api.md)
 - 原始 RGB565 picture 提交：[picture_rendering_api.md](verified/picture_rendering_api.md)
 - 系统文件选择器：[file_selector_api.md](verified/file_selector_api.md)
+- Message Box 与确认框：[msgbox_api.md](verified/msgbox_api.md)
+- 内建控件：[controls_api.md](verified/controls_api.md)
+- Raw PCM 音频：[audio_pcm_api.md](verified/audio_pcm_api.md)
+- 自定义控件教程：[custom_controls.md](tutorials/custom_controls.md)

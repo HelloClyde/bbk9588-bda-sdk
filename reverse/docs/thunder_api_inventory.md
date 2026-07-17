@@ -82,8 +82,8 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "reverse\docs\
 | GUI | +0x5d4 | 1 | `BDA_GUI_INPUT_PACKET_LIKE` | `0x8001b518` | `addiu $sp, $sp, -0x18` | GAMEBOY/input 按键包 helper；C200 清 6 byte packet 后写入按键状态。 |
 | GUI | +0x6a8 | 1 | `BDA_GUI_FILE_SELECTOR_OPEN_LIKE` | `0x80021334` | `addiu $sp, $sp, -0x5e0` | file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。 |
 | GUI | +0x6e0 | 2 | `BDA_GUI_GAME_DISPLAY_PUMP_LIKE` | `0x8005b844` | `addiu $sp, $sp, -0x20` | 触摸长按驱动的 game state pump；C200 无参数，先查 pen GPIO，阈值 0x1068 后写全局状态；有副作用。 |
-| SYS | +0x040 | 3 | `BDA_SYS_PACKAGE_SOUND_OP40_LIKE` | `0x8018921c` | `slti $v0, $a0, 0` | 打包音效 low-level op40；C200 clamp a0 到 0..0x62，写 sound id 全局状态并置 pending flag。 |
-| SYS | +0x044 | 1 | `BDA_SYS_PACKAGE_SOUND_OP44_LIKE` | `0x80189248` | `addiu $sp, $sp, -0x18` | 打包音效 low-level op44；C200 不读取参数，只调用内部 helper，无稳定 return value。 |
+| SYS | +0x040 | 3 | `BDA_SYS_AUDIO_ATTENUATION_SET_LIKE` | `0x8018921c` | `slti $v0, $a0, 0` | raw PCM attenuation setter；写 pending value，下一次 write 量化并应用。 |
+| SYS | +0x044 | 1 | `BDA_SYS_AUDIO_ATTENUATION_GET_LIKE` | `0x80189248` | `addiu $sp, $sp, -0x18` | raw PCM attenuation getter；返回 effective `0..96`、步进 3。 |
 | SYS | +0x050 | 1 | 未公开 | `0x8018ef04` | `jr $ra` | C200 中是立即返回 1 的 stub，不公开 SDK wrapper。 |
 | SYS | +0x054 | 1 | 未公开 | `0x8018ef0c` | `jr $ra` | C200 中是立即返回 1 的 stub，不公开 SDK wrapper。 |
 | SYS | +0x058 | 2 | `BDA_SYS_PACKAGE_SOUND_OP58_LIKE` | `0x8018ecb4` | `lui $v0, 0x804c` | 打包音效 init/start；C200 使用 a0=descriptor，成功置 0x804c4ba4 并返回 1。 |

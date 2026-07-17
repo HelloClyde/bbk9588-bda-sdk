@@ -271,6 +271,29 @@ hardware probe 已确认 BBVM 风格路径可以显示黑字白底文本；Thund
 清理。未完全解决的问题是独立 probe 的 frame 生命周期和退出清理。复用 BBVM 模型时
 要同时复刻外围 event/state 机，不要只复制局部 `0x66` cleanup。
 
+## gifctrl 内存资源和 timer 生命周期
+
+C200 在 `0x800ea3f4` 注册真实类名 `gifctrl`，draw object kind 为 `0x21`，window
+procedure 位于 `0x800ea1c0`。当前恢复出的关键路径：
+
+- `0x60`：仅当 style 低 4 bit 为 1 时分配 `0x340` byte decoder state；从
+  object `+0x80` 指向的 descriptor 读取 `+0x00` GIF data pointer 和 `+0x08`
+  timer id。descriptor `+0x04` 在该路径中没有被读取。
+- 初始化会用 `0x800de150(handle, timer_id, 1)` 注册 timer。timer callback 以
+  message `0x144` 回到该 control，且 `wparam` 必须等于 timer id。
+- `0x144` 通过 `0x800bce50` 获取 fixed draw context，调用 `0x800b0324` 解析并绘制
+  下一帧，再以 `0x800bd4b0` 成对释放 draw context。解析器识别 GIF trailer、image
+  descriptor、extension block 和 LZW data，并把 Graphic Control Extension delay
+  写入 state `+0x18`；delay 改变时由 `0x800de0f8` 重设 timer。
+- parser 返回 trailer 时，control 把当前 data pointer 重置为起始 pointer，形成循环；
+  parser 没有从 descriptor 接收 buffer 长度，因此损坏或截断数据存在越界风险。
+- `0x64` 先调用 `0x800de190(handle, timer_id)` 删除 timer，再释放 `0x340` byte state，
+  最后进入 default procedure。应用必须在关闭 parent frame 前销毁 gifctrl。
+
+8013 的 `GIFCTRL V2` probe 用内嵌双帧 GIF89a 验证了自动换帧；正式公开示例把
+descriptor `+0x04` 保持为 0，并同样完成播放、child destroy 和返回菜单。开发者 ABI、
+截图和日志见 `docs/verified/controls_api.md`。
+
 ## Message/属性调用
 
 `GUI+0x03c` 和 `GUI+0x040` 都像 handle/message/value/value 形状：
