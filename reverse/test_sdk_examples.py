@@ -19,7 +19,9 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/input/touch_press/TouchPress.bda", "Touch", 9),
         ("example/input/touch_crosshair/TouchCrosshair.bda", "TouchXY", 9),
         ("example/graphics/primitives/GraphicsPrimitives.bda", "Graphics", 9),
+        ("example/graphics/picture_render/PictureRender.bda", "PictureRaw", 9),
         ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
+        ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
     ]
 
     @classmethod
@@ -195,6 +197,26 @@ class SdkExamplesTest(unittest.TestCase):
     def test_graphics_primitives_example_builds(self) -> None:
         self.build_and_validate("example/graphics/primitives/graphics_primitives_demo.c", "Graphics")
 
+    def test_picture_render_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/graphics/picture_render/picture_render_demo.c", "PictureRaw"
+        )
+
+    def test_runtime_services_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/runtime_services/runtime_services_demo.c", "RuntimeSvc"
+        )
+
+    def test_gam4980_runtime_admission_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/gam4980_runtime_api_probe.c", "G498RunV1"
+        )
+
+    def test_gam4980_picture_admission_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/gam4980_picture_api_probe.c", "G498PicV1"
+        )
+
     def test_fs_find_example_builds(self) -> None:
         self.build_and_validate(
             "reverse/examples/fs_find_demo.c", "FsFind", ("reverse",)
@@ -356,6 +378,7 @@ class SdkExamplesTest(unittest.TestCase):
         sources = [
             "example/games/minesweeper/minesweeper_bda.c",
             "example/graphics/primitives/graphics_primitives_demo.c",
+            "example/graphics/picture_render/picture_render_demo.c",
             "example/input/touch_crosshair/touch_crosshair_demo.c",
         ]
         for path in sources:

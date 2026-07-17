@@ -29,6 +29,8 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 | 图形图元 | [graphics_primitives_api.md](verified/graphics_primitives_api.md) | 模拟器 |
 | 触摸坐标与窗口生命周期 | [touch_window_lifecycle_api.md](verified/touch_window_lifecycle_api.md) | 真机 |
 | 双缓冲、VX、色键、dirty rect、tick | [game_rendering_api.md](verified/game_rendering_api.md) | 模拟器 |
+| 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 模拟器 |
+| 原生尺寸 raw RGB565 picture 提交 | [picture_rendering_api.md](verified/picture_rendering_api.md) | 模拟器 |
 
 ![图形图元验证](verified/assets/graphics_primitives_bda_verified.png)
 
@@ -40,6 +42,8 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 - [公开 API 准入规则](verified/public_api_policy.md)
 - [窗口生命周期与触摸重绘](verified/touch_window_lifecycle_api.md)
 - [游戏离屏绘制、精灵和计时](verified/game_rendering_api.md)
+- [堆、文件定位与目录服务](verified/runtime_services_api.md)
+- [原始 RGB565 picture 动态提交](verified/picture_rendering_api.md)
 - [完整扫雷示例](minesweeper_v1.md)
 
 模拟器通过不自动等于真机通过。每篇文档会单独标出适用固件、验证环境和仍未覆盖的

@@ -435,7 +435,9 @@ example/input/key_polling/key_msgbox_demo.c            已验证的六键 packet
 example/input/touch_press/touch_press_demo.c           固件绑定的触摸按下/抬起轮询
 example/input/touch_crosshair/touch_crosshair_demo.c       真机 V23 两阶段绘制的无闪烁触摸定位测试
 example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图元和彩色像素绘制
+example/graphics/picture_render/picture_render_demo.c    已验证的原生尺寸 raw RGB565 动态提交
 example/games/minesweeper/minesweeper_bda.c            娱乐天地分类的 9x9 可玩扫雷
+example/system/runtime_services/runtime_services_demo.c  已验证的 heap、seek、目录和枚举闭环
 ```
 
 未达到公开标准的 ABI/build smoke 和动态研究 probe 统一放在 `reverse/examples/`，其中
@@ -476,6 +478,8 @@ reverse/examples/game_clip_intersect_probe.c V18 two-island clip region intersec
 reverse/examples/game_double_buffer_sprite_probe.c V19 two-surface sprite composition probe
 reverse/examples/game_color_key_sprite_probe.c V20 RGB565 magenta color-key sprite probe
 reverse/examples/game_dirty_rect_sprite_probe.c V21 three-surface dirty-rectangle sprite probe
+reverse/examples/gam4980_runtime_api_probe.c  gam4980 heap、seek 和目录正式化准入 probe
+reverse/examples/gam4980_picture_api_probe.c  gam4980 raw RGB565 picture 正式化准入 probe
 reverse/examples/touch_input_stage_probe_v12.c  最小文本与触摸 lifecycle 回归
 reverse/examples/touch_input_stage_probe_v13.c  object draw scope 真机回归
 reverse/examples/touch_input_stage_probe_v14.c  compatible context 方向实验

@@ -14,6 +14,7 @@
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
+typedef signed short s16;
 typedef int s32;
 typedef unsigned int bda_size_t;
 typedef void *bda_handle_t;
@@ -72,10 +73,38 @@ typedef struct bda_gui_input_packet {
     u8 bytes[BDA_GUI_INPUT_PACKET_SIZE];
 } bda_gui_input_packet_t;
 
+/* Raw RGB565 picture descriptor verified for native-size GUI+0x410 draws. */
+typedef struct bda_gui_picture {
+    void *pixels;
+    u32 width;
+    u32 height;
+    u32 stride_bytes;
+    u8 mode10;
+    u8 bits_per_pixel11;
+    u8 internal12;
+    u8 internal13;
+    const void *source_pixels;
+    s32 selected_index;
+} bda_gui_picture_t;
+
+#define BDA_FS_FIND_DATA_SIZE 0x220u
+
+typedef struct bda_fs_find_data {
+    void *cursor;
+    u32 size_or_aux;
+    u32 attr_or_flags;
+    u16 time;
+    u16 date;
+    s16 volume_index;
+    char name_or_path[0x20a];
+    u32 aux;
+} bda_fs_find_data_t;
+
 /* Private implementation details. Applications must use the wrappers below. */
 #define BDA_SDK_INTERNAL_GUI_TABLE_ADDR 0x81c00004u
 #define BDA_SDK_INTERNAL_FS_TABLE_ADDR  0x81c00008u
 #define BDA_SDK_INTERNAL_SYS_TABLE_ADDR 0x81c0000cu
+#define BDA_SDK_INTERNAL_MEM_TABLE_ADDR 0x81c00010u
 
 #define BDA_SDK_INTERNAL_GUI_MSGBOX            0x2b8u
 #define BDA_SDK_INTERNAL_GUI_EVENT_POLL        0x030u
@@ -105,6 +134,7 @@ typedef struct bda_gui_input_packet {
 #define BDA_SDK_INTERNAL_GUI_MOVE_TO           0x380u
 #define BDA_SDK_INTERNAL_GUI_CIRCLE            0x388u
 #define BDA_SDK_INTERNAL_GUI_RECTANGLE         0x38cu
+#define BDA_SDK_INTERNAL_GUI_RENDER_PICTURE    0x410u
 #define BDA_SDK_INTERNAL_GUI_CONTEXT_COPY      0x418u
 #define BDA_SDK_INTERNAL_GUI_DRAW_TEXT         0x4f0u
 #define BDA_SDK_INTERNAL_GUI_DRAW_VX           0x540u
@@ -114,12 +144,25 @@ typedef struct bda_gui_input_packet {
 #define BDA_GUI_COLOR_KEY_NONE 0u
 #define BDA_GUI_COLOR_KEY_MAGENTA_RGB565 0xf81fu
 
-#define BDA_SDK_INTERNAL_FS_OPEN  0x000u
-#define BDA_SDK_INTERNAL_FS_CLOSE 0x004u
-#define BDA_SDK_INTERNAL_FS_READ  0x008u
-#define BDA_SDK_INTERNAL_FS_WRITE 0x00cu
-#define BDA_SDK_INTERNAL_FS_TELL  0x014u
-#define BDA_SDK_INTERNAL_FS_ERROR 0x01cu
+#define BDA_SDK_INTERNAL_FS_OPEN       0x000u
+#define BDA_SDK_INTERNAL_FS_CLOSE      0x004u
+#define BDA_SDK_INTERNAL_FS_READ       0x008u
+#define BDA_SDK_INTERNAL_FS_WRITE      0x00cu
+#define BDA_SDK_INTERNAL_FS_SEEK       0x010u
+#define BDA_SDK_INTERNAL_FS_TELL       0x014u
+#define BDA_SDK_INTERNAL_FS_ERROR      0x01cu
+#define BDA_SDK_INTERNAL_FS_CHDIR      0x02cu
+#define BDA_SDK_INTERNAL_FS_MKDIR      0x030u
+#define BDA_SDK_INTERNAL_FS_FINDFIRST  0x03cu
+#define BDA_SDK_INTERNAL_FS_FINDNEXT   0x040u
+#define BDA_SDK_INTERNAL_FS_FINDCLOSE  0x044u
+
+#define BDA_SDK_INTERNAL_MEM_ALLOC 0x008u
+#define BDA_SDK_INTERNAL_MEM_FREE  0x00cu
+
+#define BDA_SEEK_SET 0
+#define BDA_SEEK_CUR 1
+#define BDA_SEEK_END 2
 
 #define BDA_SDK_INTERNAL_SYS_DELAY 0x080u
 
@@ -141,6 +184,10 @@ static inline void *bda_sdk_internal_fs(void) {
 
 static inline void *bda_sdk_internal_sys(void) {
     return bda_sdk_internal_table(BDA_SDK_INTERNAL_SYS_TABLE_ADDR);
+}
+
+static inline void *bda_sdk_internal_mem(void) {
+    return bda_sdk_internal_table(BDA_SDK_INTERNAL_MEM_TABLE_ADDR);
 }
 
 static inline int bda_sdk_internal_call1(void *table, u32 offset, u32 a0) {
@@ -197,6 +244,18 @@ static inline void *bda_memset(void *destination, int value, bda_size_t size) {
     return destination;
 }
 
+/* Freestanding helper; this does not call a firmware API. */
+static inline void *bda_memcpy(
+    void *destination, const void *source, bda_size_t size
+) {
+    u8 *out = (u8 *)destination;
+    const u8 *in = (const u8 *)source;
+    while (size-- != 0u) {
+        *out++ = *in++;
+    }
+    return destination;
+}
+
 /* Message box: GUI+0x2b8. */
 static inline int bda_msgbox_ex(
     void *parent, const char *title, const char *message, u32 flags
@@ -212,7 +271,24 @@ static inline int bda_msgbox(const char *title, const char *message) {
     return bda_msgbox_ex(0, title, message, 0);
 }
 
-/* File API: FS+0x000/+0x004/+0x008/+0x00c/+0x014/+0x01c. */
+/* Basic heap allocation: MEM+0x008/+0x00c. */
+static inline void *bda_alloc(bda_size_t size) {
+    typedef void *(*fn_t)(bda_size_t);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_mem(), BDA_SDK_INTERNAL_MEM_ALLOC
+    );
+    return fn(size);
+}
+
+static inline void bda_free(void *pointer) {
+    typedef void (*fn_t)(void *);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_mem(), BDA_SDK_INTERNAL_MEM_FREE
+    );
+    fn(pointer);
+}
+
+/* File API backed by the verified FS table entries below. */
 static inline int bda_fs_fopen_raw(const char *path, const char *mode) {
     typedef int (*fn_t)(const char *, const char *);
     fn_t fn = (fn_t)bda_sdk_internal_api(
@@ -263,6 +339,15 @@ static inline int bda_fs_write_raw(
     return bda_fs_fwrite_raw(buffer, 1u, size, file);
 }
 
+/* Successful seek returns the updated absolute file position. */
+static inline int bda_fs_seek_raw(int file, s32 offset, int whence) {
+    typedef int (*fn_t)(int, s32, int);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_SEEK
+    );
+    return fn(file, offset, whence);
+}
+
 static inline int bda_fs_tell_raw(int file) {
     typedef int (*fn_t)(int);
     fn_t fn = (fn_t)bda_sdk_internal_api(
@@ -277,6 +362,47 @@ static inline int bda_fs_error(int file) {
         bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_ERROR
     );
     return fn(file);
+}
+
+/* Directory API: FS+0x02c/+0x030/+0x03c/+0x040/+0x044. */
+static inline int bda_fs_chdir(const char *path) {
+    return bda_sdk_internal_call1(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_CHDIR, (u32)path
+    );
+}
+
+static inline int bda_fs_mkdir(const char *path) {
+    return bda_sdk_internal_call1(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_MKDIR, (u32)path
+    );
+}
+
+static inline void bda_fs_find_data_init(bda_fs_find_data_t *find_data) {
+    (void)bda_memset(find_data, 0, sizeof(*find_data));
+}
+
+static inline int bda_fs_findfirst(
+    const char *pattern, u32 attr, bda_fs_find_data_t *find_data
+) {
+    return bda_sdk_internal_call3(
+        bda_sdk_internal_fs(),
+        BDA_SDK_INTERNAL_FS_FINDFIRST,
+        (u32)pattern,
+        attr,
+        (u32)find_data
+    );
+}
+
+static inline int bda_fs_findnext(bda_fs_find_data_t *find_data) {
+    return bda_sdk_internal_call1(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_FINDNEXT, (u32)find_data
+    );
+}
+
+static inline int bda_fs_findclose(bda_fs_find_data_t *find_data) {
+    return bda_sdk_internal_call1(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_FINDCLOSE, (u32)find_data
+    );
 }
 
 /* Physical-key packet: GUI+0x5d4. */
@@ -631,6 +757,31 @@ static inline int bda_gui_draw_vx(
         0u,
         0u,
         (u32)vx_resource
+    );
+}
+
+/*
+ * Submit a zero-initialized raw RGB565 descriptor at its native dimensions.
+ * Set width, height, source_pixels and selected_index=-1. The verified path
+ * requires destination width/height to equal the descriptor dimensions.
+ */
+static inline int bda_gui_render_picture(
+    bda_handle_t context,
+    s32 x,
+    s32 y,
+    s32 width,
+    s32 height,
+    const bda_gui_picture_t *picture
+) {
+    return bda_sdk_internal_call6(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_RENDER_PICTURE,
+        (u32)context,
+        (u32)x,
+        (u32)y,
+        (u32)width,
+        (u32)height,
+        (u32)picture
     );
 }
 
