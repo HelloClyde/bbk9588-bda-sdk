@@ -13,6 +13,6 @@ int bda_main(void) {
     bda_file_selector_init_like(&selector, g_path, "gba", g_dir_state, "Select game");
 
     bda_gui_file_selector_open_like(1);
-    bda_gui_file_selector_update_like();
+    bda_gui_file_selector_update_like(&selector);
     return 0;
 }

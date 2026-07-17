@@ -25,3 +25,4 @@ sdk/include/bda_sdk.h  动态验证后公开的稳定 API
 - 游戏绘图与计时：[game_rendering_api.md](verified/game_rendering_api.md)
 - 堆、seek 与目录服务：[runtime_services_api.md](verified/runtime_services_api.md)
 - 原始 RGB565 picture 提交：[picture_rendering_api.md](verified/picture_rendering_api.md)
+- 系统文件选择器：[file_selector_api.md](verified/file_selector_api.md)

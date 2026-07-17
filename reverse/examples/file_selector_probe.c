@@ -44,14 +44,14 @@ int bda_main(void) {
     selector.extensions = "gba";
     selector.dir_state = g_dir_state;
     selector.title = "Select game";
-    selector.sentinel1c = -1;
+    selector.selected_index = -1;
     selector.sentinel20 = -1;
     selector.sentinel24 = -1;
 
     int r_open = bda_gui_file_selector_open_like(1);
     int r_update = 0;
     for (int i = 0; i < 16; ++i) {
-        r_update = bda_gui_file_selector_update_like();
+        r_update = bda_gui_file_selector_update_like(&selector);
         if (g_path[0] || r_update != 0) {
             break;
         }

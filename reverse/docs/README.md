@@ -199,7 +199,7 @@ int bda_gui_state_query_like(void);
 int bda_gui_screen_width_like(void);
 int bda_touch_pressed_9588(void);
 int bda_gui_event_fetch_like(bda_gui_event_fetch_like_t *out_event);
-int bda_gui_file_selector_update_like(void);
+int bda_gui_file_selector_update_like(bda_file_selector_like_t *selector);
 void *bda_gui_list_nth_like(void *head, s32 index);
 void bda_gui_list_free_like(void *head);
 int bda_gui_decode_bmp_like(void *owner, bda_picture_like_t *out, const char *path, void **out_source_buffer);
@@ -438,6 +438,7 @@ example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图�
 example/graphics/picture_render/picture_render_demo.c    已验证的原生尺寸 raw RGB565 动态提交
 example/games/minesweeper/minesweeper_bda.c            娱乐天地分类的 9x9 可玩扫雷
 example/system/runtime_services/runtime_services_demo.c  已验证的 heap、seek、目录和枚举闭环
+example/system/file_selector/file_selector_demo.c       已验证的系统模态文件选择器
 ```
 
 未达到公开标准的 ABI/build smoke 和动态研究 probe 统一放在 `reverse/examples/`，其中
@@ -495,6 +496,7 @@ reverse/examples/touch_input_stage_probe_v23.c  真机无闪烁的完整 guard �
 reverse/examples/window_text_bbvm_black_probe.c  BBVM 风格 text draw lifecycle probe
 reverse/examples/showcase_stage_probe.c      Element 风格 display 回归链路
 reverse/examples/file_selector_probe.c       file selector open/update smoke
+reverse/examples/file_selector_admission_probe.c  file selector 公开准入闭环
 ```
 
 `minesweeper_bda.c` 已重写为不依赖原机模板或绝对地址的 standalone 9x9 扫雷。

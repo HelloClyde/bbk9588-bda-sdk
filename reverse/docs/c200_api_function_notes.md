@@ -1815,8 +1815,8 @@ system function VA：`0x80021334`
 - SDK 暴露 `bda_gui_file_selector_open_like(mode)`，不要把 selector descriptor
   pointer 传给 open。
 - `bda_file_selector_init_like()` 只负责复刻 GAMEBOY 风格的 selector 描述符初始化；
-  open/update/close 仍走系统全局 selector 生命周期。
-- selector descriptor 中 `sentinel1c/sentinel20/sentinel24/sentinel34/sentinel38/sentinel48`
+  随后的 `GUI+0x6c8` 必须显式传入该 descriptor。
+- selector descriptor 中 `selected_index/sentinel20/sentinel24/sentinel34/sentinel38/sentinel48`
   按 GAMEBOY 风格初始化为 `-1`，`list_limit40` 初始化为 `0x1000`，
   `result64` 初始化为 `0`；不要把这些字段当作无用 padding 删除。
 - `mode` 的语义还未完整命名，开发代码应优先沿用原机 GAMEBOY 路径。
@@ -1838,19 +1838,24 @@ GUI+0x6c8 -> 0x80042fec
 - `GUI+0x6bc` 表 entry 没有设置参数，直接调用 `0x8003e868`。该 helper 读取
   `a0=head`，沿每个节点的 `+0x04` next pointer 遍历，先释放 `node+0x00`
   data pointer，再释放 node 本身。`head == NULL` 是 no-op。
-- `GUI+0x6c8` 表 entry 只有栈帧和一次 `jal 0x80040848`，不读取 `a0`。
-- 早期 SDK 把 `GUI+0x6c8` 包成 `update(selector)`，并把 `GUI+0x6b8` 包成
-  无参数 `get()`，还把 `GUI+0x6bc` 包成无参数 `close()`；这些 ABI 都与 C200
-  table entry 不符。
+- `GUI+0x6c8` 表 entry 没有改写 `a0`，而是把调用者传入的 descriptor pointer
+  原样交给 `0x80040848`。该内部函数在 `0x80040864` 保存 `a0`，随后读取
+  descriptor 的 path/filter/title/status/flags 字段。
+- `GAMEBOY.BDA` 的 `0x81c0fc7c` 调用点在 `jalr` delay slot 显式执行
+  `move a0,s2`，其中 `s2=sp+0x610` 是 descriptor。
+- 早期 SDK 对 `GUI+0x6b8/+0x6bc` 的无参数 `get()/close()` 命名错误；二者实际
+  分别接收 `head,index` 和 `head`。
 
 开发建议：
 
-- SDK 现在暴露 `bda_gui_file_selector_update_like(void)`。
+- 研究 SDK 暴露 `bda_gui_file_selector_update_like(&descriptor)`；公开 SDK 使用
+  `bda_gui_select_file()` 封装整个模态生命周期。
 - `GUI+0x6b8` 改名为 low-level `bda_gui_list_nth_like(head, index)`。
 - `GUI+0x6bc` 改名为 low-level `bda_gui_list_free_like(head)`；不要再调用旧的
   no-arg file selector close wrapper。
-- 真正的文件选择
-  结果路径仍需继续从 `0x800401b0/0x8004028c` 及 `0x80823cc0` global state 逆向。
+- modal 返回后 descriptor `+0x10` 是 list head，`+0x1c` 是 selected index；
+  `GUI+0x6b8` 返回节点的首 word 指向文件名。当前目录仍在 descriptor `+0x00`
+  path buffer 中，公开 wrapper 在释放 list 前拼成完整路径。
 
 ### GUI +0x35c: `BDA_GUI_OBJECT_BIND_LIKE`
 

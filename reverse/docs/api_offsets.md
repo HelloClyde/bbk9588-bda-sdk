@@ -525,10 +525,9 @@ GAMEBOY.BDA 使用 high-level file selector，不是直接用 FS 枚举：
 
 ```text
 GUI +0x6a8  open/session 类；a0=mode，不是 selector descriptor pointer
-GUI +0x6c8  update/pump 类
+GUI +0x6c8  modal selector；a0=descriptor pointer
 GUI +0x6b8  list nth helper 类；参数是 head/index，不是无参数 selector get
 GUI +0x6bc  linked list free helper；a0=head，不是无参数 selector close
-GUI +0x6c8  update/pump 类；C200 table entry 无参数
 ```
 
 选择器描述符开头：
@@ -538,9 +537,9 @@ GUI +0x6c8  update/pump 类；C200 table entry 无参数
 +0x04  extension filter string，例如 "gb;gbc"
 +0x08  directory/current-state buffer
 +0x0c  title string，例如 GBK "请选择游戏文件"
-+0x10/+0x14 internal 字段，默认 0
-+0x18 status 字段，默认 0
-+0x1c/+0x20/+0x24 sentinel 字段，GAMEBOY 风格初始化为 -1
++0x10 list head output；+0x14 internal，默认 0
++0x18 status output，默认 0
++0x1c selected index output；+0x20/+0x24 sentinel，初始化为 -1
 +0x34/+0x38 sentinel 字段，初始化为 -1
 +0x40 list_limit40，原机 selector/list 描述符中见到 0x1000
 +0x48 sentinel48，原机 selector/list 描述符中见到 -1
@@ -552,8 +551,9 @@ selector text color 修正来自更完整的 struct 初始化，不是 RES+0x094
 字段名里的 `internal*` 仍表示只确认 offset 和初始化值，不是应用级配置项。
 当前不公开无参数 selector get wrapper；`GUI+0x6b8` 在 C200 中读取的是
 `a0=head, a1=index`，更像链表第 N 项 helper。
-`GUI+0x6a8` 的 descriptor/frame 在系统内部 stack/global 状态中构造，调用者只传
-`mode`。
+`GUI+0x6a8` 只接收 `mode`；descriptor 必须传给随后的 `GUI+0x6c8`。选择完成后，
+`+0x10` 是结果链表头，`+0x1c` 是选中索引，节点 `+0x00` 是文件名。调用者必须在
+`GUI+0x6bc(head)` 前复制或拼接结果。
 
 ## RES 表
 

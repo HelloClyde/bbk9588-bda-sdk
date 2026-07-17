@@ -353,10 +353,10 @@ typedef struct bda_file_selector_like {
     const char *extensions;
     void *dir_state;
     const char *title;
-    u32 internal10;
+    void *list_head;
     u32 internal14;
-    u32 status18;
-    s32 sentinel1c;
+    s32 status;
+    s32 selected_index;
     s32 sentinel20;
     s32 sentinel24;
     u32 internal28;
@@ -1878,8 +1878,7 @@ static inline int bda_gui_decode_jpeg_like(void *owner, bda_picture_like_t *out,
 }
 
 /*
- * file selector open/session wrapper。C200 只从 a0 读取 mode，不接收 selector/descriptor
- * pointer；descriptor 和 modal frame 都由系统内部 stack/global 状态构造。
+ * file selector open/session wrapper。C200 从 a0 读取 mode，准备对应的 selector session。
  * 已确认 mode 0/1/2/3 会选择不同的内部状态 byte，return value 来自对应 selector 状态。
  */
 static inline int bda_gui_file_selector_open_like(u32 mode) {
@@ -1887,11 +1886,15 @@ static inline int bda_gui_file_selector_open_like(u32 mode) {
 }
 
 /*
- * GUI+0x6c8 的 C200 table entry 无参数，只调用内部 selector pump helper。
- * selector 描述符仍由 open/update 内部全局状态间接使用，不通过 a0 传入。
+ * GUI+0x6c8 把 a0=selector 原样传入内部 modal selector helper。GAMEBOY.BDA
+ * 在 jalr delay slot 中显式设置 a0，C200 内部 0x80040864 保存并读取该指针。
  */
-static inline int bda_gui_file_selector_update_like(void) {
-    return bda_call0(bda_gui_table(), BDA_GUI_FILE_SELECTOR_UPDATE_LIKE);
+static inline int bda_gui_file_selector_update_like(
+    bda_file_selector_like_t *selector
+) {
+    return bda_call1(
+        bda_gui_table(), BDA_GUI_FILE_SELECTOR_UPDATE_LIKE, (u32)selector
+    );
 }
 
 /*
@@ -1992,8 +1995,8 @@ static inline void bda_res_get_state_like(bda_res_state_like_t *out_state) {
 }
 
 /*
- * file selector descriptor 初始化。这个 helper 只填 struct；open/update/close 仍通过
- * file_selector_open/update/close 这组全局 selector wrapper 完成。
+ * file selector descriptor 初始化。这个 helper 只填 struct；调用顺序仍是
+ * file_selector_open(mode) -> file_selector_update(&descriptor)，最后按需释放 list_head。
  */
 static inline void bda_file_selector_init_like(
     bda_file_selector_like_t *selector,
@@ -2007,7 +2010,7 @@ static inline void bda_file_selector_init_like(
     selector->extensions = extensions;
     selector->dir_state = dir_state;
     selector->title = title;
-    selector->sentinel1c = -1;
+    selector->selected_index = -1;
     selector->sentinel20 = -1;
     selector->sentinel24 = -1;
     selector->sentinel34 = (u32)-1;

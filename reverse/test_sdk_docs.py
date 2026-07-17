@@ -37,6 +37,7 @@ class SdkDocsTest(unittest.TestCase):
             verified_docs,
             [
                 "README.md",
+                "file_selector_api.md",
                 "fs_write_api.md",
                 "game_rendering_api.md",
                 "graphics_primitives_api.md",
@@ -519,6 +520,47 @@ class SdkDocsTest(unittest.TestCase):
             "picture_render_probe_log.txt",
         ]:
             self.assertTrue((ROOT / "docs/verified/assets" / asset).is_file())
+
+    def test_file_selector_is_public_and_documented(self) -> None:
+        header = read("sdk/include/bda_sdk.h")
+        verified = read("docs/verified/file_selector_api.md")
+        verified_index = read("docs/verified/README.md")
+        policy = read("docs/verified/public_api_policy.md")
+        example = read("example/system/file_selector/file_selector_demo.c")
+
+        for name in [
+            "BDA_FILE_SELECTOR_PATH_SIZE",
+            "BDA_FILE_SELECTOR_ERROR",
+            "BDA_FILE_SELECTOR_CANCELLED",
+            "BDA_FILE_SELECTOR_SELECTED",
+            "bda_file_selector_t",
+            "bda_gui_select_file",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, verified)
+
+        for offset in [
+            "BDA_SDK_INTERNAL_GUI_FILE_SELECTOR_OPEN 0x6a8u",
+            "BDA_SDK_INTERNAL_GUI_LIST_NTH           0x6b8u",
+            "BDA_SDK_INTERNAL_GUI_LIST_FREE          0x6bcu",
+            "BDA_SDK_INTERNAL_GUI_FILE_SELECTOR_RUN  0x6c8u",
+        ]:
+            self.assertIn(offset, header)
+
+        self.assertIn('"A:\\\\gameboy\\\\"', header)
+        self.assertIn('"gb;gbc"', header)
+        self.assertIn("GUI+0x6bc(list_head)", verified)
+        self.assertIn("A:\\gameboy\\SELECT.GB", verified)
+        self.assertIn("file_selector_api.md", verified_index + policy)
+        self.assertIn("bda_gui_select_file", example)
+        self.assertNotIn("bda_research_sdk.h", example)
+        self.assertNotIn("_like", example)
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/file_selector_verified.png").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/file_selector_result_verified.png").is_file()
+        )
 
     def test_gui_lifecycle_boundary_is_documented_near_public_wrappers(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -2106,14 +2148,15 @@ class SdkDocsTest(unittest.TestCase):
         c200_notes = read("reverse/docs/c200_api_function_notes.md")
         self.assertIn("#define BDA_GUI_LIST_NTH_LIKE", header)
         self.assertIn("#define BDA_GUI_LIST_FREE_LIKE", header)
-        self.assertIn("bda_gui_file_selector_update_like(void)", header)
+        self.assertIn("bda_gui_file_selector_update_like(\n    bda_file_selector_like_t *selector", header)
         self.assertIn("bda_gui_list_nth_like(void *head, s32 index)", header)
         self.assertIn("bda_gui_list_free_like(void *head)", header)
-        self.assertIn("bda_gui_file_selector_update_like(void);", readme)
+        self.assertIn("bda_gui_file_selector_update_like(bda_file_selector_like_t *selector);", readme)
         self.assertIn("bda_gui_list_nth_like(void *head, s32 index);", readme)
         self.assertIn("bda_gui_list_free_like(void *head);", readme)
         self.assertIn("不是无参数 get-result", fs_notes)
-        self.assertIn("不读取 `a0`", c200_notes)
+        self.assertIn("a0=selector descriptor", fs_notes)
+        self.assertIn("0x80040864", c200_notes)
         self.assertIn("不是无参数“获取文件选择结果”", c200_notes)
         self.assertIn("GUI+0x6bc -> 0x80042ebc", c200_notes)
         self.assertIn("0x8003e868", c200_notes + "\n" + fs_notes)
@@ -2125,7 +2168,8 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("bda_gui_file_selector_close_like", header + readme + fs_notes)
         for source in (ROOT / "reverse" / "examples").glob("file_selector*.c"):
             text = source.read_text(encoding="utf-8")
-            self.assertNotIn("bda_gui_file_selector_update_like(&", text, source)
+            if "bda_gui_file_selector_update_like(" in text:
+                self.assertIn("bda_gui_file_selector_update_like(&selector)", text, source)
             self.assertNotIn("bda_gui_file_selector_get_like", text, source)
             self.assertNotIn("bda_gui_file_selector_close_like", text, source)
 
@@ -2137,8 +2181,10 @@ class SdkDocsTest(unittest.TestCase):
         catalog_tool = read("reverse/bda_api_catalog.py")
         selector_probe = read("reverse/examples/file_selector_probe.c")
         self.assertIn("bda_gui_file_selector_open_like(u32 mode)", header)
-        self.assertIn("只从 a0 读取 mode", header)
-        self.assertIn("s32 sentinel1c;", header)
+        self.assertIn("从 a0 读取 mode", header)
+        self.assertIn("void *list_head;", header)
+        self.assertIn("s32 status;", header)
+        self.assertIn("s32 selected_index;", header)
         self.assertIn("s32 sentinel20;", header)
         self.assertIn("s32 sentinel24;", header)
         self.assertIn("u32 sentinel34;", header)
@@ -2146,14 +2192,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("u32 list_limit40;", header)
         self.assertIn("s32 sentinel48;", header)
         self.assertIn("u32 result64;", header)
-        self.assertIn("selector->sentinel1c = -1;", header)
+        self.assertIn("selector->selected_index = -1;", header)
         self.assertIn("selector->list_limit40 = 0x1000;", header)
         self.assertIn("selector->result64 = 0;", header)
         self.assertIn("不是 descriptor pointer", fs_notes)
         self.assertIn("不是无害 padding", fs_notes + c200_notes)
         self.assertIn("list_limit40", api_offsets + c200_notes)
         self.assertIn("result64", api_offsets + c200_notes)
-        self.assertIn("selector.sentinel1c = -1;", selector_probe)
+        self.assertIn("selector.selected_index = -1;", selector_probe)
         self.assertIn("a0=mode", api_offsets)
         self.assertIn("GUI +0x6a8: `BDA_GUI_FILE_SELECTOR_OPEN_LIKE`", c200_notes)
         self.assertIn("system function VA：`0x80021334`", c200_notes)
