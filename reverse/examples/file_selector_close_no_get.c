@@ -14,11 +14,11 @@ int bda_main(void) {
     selector.extensions = "gba";
     selector.dir_state = g_dir_state;
     selector.title = "Select game";
-    selector.sentinel1c = -1;
+    selector.selected_index = -1;
     selector.sentinel20 = -1;
     selector.sentinel24 = -1;
 
     bda_gui_file_selector_open_like(1);
-    bda_gui_file_selector_update_like();
+    bda_gui_file_selector_update_like(&selector);
     return 0;
 }

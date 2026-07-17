@@ -244,7 +244,7 @@ GAMEBOY.BDA 通过 GUI table 使用 high-level file selector，不是直接 FS e
 GUI+0x6a8  open/session-like；a0=mode，不是 descriptor pointer
 GUI+0x6b8  list nth helper-like，不是无参数 get-result
 GUI+0x6bc  list free helper；a0=head，不是无参数 selector close
-GUI+0x6c8  update/run-like，C200 table entry 无参数
+GUI+0x6c8  modal run-like；a0=selector descriptor
 ```
 
 `GUI+0x6a8` 会调用 `0x8001f344` 准备内部 selector 状态，把 `mode` 写到全局
@@ -256,8 +256,8 @@ selector descriptor 不只是 path/title/filter。硬件测试显示，short des
 但 directory text 黑底黑字不可读；按 GAMEBOY 风格填完整字段后颜色正常。因此
 `bda_file_selector_like_t` 里的 `sentinel*`、`list_limit40`、`result64` 和
 `internal*` 字段实际参与 display/theme/state 初始化，不是无害 padding。
-当前字段名为：`out_path`、`extensions`、`dir_state`、`title`、`internal10`、
-`internal14`、`status18`、`sentinel1c`、`sentinel20`、`sentinel24`、
+当前字段名为：`out_path`、`extensions`、`dir_state`、`title`、`list_head`、
+`internal14`、`status`、`selected_index`、`sentinel20`、`sentinel24`、
 `internal28`、`internal2c`、`internal30`、`sentinel34`、`sentinel38`、
 `internal3c`、`list_limit40`、`internal44`、`sentinel48`、`internal4c`、
 `internal50`、`internal54`、`internal58`、`internal5c`、`internal60`、
@@ -266,6 +266,11 @@ selector descriptor 不只是 path/title/filter。硬件测试显示，short des
 读取的是 `a0=head, a1=index`，更像链表第 N 项 helper。
 同样，`GUI+0x6bc` 会把 `a0=head` 传给 `0x8003e868` 释放链表节点和节点 data，
 不是无参数 selector close。
+
+`GAMEBOY.BDA` 在 `0x81c0fc7c` 的 `jalr` delay slot 显式执行 `move a0,s2`，其中
+`s2` 是 selector descriptor。C200 的 `GUI+0x6c8` entry 虽然自己不改写 `a0`，但会
+把它原样传给 `0x80040848`；内部在 `0x80040864` 保存该指针，并从 descriptor
+`+0x00/+0x04/+0x0c/+0x18/+0x30` 读取路径、后缀、标题、状态和 flags。
 
 这个 color 修正与 `RES+0x094` 无关。后续 RES094
 probe 显示该 table entry 更像 trace/log stub，不会可见地加载 skin。

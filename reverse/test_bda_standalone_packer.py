@@ -50,6 +50,18 @@ class StandalonePackerTest(unittest.TestCase):
         self.assertNotIn("bda_gui_touch_position_like", header_text)
         self.assertNotIn("bda_gui_create_window_like", header_text)
         self.assertNotIn("bda_fs_mkdir_like", header_text)
+        for public_name in [
+            "bda_alloc",
+            "bda_free",
+            "bda_fs_seek_raw",
+            "bda_fs_mkdir",
+            "bda_fs_chdir",
+            "bda_fs_findfirst",
+            "bda_fs_findnext",
+            "bda_fs_findclose",
+            "bda_gui_render_picture",
+        ]:
+            self.assertIn(public_name, header_text)
 
     def test_header_is_built_from_firmware_constants(self) -> None:
         data = bytearray(b"\0" * 0x200)

@@ -134,7 +134,7 @@
 | GUI | +0x6b8 | `BDA_GUI_LIST_NTH_LIKE` | 23 | 18 | 中 | 链表第 N 项 helper；C200 使用 a0=head、a1=index，不是无参数 selector get。 |
 | GUI | +0x6bc | `BDA_GUI_LIST_FREE_LIKE` | 37 | 18 | 中 | linked list free helper；C200 将 a0=head 传给 0x8003e868，释放节点和节点 data，不是无参数 selector close。 |
 | GUI | +0x6c0 | `BDA_GUI_TOUCH_POSITION_LIKE` | 4 | 3 | 中 | raw-to-logical 触摸坐标转换器；a0/a1 为 u16 output pointer，结果裁剪到 240x320；静态 ABI 已定位，直接 polling 的动态验证无结论，不列入 verified。 |
-| GUI | +0x6c8 | `BDA_GUI_FILE_SELECTOR_UPDATE_LIKE` | 17 | 13 | 中 | file selector 更新/pump；C200 table entry 无参数。 |
+| GUI | +0x6c8 | `BDA_GUI_FILE_SELECTOR_UPDATE_LIKE` | 17 | 13 | 中 | file selector modal run；a0=descriptor，C200 entry 将它原样传给内部 helper。 |
 | GUI | +0x6d8 | `BDA_GUI_TICK_COUNT_25MS_LIKE` | 4 | 1 | 中 | 25 ms raw tick counter；无参数返回 u32，C200 定时 IRQ 递增，BBVM 用无符号差值乘 25 转为毫秒。 |
 | GUI | +0x6e0 | `BDA_GUI_GAME_DISPLAY_PUMP_LIKE` | 51 | 19 | 中 | 触摸长按驱动的 game state pump；C200 无参数，先查 pen GPIO，阈值 0x1068 后写全局状态；有副作用。 |
 | GUI | +0x72c | `BDA_GUI_STATE_QUERY_LIKE` | 9 | 6 | 中 | GAMEBOY 状态查询；C200 table entry 无参数并更新内部状态 word。 |

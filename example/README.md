@@ -16,7 +16,10 @@ input/key_polling/        key_msgbox_demo.c + KeyInput.bda
 input/touch_press/        touch_press_demo.c + TouchPress.bda
 input/touch_crosshair/    touch_crosshair_demo.c + TouchCrosshair.bda
 graphics/primitives/      graphics_primitives_demo.c + GraphicsPrimitives.bda
+graphics/picture_render/  picture_render_demo.c + PictureRender.bda
 games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
+system/runtime_services/  runtime_services_demo.c + RuntimeServices.bda
+system/file_selector/     file_selector_demo.c + FileSelector.bda
 ```
 
 | 示例 | 能力 | 验证环境 | 说明 |
@@ -27,7 +30,10 @@ games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
 | `input/touch_press/` | 触摸按下、抬起状态 | 真机 | [API 文档](../docs/verified/touch_press_api.md) |
 | `input/touch_crosshair/` | 触摸坐标、无闪烁重绘、窗口退出 | 真机 | [生命周期教程](../docs/verified/touch_window_lifecycle_api.md) |
 | `graphics/primitives/` | 点、线、圆、矩形和文字 | 模拟器 | [API 文档](../docs/verified/graphics_primitives_api.md) |
+| `graphics/picture_render/` | 原生尺寸 raw RGB565 动态提交 | 模拟器 | [API 文档](../docs/verified/picture_rendering_api.md) |
 | `games/minesweeper/` | 双缓冲、VX、色键、dirty rect、tick | 模拟器 | [游戏绘图教程](../docs/verified/game_rendering_api.md) |
+| `system/runtime_services/` | heap、seek、目录和枚举 | 模拟器 | [API 文档](../docs/verified/runtime_services_api.md) |
+| `system/file_selector/` | 默认目录、后缀过滤和完整路径返回 | 模拟器 | [API 文档](../docs/verified/file_selector_api.md) |
 
 ## 构建
 

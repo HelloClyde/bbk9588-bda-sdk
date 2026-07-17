@@ -37,12 +37,12 @@ int bda_main(void) {
     selector.extensions = "gba";
     selector.dir_state = g_dir_state;
     selector.title = "Select game";
-    selector.sentinel1c = -1;
+    selector.selected_index = -1;
     selector.sentinel20 = -1;
     selector.sentinel24 = -1;
 
     bda_gui_file_selector_open_like(1);
-    int r_update = bda_gui_file_selector_update_like();
+    int r_update = bda_gui_file_selector_update_like(&selector);
     void *nth0 = bda_gui_list_nth_like(0, 0);
 
     char *out = g_message;
