@@ -8,6 +8,8 @@
 ## 接口
 
 ```c
+#include "bda_dialogs.h"
+
 #define BDA_FILE_SELECTOR_ERROR     (-1)
 #define BDA_FILE_SELECTOR_CANCELLED  0
 #define BDA_FILE_SELECTOR_SELECTED   1
@@ -37,7 +39,7 @@ int bda_gui_select_file(
 ## 用法
 
 ```c
-#include "bda_sdk.h"
+#include "bda_dialogs.h"
 
 static bda_file_selector_t selector;
 

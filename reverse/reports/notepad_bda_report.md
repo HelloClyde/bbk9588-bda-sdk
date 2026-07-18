@@ -65,6 +65,79 @@ MEM  0x81c18710
   更像是记事本专用皮肤或 UI 片段。
 - `_BLUE`/`_BLACK` 成对出现，说明应用至少支持两套 shell 主题。
 
+## 控件皮肤绑定
+
+记事本没有依赖 `medit` / `listbox` 的默认灰色外观，也没有一个通用的 theme
+descriptor。它先按 `GUI+0x7c0()` 的结果选择资源包：
+
+```text
+mode != 1:
+  auxiliary = load("A:\\应用\\数据\\shell\\EnoteBlueSearch.dlx")
+  text_skin = load("A:\\应用\\数据\\shell\\text_A.dlx")
+
+mode == 1:
+  text_skin = load("A:\\应用\\数据\\shell\\text_B.dlx")
+  black_skin = load("A:\\应用\\数据\\shell\\enote_black_add.dlx")
+  corner_skin = load("A:\\应用\\数据\\shell\\enote_corner.dlx")
+```
+
+`0x81c004bc` 的 DLX helper 使用 **1 基资源号**；`dlx_inspect.py` 的报告使用 0 基
+`#index`。因此下面这条初始化：
+
+```text
+0x81c10f10: get_dlx_resource(12, text_skin)
+0x81c10f24: g_edit_background = result
+```
+
+取得的是 `text_A.dlx` / `text_B.dlx` 报告中的 `#11`，不是 `#12`。两者都是
+`240x265` VX 页面底图。蓝色版本是浅蓝渐变；黑色模式还会从
+`enote_black_add.dlx` 取 1 基资源 2，也就是报告中的 `#01` 黑色页面，并覆盖前一个
+背景。
+
+标题和正文 `medit` 创建后立即接收背景资源：
+
+```text
+GUI+0x040(title_medit, 0xf0dd, g_edit_background, 0)
+GUI+0x040(body_medit,  0xf0dd, g_edit_background, 0)
+
+if (mode == 1) {
+    GUI+0x040(control, 0xf0dd, black_background, 0)
+    stock_object = GUI+0x2fc(15)
+    GUI+0x040(control, 0xf0df, 1, stock_object)
+}
+```
+
+C200 固件确认了这不是字体绑定：
+
+- 单行 edit 路径 `0x800e5924` 把 `0xf0dd` 的 `wparam` 保存到私有状态
+  `+0x1004`；`0x800e5384` / `0x800e5f74` 在重绘时取出并交给 VX 绘制函数
+  `0x800e2528`。
+- `medit` 路径 `0x800f8360` 把同一参数保存到私有状态 `+0x4c4`；
+  `0x800f9790..0x800f97d4` 先按 control rect 建立 clip，再用
+  `0x800e2528(draw, 0, 0, background_vx, -1)` 绘制背景。
+- `0xf0df` 是 `medit` 的分槽绘制对象设置消息。记事本黑色主题使用 slot 1 和
+  `GUI+0x2fc(15)`；它不是背景图片消息。
+
+列表框使用另一组类私有消息。黑色主题会发送：
+
+```text
+GUI+0x040(listbox, 0xf1b4, black_background, 0)
+GUI+0x040(listbox, 0xf1b5, 1, GUI+0x2fc(15))
+```
+
+C200 的 listbox 过程在 `0x800e9350` 把 `0xf1b4` 参数保存到私有状态 `+0x4c`，
+`0x800e9d74..0x800e9d94` 的重绘路径再取出它并调用 `0x800e2528`；`0xf1b5`
+用于选择分槽绘制对象。由此可见，控件皮肤不是由 `GUI+0x1a4` 的 `extra` 统一传入；
+不同 class 有不同消息协议。记事本的标题栏、工具栏和其他装饰还会由父窗口直接调用
+VX/region 绘制 API 贴 DLX 资源，很多看起来像按钮的区域并不是系统 `button` control。
+
+`reverse/examples/control_skin_binding_probe.c` 构建出的 `ControlSkinBindingV2.bda`
+随后在 8013 独立运行，动态确认了 `0xf0dd`、`0xf0df`、`0xf1b4`、`0xf1b5`：浅蓝和
+黑色 VX 背景都实际参与重绘，黑色 `medit/listbox` 使用 slot 1 + draw object 15，
+列表触摸选择正常。退出时依次销毁控件、关闭 frame、释放两块 VX，日志最终为
+`RESULT=PASS`。这四条已按精确 class 边界进入 `sdk/include/bda_controls.h`；异常 VX、
+其他 slot/object 和 `edit` 的动态覆盖仍不在公开范围。
+
 ## API 使用概览
 
 `记事本.bda` 当前扫描器分类出 955 个运行时表间接调用。最强的调用组：
@@ -200,7 +273,7 @@ GUI+0x17c  final close/release
 2. 列表、编辑、搜索、确认对话框分别对应哪些窗口过程。
 3. GUI 函数表 `+0x138`、`+0x46c` 以及 bitmap/control 辅助调用的参数布局。
 4. 记事本是否使用与 Element 相同的 `0x00b1` 重绘/输入消息语义。
-5. `medit` 初始化消息 `0xf0dd` 第三个参数所指对象的正式语义。
+5. `medit` / `listbox` 皮肤消息对异常 VX、其他 slot 和 draw object 的行为。
 
 ## 后续静态任务
 

@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "bda_dialogs.h"
 
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {

@@ -294,6 +294,24 @@ procedure 位于 `0x800ea1c0`。当前恢复出的关键路径：
 descriptor `+0x04` 保持为 0，并同样完成播放、child destroy 和返回菜单。开发者 ABI、
 截图和日志见 `docs/verified/controls_api.md`。
 
+## 系统帮助页 `GUI+0x5a8`
+
+`BDA_GUI_HELP_PAGE_LIKE` 对应 `GUI+0x5a8`，研究 wrapper 为：
+
+```c
+int bda_gui_help_page_like(void *parent, const char *document);
+```
+
+原始 `document` 格式是 `title\r\nbody`。C200 目标 `0x800db8d8` 通过首个 CRLF
+拆分标题和正文，创建标准 Frame 与多行正文控件，并在函数内部运行同步消息循环。
+它使用 28 字节标题缓冲，原始调用者必须把标题限制在 27 字节以内。元素周期表、
+记事本、名片、电子图书等原版 BDA 都调用该表项。
+
+8013 的 `help_page_probe.c` 和 `help_page_parent_probe.c` 已分别验证 `parent=0` 与注册
+Frame parent 的显示、退出键关闭和返回链。安全的公开 `title/body` 封装已经进入
+`sdk/include/bda_dialogs.h`，开发者文档见 `docs/verified/help_page_api.md`。问号按钮仍由
+应用自己的 control/command/touch 分支触发，`GUI+0x5a8` 不会给父窗口自动添加按钮。
+
 ## Message/属性调用
 
 `GUI+0x03c` 和 `GUI+0x040` 都像 handle/message/value/value 形状：
@@ -319,6 +337,23 @@ GUI+0x040(control, 0xf0c5, max_length, 0)            set max length
 正文容量/上限为 `0x19000`，标题 get-text 容量为 `0x14`，标题上限为 `0x16`。
 这些数字是 `GUI+0x040` 的第二参数，即 control message id；`0x0134` 不是
 GUI table 的 `GUI+0x134` active-frame setter。
+
+记事本和 C200 的静态交叉验证还固定了控件私有皮肤消息：
+
+```text
+GUI+0x040(edit_or_medit, 0xf0dd, background_vx, 0)
+GUI+0x040(medit,         0xf0df, slot, draw_object)
+GUI+0x040(listbox,       0xf1b4, background_vx, 0)
+GUI+0x040(listbox,       0xf1b5, slot, draw_object)
+```
+
+`0xf0dd` 会进入 edit/medit 私有状态，并在 control 重绘时调用 VX 绘制路径；它不是
+字体句柄。`0xf0df` / `0xf1b5` 是分槽绘制对象设置，记事本黑色主题观察到
+`slot=1, draw_object=GUI+0x2fc(15)`。这些消息是 class-specific 协议，不是所有控件
+共享的 skin API。8013 的 `ControlSkinBindingV2.bda` 已动态验证 `medit/listbox` 的
+240x265 VX、slot 1、draw object 15 和“控件销毁后再释放 VX”生命周期，对应精确 wrapper
+已进入 `sdk/include/bda_controls.h`。异常资源和其他 slot/object 仍只属于研究范围。
+完整地址链见 `reverse/reports/notepad_bda_report.md`。
 
 `GUI+0x03c` 像相关的 notify/post/send 路径，常见 message 有 `0x66`、`0x10`、
 `0x120`、`0x805`、`0x806`。若没有确认，不要把 `0x66` 当 standard refresh message；多个

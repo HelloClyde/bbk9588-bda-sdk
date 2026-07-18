@@ -24,6 +24,8 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
         ("example/system/file_selector/FileSelector.bda", "FileSelect", 9),
         ("example/system/confirm_dialog/ConfirmDialog.bda", "Confirm", 9),
+        ("example/system/three_button_dialog/ThreeButtonDialog.bda", "ThreeDialog", 9),
+        ("example/system/help_page/HelpPage.bda", "HelpPage", 9),
         ("example/system/audio_pcm/AudioPcm.bda", "AudioPCM", 9),
         ("example/gui/control_gallery/ControlGallery.bda", "Controls", 9),
         ("example/gui/custom_control/CustomControl.bda", "CustomCtrl", 9),
@@ -213,6 +215,11 @@ class SdkExamplesTest(unittest.TestCase):
             "example/gui/control_gallery/control_gallery_demo.c", "Controls"
         )
 
+    def test_control_skin_binding_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/control_skin_binding_probe.c", "SkinBind"
+        )
+
     def test_custom_control_example_builds(self) -> None:
         self.build_and_validate(
             "example/gui/custom_control/custom_control_demo.c", "CustomCtrl"
@@ -389,9 +396,20 @@ class SdkExamplesTest(unittest.TestCase):
             "example/system/confirm_dialog/confirm_dialog_probe.c", "Confirm"
         )
 
+    def test_three_button_dialog_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/three_button_dialog/three_button_dialog_demo.c",
+            "ThreeDialog",
+        )
+
     def test_public_file_selector_example_builds(self) -> None:
         self.build_and_validate(
             "example/system/file_selector/file_selector_demo.c", "FileSelect"
+        )
+
+    def test_help_page_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/help_page/help_page_demo.c", "HelpPage"
         )
 
     def test_minesweeper_example_builds(self) -> None:

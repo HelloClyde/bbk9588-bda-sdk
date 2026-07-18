@@ -42,6 +42,11 @@
 #define BDA_LISTBOX_MSG_GET_ITEM_TEXT 0xf189u
 #define BDA_LISTBOX_MSG_GET_COUNT     0xf18bu
 
+#define BDA_MEDIT_MSG_SET_BACKGROUND_VX  0xf0ddu
+#define BDA_MEDIT_MSG_SET_DRAW_OBJECT   0xf0dfu
+#define BDA_LISTBOX_MSG_SET_BACKGROUND_VX 0xf1b4u
+#define BDA_LISTBOX_MSG_SET_DRAW_OBJECT  0xf1b5u
+
 #define BDA_COMBOBOX_MSG_APPEND_ITEM   0xf143u
 #define BDA_COMBOBOX_MSG_GET_COUNT     0xf146u
 #define BDA_COMBOBOX_MSG_GET_SELECTION 0xf147u
@@ -240,6 +245,60 @@ static inline int bda_listbox_get_item_text(
 
 static inline int bda_listbox_get_count(bda_handle_t control) {
     return bda_control_send(control, BDA_LISTBOX_MSG_GET_COUNT, 0, 0);
+}
+
+/*
+ * The control stores background_vx instead of copying it. Keep the complete
+ * VX resource alive until bda_control_destroy() returns.
+ */
+static inline int bda_medit_set_background_vx(
+    bda_handle_t control,
+    const void *background_vx
+) {
+    return bda_control_send(
+        control,
+        BDA_MEDIT_MSG_SET_BACKGROUND_VX,
+        (u32)background_vx,
+        0
+    );
+}
+
+static inline int bda_medit_set_draw_object(
+    bda_handle_t control,
+    u32 slot,
+    void *draw_object
+) {
+    return bda_control_send(
+        control,
+        BDA_MEDIT_MSG_SET_DRAW_OBJECT,
+        slot,
+        (u32)draw_object
+    );
+}
+
+static inline int bda_listbox_set_background_vx(
+    bda_handle_t control,
+    const void *background_vx
+) {
+    return bda_control_send(
+        control,
+        BDA_LISTBOX_MSG_SET_BACKGROUND_VX,
+        (u32)background_vx,
+        0
+    );
+}
+
+static inline int bda_listbox_set_draw_object(
+    bda_handle_t control,
+    u32 slot,
+    void *draw_object
+) {
+    return bda_control_send(
+        control,
+        BDA_LISTBOX_MSG_SET_DRAW_OBJECT,
+        slot,
+        (u32)draw_object
+    );
 }
 
 static inline int bda_combobox_append_item(

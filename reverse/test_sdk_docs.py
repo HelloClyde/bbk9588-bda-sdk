@@ -20,6 +20,7 @@ class SdkDocsTest(unittest.TestCase):
     def test_sdk_layout_is_split_from_reverse_workspace(self) -> None:
         self.assertTrue((ROOT / "reverse" / "bda_research_sdk.h").is_file())
         self.assertTrue((ROOT / "sdk" / "include" / "bda_sdk.h").is_file())
+        self.assertTrue((ROOT / "sdk" / "include" / "bda_dialogs.h").is_file())
         self.assertTrue((ROOT / "sdk" / "include" / "bda_controls.h").is_file())
         self.assertTrue((ROOT / "sdk" / "include" / "bda_audio.h").is_file())
         self.assertTrue((ROOT / "docs" / "README.md").is_file())
@@ -31,7 +32,12 @@ class SdkDocsTest(unittest.TestCase):
         )
         self.assertEqual(
             sdk_files,
-            ["include/bda_audio.h", "include/bda_controls.h", "include/bda_sdk.h"],
+            [
+                "include/bda_audio.h",
+                "include/bda_controls.h",
+                "include/bda_dialogs.h",
+                "include/bda_sdk.h",
+            ],
         )
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
@@ -48,6 +54,7 @@ class SdkDocsTest(unittest.TestCase):
                 "fs_write_api.md",
                 "game_rendering_api.md",
                 "graphics_primitives_api.md",
+                "help_page_api.md",
                 "input_polling_api.md",
                 "msgbox_api.md",
                 "picture_rendering_api.md",
@@ -76,12 +83,14 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("# SDK API 目录", sdk_readme)
         self.assertIn("只保存 API header", sdk_readme)
         self.assertIn("sdk/include/bda_sdk.h", sdk_readme)
+        self.assertIn("sdk/include/bda_dialogs.h", sdk_readme)
         self.assertIn("sdk/include/bda_controls.h", sdk_readme)
         self.assertIn("sdk/include/bda_audio.h", sdk_readme)
         self.assertIn("reverse/bda_research_sdk.h", sdk_readme)
         self.assertIn("example/README.md", sdk_readme)
         self.assertIn("docs/README.md", sdk_readme)
         self.assertIn('#include "bda_sdk.h"', sdk_readme)
+        self.assertIn('#include "bda_dialogs.h"', sdk_readme)
         self.assertIn('#include "bda_controls.h"', sdk_readme)
         self.assertIn('#include "bda_audio.h"', sdk_readme)
         self.assertIn('Path("reverse") / "bda_research_sdk.h"', catalog_tool)
@@ -121,6 +130,39 @@ class SdkDocsTest(unittest.TestCase):
             "模拟器应用逆向",
         ]:
             self.assertNotIn(phrase, combined)
+
+    def test_public_dialog_header_matches_verified_scope(self) -> None:
+        header = read("sdk/include/bda_dialogs.h")
+        base_header = read("sdk/include/bda_sdk.h")
+        docs = read("docs/verified/msgbox_api.md")
+        example = read(
+            "example/system/three_button_dialog/three_button_dialog_demo.c"
+        )
+
+        self.assertIn('#include "bda_sdk.h"', header)
+        self.assertNotIn("_like", header.lower())
+        self.assertNotIn("static inline int bda_msgbox(", base_header)
+        for name in [
+            "bda_msgbox_ex",
+            "bda_msgbox",
+            "bda_confirm",
+            "bda_confirm_yes_all_no",
+            "BDA_MSGBOX_TYPE_OK",
+            "BDA_MSGBOX_TYPE_YES_NO",
+            "BDA_MSGBOX_TYPE_YES_ALL_NO",
+            "BDA_DIALOG_RESULT_YES",
+            "BDA_DIALOG_RESULT_ALL",
+            "BDA_DIALOG_RESULT_NO",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, docs)
+        self.assertIn('#include "bda_dialogs.h"', example)
+        self.assertIn("bda_confirm_yes_all_no", example)
+        self.assertIn("msgbox_yes_all_no_verified.png", docs)
+        log = read("docs/verified/assets/msgbox_yes_all_no_probe_log.txt")
+        self.assertIn("LEFT=0x00000006", log)
+        self.assertIn("MIDDLE=0x0000000A", log)
+        self.assertIn("RIGHT=0x00000007", log)
 
     def test_public_controls_header_matches_verified_scope(self) -> None:
         header = read("sdk/include/bda_controls.h")
@@ -169,6 +211,59 @@ class SdkDocsTest(unittest.TestCase):
             source = read(example)
             self.assertIn('#include "bda_controls.h"', source)
             self.assertNotIn("bda_sdk_internal_", source)
+
+        skin_probe = read("reverse/examples/control_skin_binding_probe.c")
+        for name in [
+            "bda_medit_set_background_vx",
+            "bda_medit_set_draw_object",
+            "bda_listbox_set_background_vx",
+            "bda_listbox_set_draw_object",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, docs)
+            self.assertIn(name, skin_probe)
+        self.assertIn("controls_skin_binding_v2.png", docs)
+        self.assertIn("RESULT=PASS", read(
+            "docs/verified/assets/controls_skin_binding_v2_log.txt"
+        ))
+
+    def test_help_page_is_public_and_documented(self) -> None:
+        header = read("sdk/include/bda_dialogs.h")
+        base_header = read("sdk/include/bda_sdk.h")
+        verified = read("docs/verified/help_page_api.md")
+        verified_index = read("docs/verified/README.md")
+        policy = read("docs/verified/public_api_policy.md")
+        example = read("example/system/help_page/help_page_demo.c")
+        scanner = read("reverse/bda_api_scan.py")
+        log = read("docs/verified/assets/help_page_probe_log.txt")
+
+        for name in [
+            "BDA_HELP_PAGE_TITLE_MAX_BYTES",
+            "BDA_HELP_PAGE_ERROR",
+            "BDA_HELP_PAGE_COMPLETED",
+            "bda_help_page",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, verified)
+
+        self.assertIn("BDA_DIALOGS_INTERNAL_GUI_HELP_PAGE", header)
+        self.assertNotIn("bda_help_page", base_header)
+        self.assertIn("GUI+0x5a8", verified)
+        self.assertIn("不会自动给调用者窗口添加问号按钮", verified)
+        self.assertIn("help_page_api.md", verified_index + policy)
+        self.assertIn('#include "bda_dialogs.h"', example)
+        self.assertIn("bda_help_page(0,", example)
+        self.assertNotIn("bda_research_sdk.h", example)
+        self.assertNotIn("_like", example)
+        self.assertIn("0x5A8", scanner)
+        self.assertIn("RETURNED FROM GUI+0x5A8", log)
+        self.assertIn("RETURNED TO PARENT", log)
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/help_page_verified.png").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/help_page_return_verified.png").is_file()
+        )
 
     def test_public_audio_header_matches_verified_scope(self) -> None:
         header = read("sdk/include/bda_audio.h")
@@ -606,7 +701,8 @@ class SdkDocsTest(unittest.TestCase):
             self.assertTrue((ROOT / "docs/verified/assets" / asset).is_file())
 
     def test_file_selector_is_public_and_documented(self) -> None:
-        header = read("sdk/include/bda_sdk.h")
+        header = read("sdk/include/bda_dialogs.h")
+        base_header = read("sdk/include/bda_sdk.h")
         verified = read("docs/verified/file_selector_api.md")
         verified_index = read("docs/verified/README.md")
         policy = read("docs/verified/public_api_policy.md")
@@ -624,13 +720,15 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(name, verified)
 
         for offset in [
-            "BDA_SDK_INTERNAL_GUI_FILE_SELECTOR_OPEN 0x6a8u",
-            "BDA_SDK_INTERNAL_GUI_LIST_NTH           0x6b8u",
-            "BDA_SDK_INTERNAL_GUI_LIST_FREE          0x6bcu",
-            "BDA_SDK_INTERNAL_GUI_FILE_SELECTOR_RUN  0x6c8u",
+            "BDA_DIALOGS_INTERNAL_GUI_FILE_SELECTOR_OPEN 0x6a8u",
+            "BDA_DIALOGS_INTERNAL_GUI_LIST_NTH           0x6b8u",
+            "BDA_DIALOGS_INTERNAL_GUI_LIST_FREE          0x6bcu",
+            "BDA_DIALOGS_INTERNAL_GUI_FILE_SELECTOR_RUN  0x6c8u",
         ]:
             self.assertIn(offset, header)
 
+        self.assertNotIn("bda_gui_select_file", base_header)
+        self.assertIn('#include "bda_dialogs.h"', example)
         self.assertIn('"A:\\\\gameboy\\\\"', header)
         self.assertIn('"gb;gbc"', header)
         self.assertIn("GUI+0x6bc(list_head)", verified)
@@ -1139,7 +1237,10 @@ class SdkDocsTest(unittest.TestCase):
         confirm_source = read(
             "example/system/confirm_dialog/confirm_dialog_probe.c"
         )
-        public_header = read("sdk/include/bda_sdk.h")
+        three_button_source = read(
+            "example/system/three_button_dialog/three_button_dialog_demo.c"
+        )
+        public_header = read("sdk/include/bda_dialogs.h")
         for phrase in [
             "GUI +0x2b8",
             "0x800c6544",
@@ -1159,9 +1260,13 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn('bda_msgbox("HelloWorld", "HelloWorld")', source)
         self.assertIn("bda_confirm(", confirm_source)
         self.assertIn("BDA_DIALOG_RESULT_YES", confirm_source)
-        self.assertIn("#define BDA_MSGBOX_TYPE_YES_NO  2u", public_header)
-        self.assertIn("#define BDA_DIALOG_RESULT_YES   6", public_header)
-        self.assertIn("#define BDA_DIALOG_RESULT_NO    7", public_header)
+        self.assertIn("bda_confirm_yes_all_no", three_button_source)
+        self.assertIn("BDA_DIALOG_RESULT_ALL", three_button_source)
+        self.assertIn("#define BDA_MSGBOX_TYPE_YES_NO      2u", public_header)
+        self.assertIn("#define BDA_MSGBOX_TYPE_YES_ALL_NO  6u", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_YES 6", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_ALL 10", public_header)
+        self.assertIn("#define BDA_DIALOG_RESULT_NO  7", public_header)
         self.assertIn("static inline int bda_confirm(", public_header)
         self.assertTrue((ROOT / "docs/verified/assets/msgbox_hello_world_verified.png").is_file())
         self.assertTrue(
@@ -2081,6 +2186,12 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn('create("medit", "", 0x08083001', notepad_report)
         self.assertIn("GUI+0x040(body_medit, 0x0134, 0, 0x81c197a0)", notepad_report)
         self.assertIn("GUI+0x040(body_medit, 0x0133, 0x19000, output_buffer)", notepad_report)
+        self.assertIn("get_dlx_resource(12, text_skin)", notepad_report)
+        self.assertIn("取得的是 `text_A.dlx` / `text_B.dlx` 报告中的 `#11`", notepad_report)
+        self.assertIn("GUI+0x040(title_medit, 0xf0dd, g_edit_background, 0)", notepad_report)
+        self.assertIn("`0xf0dd` 会进入 edit/medit 私有状态", window_notes)
+        self.assertIn("它不是\n字体句柄", window_notes)
+        self.assertIn("0xf1b4, background_vx", window_notes)
         self.assertIn("control message id，不是 GUI table offset", text_notes)
         self.assertIn("`0x0134` 不是\nGUI table 的 `GUI+0x134`", window_notes)
 
@@ -2653,6 +2764,7 @@ class SdkDocsTest(unittest.TestCase):
             "不要把 `Config.inf` 当成 BDA app 的有效注册机制",
             "Public Wrapper 快览",
             "普通应用以 `sdk/include/bda_sdk.h` 和按需包含的",
+            "`sdk/include/bda_dialogs.h`、",
             "`sdk/include/bda_controls.h`、",
             "`sdk/include/bda_audio.h` 为公开清单",
             "从原机应用调用点和 C200 切片整理出的 wrapper",

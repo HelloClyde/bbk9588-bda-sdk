@@ -121,6 +121,7 @@ NOTES: dict[tuple[str, int], str] = {
     ("GUI", 0x4D4): "font cell height-like metric；C200 查询 primary/fallback font callback 并返回较大值。",
     ("GUI", 0x4F0): "draw GBK/ASCII text；C200 使用 handle,x,y,text,extra，extra<0 时按 strlen。",
     ("GUI", 0x540): "绘制完整 VX resource block；C200 从第 6 参数读取 resource，尺寸来自 VX header +0x06/+0x0a。",
+    ("GUI", 0x5A8): "同步系统帮助页；参数为 parent 和 title\\r\\nbody，8013 已验证裸调用、注册 Frame parent、退出返回和公开 wrapper。",
     ("GUI", 0x5D4): "GAMEBOY/input 按键包 helper；C200 清 6 byte packet 后写入按键状态。",
     ("GUI", 0x670): "BMP/VX decode；C200 使用 owner,out,path,out_source_buffer，VX 快路径会写回 file buffer pointer。",
     ("GUI", 0x6A8): "file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。",

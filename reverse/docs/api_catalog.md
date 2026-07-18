@@ -127,6 +127,7 @@
 | GUI | +0x4f0 | `BDA_GUI_DRAW_TEXT_LIKE` | 1087 | 46 | 中 | draw GBK/ASCII text；C200 使用 handle,x,y,text,extra，extra<0 时按 strlen。 |
 | GUI | +0x50c | `BDA_GUI_PICTURE_SOURCE_FREE_LIKE` | 26 | 4 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
 | GUI | +0x540 | `BDA_GUI_DRAW_VX_LIKE` | 1208 | 40 | 中 | 绘制完整 VX resource block；C200 从第 6 参数读取 resource，尺寸来自 VX header +0x06/+0x0a。 |
+| GUI | +0x5a8 | `BDA_GUI_HELP_PAGE_LIKE` | 198 | 42 | 中 | 同步系统帮助页；参数为 parent 和 title\r\nbody，8013 已验证裸调用、注册 Frame parent、退出返回和公开 wrapper。 |
 | GUI | +0x5d4 | `BDA_GUI_INPUT_PACKET_LIKE` | 9 | 9 | 中 | GAMEBOY/input 按键包 helper；C200 清 6 byte packet 后写入按键状态。 |
 | GUI | +0x670 | `BDA_GUI_DECODE_BMP_LIKE` | 7 | 4 | 中 | BMP/VX decode；C200 使用 owner,out,path,out_source_buffer，VX 快路径会写回 file buffer pointer。 |
 | GUI | +0x6a8 | `BDA_GUI_FILE_SELECTOR_OPEN_LIKE` | 30 | 29 | 中 | file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。 |
