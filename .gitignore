@@ -4,6 +4,7 @@
 
 # Build outputs and hardware probe artifacts.
 /build/
+/dist/
 
 # Toolchain bundle: keep the packaged archive and docs, ignore extracted files.
 /tools/*
@@ -15,6 +16,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+*.egg-info/
 
 # Generated reverse-engineering scratch files.
 /reverse/__pycache__/

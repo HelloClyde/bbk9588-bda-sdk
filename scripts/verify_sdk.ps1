@@ -44,15 +44,7 @@ Invoke-Step "生成 C200 API 表" {
 }
 
 Invoke-Step "运行单元测试和 SDK C 示例编译 smoke" {
-    $testOutput = & python -m unittest `
-        reverse.test_bda_header `
-        reverse.test_bda_api_catalog `
-        reverse.test_bda_deploy_bundle `
-        reverse.test_bda_validate `
-        reverse.test_config_inf_add `
-        reverse.test_c200_api_tables `
-        reverse.test_sdk_docs `
-        reverse.test_sdk_examples 2>&1
+    $testOutput = & python -m unittest discover -s reverse -p "test_*.py" 2>&1
     $testExit = $LASTEXITCODE
     $testOutput | ForEach-Object { Write-Host $_ }
     if ($testExit -ne 0) {
@@ -60,13 +52,12 @@ Invoke-Step "运行单元测试和 SDK C 示例编译 smoke" {
     }
 }
 
-Invoke-Step "构建并验证 RectDemo 示例" {
-    & python -m bda_packer reverse\examples\gui_rect_contains_demo.c `
-        --title RectDemo `
+Invoke-Step "构建并验证 HelloWorld 示例" {
+    & python -m bda_packer example\basic\hello_world\hello_world_msgbox.c `
+        --title HelloWorld `
         --category 9 `
-        -I reverse `
-        -o build\RectDemo.bda
-    & python -m bda_packer.validate build\RectDemo.bda
+        -o build\HelloWorld.bda
+    & python -m bda_packer.validate build\HelloWorld.bda
 }
 
 if ($Emu) {

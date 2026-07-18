@@ -1,6 +1,12 @@
 #ifndef BDA_SDK_H
 #define BDA_SDK_H
 
+#define BDA_SDK_VERSION_MAJOR 0u
+#define BDA_SDK_VERSION_MINOR 1u
+#define BDA_SDK_VERSION_PATCH 0u
+#define BDA_SDK_VERSION_PRERELEASE 1u
+#define BDA_SDK_VERSION_STRING "0.1.0-alpha.1"
+
 /*
  * Stable public SDK for the kj409588/C200 firmware.
  *

@@ -1,7 +1,8 @@
 param(
     [string]$Archive = "tools/g++-mipsel-none-elf-15.2.0.zip",
     [string]$Url = "https://static.grumpycoder.net/pixel/mips/g++-mipsel-none-elf-15.2.0.zip",
-    [string]$Destination = "tools"
+    [string]$Destination = "tools",
+    [string]$ExpectedSha256 = "8BA866E25C9826EE04AB4310365D264E3E73769E3738BB58AE38FD6740B7EE8D"
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +29,12 @@ if (!(Test-Path -LiteralPath $archivePath)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $archivePath) | Out-Null
     Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $archivePath
 }
+
+$actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+if ($actualSha256 -ne $ExpectedSha256.ToUpperInvariant()) {
+    throw "Toolchain archive SHA-256 mismatch. Expected $ExpectedSha256, got $actualSha256. Remove the archive and retry."
+}
+Write-Host "Toolchain archive SHA-256 verified: $actualSha256"
 
 New-Item -ItemType Directory -Force -Path $destPath | Out-Null
 Write-Host "Extracting $archivePath"

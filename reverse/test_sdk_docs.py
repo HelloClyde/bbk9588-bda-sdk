@@ -42,7 +42,17 @@ class SdkDocsTest(unittest.TestCase):
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
         public_docs = sorted(path.name for path in (ROOT / "docs").glob("*.md"))
-        self.assertEqual(public_docs, ["README.md", "minesweeper_v1.md", "sdk_api_layout.md"])
+        self.assertEqual(
+            public_docs,
+            [
+                "README.md",
+                "compatibility.md",
+                "getting_started.md",
+                "minesweeper_v1.md",
+                "releasing.md",
+                "sdk_api_layout.md",
+            ],
+        )
         verified_docs = sorted(path.name for path in (ROOT / "docs" / "verified").glob("*.md"))
         self.assertEqual(
             verified_docs,

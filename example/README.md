@@ -52,10 +52,12 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 
 ## 构建
 
+先按[入门教程](../docs/getting_started.md)安装 Python 包和 MIPS 工具链。
+
 普通示例可直接打包：
 
 ```powershell
-python -m bda_packer example\basic\hello_world\hello_world_msgbox.c `
+bda-pack example\basic\hello_world\hello_world_msgbox.c `
   --title HelloWorld --category 9 `
   -o example\basic\hello_world\HelloWorld.bda
 ```
@@ -63,7 +65,7 @@ python -m bda_packer example\basic\hello_world\hello_world_msgbox.c `
 扫雷带自定义图标，并放入“娱乐天地”分类：
 
 ```powershell
-python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
+bda-pack example\games\minesweeper\minesweeper_bda.c `
   --title MinesV1 --category 4 `
   --icon-png example\games\minesweeper\minesweeper_icon.png `
   -o example\games\minesweeper\MinesweeperV1.bda
@@ -72,15 +74,15 @@ python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
 控件示例：
 
 ```powershell
-python -m bda_packer example\gui\control_gallery\control_gallery_demo.c `
+bda-pack example\gui\control_gallery\control_gallery_demo.c `
   --title Controls --category 9 `
   -o example\gui\control_gallery\ControlGallery.bda
 
-python -m bda_packer example\gui\custom_control\custom_control_demo.c `
+bda-pack example\gui\custom_control\custom_control_demo.c `
   --title CustomCtrl --category 9 `
   -o example\gui\custom_control\CustomControl.bda
 
-python -m bda_packer example\gui\gif_player\gif_player_demo.c `
+bda-pack example\gui\gif_player\gif_player_demo.c `
   --title GifPlayer --category 9 `
   -o example\gui\gif_player\GifPlayer.bda
 ```
@@ -88,7 +90,7 @@ python -m bda_packer example\gui\gif_player\gif_player_demo.c `
 Raw PCM 示例：
 
 ```powershell
-python -m bda_packer example\system\audio_pcm\audio_pcm_demo.c `
+bda-pack example\system\audio_pcm\audio_pcm_demo.c `
   --title AudioPCM --category 9 `
   -o example\system\audio_pcm\AudioPcm.bda
 ```

@@ -3,6 +3,12 @@
 This repository is intended to contain reverse-engineering notes, tools, SDK
 experiments, and source examples only.
 
+The Apache License 2.0 in `LICENSE` covers only original material that the
+project's copyright holders are authorized to license. It does not grant any
+rights to third-party firmware, applications, data, resources, trademarks, or
+toolchains referenced by this project. See `NOTICE` for the attribution and
+project-independence statement.
+
 Do not publish original BBK firmware, dictionary databases, application BDAs,
 DLX resources, audio files, bundled toolchains, or other copyrighted device
 dump contents unless you have the rights to redistribute them.
