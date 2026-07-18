@@ -41,10 +41,12 @@ typedef unsigned long long u64;
 #define BDA_INPUT_PACKET_ESCAPE_INDEX 4u
 #define BDA_INPUT_PACKET_ENTER_INDEX  5u
 
-#define BDA_MSGBOX_TYPE_OK      0u
-#define BDA_MSGBOX_TYPE_YES_NO  2u
-#define BDA_DIALOG_RESULT_YES   6
-#define BDA_DIALOG_RESULT_NO    7
+#define BDA_MSGBOX_TYPE_OK          0u
+#define BDA_MSGBOX_TYPE_YES_NO      2u
+#define BDA_MSGBOX_TYPE_YES_ALL_NO  6u
+#define BDA_DIALOG_RESULT_YES       6
+#define BDA_DIALOG_RESULT_NO        7
+#define BDA_DIALOG_RESULT_ALL       10
 
 #define BDA_GUI_MSGBOX 0x2b8u
 #define BDA_GUI_CREATE 0x1a4u
@@ -150,6 +152,7 @@ typedef unsigned long long u64;
 #define BDA_GUI_FONT_CELL_WIDTH_LIKE  0x4d0u
 #define BDA_GUI_FONT_CELL_HEIGHT_LIKE 0x4d4u
 #define BDA_GUI_DRAW_TEXT_LIKE      0x4f0u
+#define BDA_GUI_HELP_PAGE_LIKE      0x5a8u
 #define BDA_GUI_RECT_CONTAINS_LIKE  0x46cu
 #define BDA_GUI_DECODE_BMP_LIKE     0x670u
 #define BDA_GUI_DECODE_JPEG_LIKE    0x808u
@@ -702,6 +705,21 @@ static inline int bda_msgbox(const char *title, const char *message) {
 
 static inline int bda_confirm(const char *title, const char *message) {
     return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_YES_NO);
+}
+
+static inline int bda_confirm_yes_all_no(const char *title, const char *message) {
+    return bda_msgbox_ex(0, title, message, BDA_MSGBOX_TYPE_YES_ALL_NO);
+}
+
+/*
+ * Synchronous firmware help-page candidate. The document format is
+ * "title\r\nbody"; C200 copies the title into a 28-byte internal buffer, so
+ * the title must be at most 27 bytes in the firmware encoding.
+ */
+static inline int bda_gui_help_page_like(void *parent, const char *document) {
+    return bda_call2(
+        bda_gui_table(), BDA_GUI_HELP_PAGE_LIKE, (u32)parent, (u32)document
+    );
 }
 
 /*

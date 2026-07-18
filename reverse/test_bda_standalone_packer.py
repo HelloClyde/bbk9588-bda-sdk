@@ -92,14 +92,16 @@ class StandalonePackerTest(unittest.TestCase):
             self.skipTest(str(exc))
 
         header = sdk_include_dir() / "bda_sdk.h"
+        dialogs_header = sdk_include_dir() / "bda_dialogs.h"
         self.assertTrue(header.is_file())
+        self.assertTrue(dialogs_header.is_file())
         self.assertEqual(header, Path("sdk/include/bda_sdk.h").resolve())
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             source = root / "hello.c"
             output = root / "HelloWorld.bda"
             source.write_text(
-                '#include "bda_sdk.h"\n'
+                '#include "bda_dialogs.h"\n'
                 '__attribute__((section(".text.bda_main")))\n'
                 'int bda_main(void) {\n'
                 '    bda_msgbox("HelloWorld", "HelloWorld");\n'

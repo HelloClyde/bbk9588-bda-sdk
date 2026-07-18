@@ -3,8 +3,10 @@
 本目录只放已经形成动态验证闭环的公开 API 说明和开发教程。静态推断、候选 ABI、
 探针进度和未验证接口统一放在 [`reverse/docs/`](../reverse/docs/README.md)。
 
-普通应用使用基础头 [`sdk/include/bda_sdk.h`](../sdk/include/bda_sdk.h)；需要控件或
-raw PCM 时分别包含 [`sdk/include/bda_controls.h`](../sdk/include/bda_controls.h) 和
+普通应用使用基础头 [`sdk/include/bda_sdk.h`](../sdk/include/bda_sdk.h)；需要模态
+消息框、系统帮助页和文件选择器、控件或 raw PCM 时分别包含
+[`sdk/include/bda_dialogs.h`](../sdk/include/bda_dialogs.h)、
+[`sdk/include/bda_controls.h`](../sdk/include/bda_controls.h) 和
 [`sdk/include/bda_audio.h`](../sdk/include/bda_audio.h)。未验证的
 [`reverse/bda_research_sdk.h`](../reverse/bda_research_sdk.h) 仅供逆向实验使用。
 
@@ -24,7 +26,8 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 
 | 能力 | 文档 | 验证环境 |
 |---|---|---|
-| Message Box 与是/否确认框 | [msgbox_api.md](verified/msgbox_api.md) | 模拟器 |
+| Message Box 与是/全部/否确认框 | [msgbox_api.md](verified/msgbox_api.md) | 模拟器 |
+| 系统帮助页 | [help_page_api.md](verified/help_page_api.md) | 模拟器 |
 | 文件写入与读回 | [fs_write_api.md](verified/fs_write_api.md) | 模拟器 |
 | 六键轮询 | [input_polling_api.md](verified/input_polling_api.md) | 模拟器 |
 | 触摸按下与抬起 | [touch_press_api.md](verified/touch_press_api.md) | 真机 |
@@ -50,6 +53,7 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 - [堆、文件定位与目录服务](verified/runtime_services_api.md)
 - [原始 RGB565 picture 动态提交](verified/picture_rendering_api.md)
 - [系统文件选择器](verified/file_selector_api.md)
+- [系统帮助页](verified/help_page_api.md)
 - [内建控件 API](verified/controls_api.md)
 - [Raw PCM 音频生命周期](verified/audio_pcm_api.md)
 - [自定义控件教程](tutorials/custom_controls.md)

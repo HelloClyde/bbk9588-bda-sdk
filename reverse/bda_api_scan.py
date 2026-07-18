@@ -14,6 +14,7 @@ KNOWN_HIGH_API_TABLE_OFFSETS = frozenset(
     {
         0x50C,
         0x540,
+        0x5A8,
         0x5D4,
         0x670,
         0x6A8,

@@ -41,6 +41,52 @@
 
 ![单行和多行文本变体](assets/controls_text_variants.png)
 
+## 外观与皮肤
+
+画廊中的灰色控件是固件 fallback 外观，不是截图或颜色转换错误。
+`BDA_*_STYLE_DEFAULT` 只表示探针使用的 style 值，不会自动加载 shell 皮肤。
+
+原版记事本会自行加载 `text_A.dlx` / `text_B.dlx`，再给 `medit` 绑定 240x265 VX
+页面背景；黑色主题还会替换绘制对象。`listbox` 使用另一组 class-specific 消息，
+标题栏和工具栏等区域则由父窗口直接绘制 DLX 资源。它不是所有控件共享的 theme API。
+
+8013 的独立 `ControlSkinBindingV2.bda` 已动态验证以下公开 helper：
+
+- `bda_medit_set_background_vx()`：`BDA_MEDIT_MSG_SET_BACKGROUND_VX`，绑定完整 VX。
+- `bda_medit_set_draw_object()`：`BDA_MEDIT_MSG_SET_DRAW_OBJECT`，设置分槽绘制对象。
+- `bda_listbox_set_background_vx()`：`BDA_LISTBOX_MSG_SET_BACKGROUND_VX`，绑定完整 VX。
+- `bda_listbox_set_draw_object()`：`BDA_LISTBOX_MSG_SET_DRAW_OBJECT`，设置分槽绘制对象。
+
+探针加载 `text_A.dlx` 的 0 基资源 `#11` 作为浅蓝背景，并加载
+`enote_black_add.dlx` 的 `#01` 作为黑色背景。四个消息都返回 `0`，但控件实际完成
+重绘，因此这些返回值不能按 Boolean success 判断。黑色主题所用绘制对象来自
+`bda_gui_draw_object_create(15)`；当前固件观察值是 `0x0000ffff`。
+
+```c
+void *dark_draw_object = bda_gui_draw_object_create(15);
+
+bda_medit_set_background_vx(medit, blue_vx);
+
+bda_medit_set_background_vx(dark_medit, black_vx);
+bda_medit_set_draw_object(dark_medit, 1, dark_draw_object);
+
+bda_listbox_set_background_vx(listbox, black_vx);
+bda_listbox_set_draw_object(listbox, 1, dark_draw_object);
+```
+
+VX 参数必须指向包含 24-byte `VX` header 的完整资源，不是裸 RGB565 pixels。控件只
+保存该指针，不复制资源：先销毁所有引用它的控件，完成 frame 关闭，再调用
+`bda_free()` 释放 VX。探针正是按这个顺序退出并返回系统菜单。
+
+![记事本皮肤绑定探针](assets/controls_skin_binding_v2.png)
+
+![带皮肤的列表触摸选择](assets/controls_skin_binding_v2_selected.png)
+
+完整退出日志：[controls_skin_binding_v2_log.txt](assets/controls_skin_binding_v2_log.txt)。
+探针源码为 `reverse/examples/control_skin_binding_probe.c`；原应用与 C200 的地址链见
+`reverse/reports/notepad_bda_report.md`。当前只验证 240x265 页面背景、slot 1 和
+draw object 15；其他 VX 尺寸、slot、绘制对象以及对 `edit` 使用 `0xf0dd` 尚未公开。
+
 ## 创建与生命周期
 
 `bda_control_desc_t` 的字段为 `class_name`、`caption`、`style`、`flags`、`id`、`x`、

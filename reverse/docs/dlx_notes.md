@@ -50,6 +50,11 @@ resource 在文件中的 absolute offset：
 file_offset = header_size + rel_offset
 ```
 
+`dlx_inspect.py` / `dlx_extract.py` 用 0 基 `#index` 展示 table entry。原 BDA 中常见的
+app-local `get_dlx_resource(resource_number, table)` helper 使用 1 基资源号：调用参数
+`1` 对应工具报告的 `#00`，参数 `12` 对应 `#11`。分析应用调用点时必须先确认 helper
+的编号规则，不能直接把调用参数当成工具输出的 index。
+
 当前 dump 中 168 个 DLX 文件可以解析出 3580 个资源：
 
 ```text

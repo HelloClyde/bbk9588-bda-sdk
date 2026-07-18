@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "bda_dialogs.h"
 
 static bda_file_selector_t g_selector;
 

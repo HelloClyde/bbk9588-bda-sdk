@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "bda_dialogs.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320

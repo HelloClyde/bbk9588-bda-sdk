@@ -1,4 +1,4 @@
-#include "bda_sdk.h"
+#include "bda_dialogs.h"
 
 static u32 first_pressed_key(const bda_gui_input_packet_t *packet) {
     static const u32 keys[] = {
