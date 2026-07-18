@@ -106,15 +106,14 @@ object，调用内部关闭/释放 helper，把全局 pointer 清零，再进入
 按无参数 `void bda_sys_audio_reset_like(void)` 暴露，不假设 return value 有效。
 
 `SYS+0x0a0 -> 0x801891e8` 同样是无参数 wrapper，内部连续调用
-`0x80195db0`、`0x80195db8`、`0x80195170`。V3 动态证明它不会清除 AIC replay/global
-enable：DMA queue 不再 rearm 后仍持续产生 underrun。因此研究头按
-`void bda_sys_audio_flush_like(void)` 暴露，但不能单独当作 stop。
+`0x80195db0`、`0x80195db8`、`0x80195170`。模拟器后端在调用后仍报告 AIC timer
+active，但真机 V4 已确认它能停止声音并安全返回菜单；原厂 `GAMEBOY.BDA` 也在调用
+该表项后直接返回。
 
-V4/V5 已确认当前 C200 的完整停止顺序是 `SYS+0x0a0` 后调用内部 AIC reset
-`0x80195b24(0)`；后者没有 system table entry。公开头 `sdk/include/bda_audio.h`
-将两步封装为 `bda_audio_stop()`，并提供已验证的 `bda_audio_open_pcm()`、
-`bda_audio_ready()` 和 `bda_audio_write()`。固定 VA 只适用于当前 kj409588/C200 固件；
-不要把这组接口套用到飞天音乐/数码录音的 high-level 播放器后端。
+模拟器 V4/V5 曾额外直调内部 `0x80195b24(0)` 清 AIC 状态。真机 V3 在这一步死锁，
+证明该固定地址 MMIO helper 不是 BDA ABI。公开头 `sdk/include/bda_audio.h` 的
+`bda_audio_stop()` 因此只调用 `SYS+0x0a0`；open/ready/write/attenuation/stop 已完成
+真机闭环。不要把 raw PCM 接口套用到飞天音乐/数码录音的 high-level 播放器后端。
 
 ### 游戏打包音效
 

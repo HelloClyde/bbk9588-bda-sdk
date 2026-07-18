@@ -38,7 +38,7 @@ python -m bda_packer.validate example\basic\hello_world\HelloWorld.bda
 | 原生尺寸 raw RGB565 picture 提交 | [picture_rendering_api.md](verified/picture_rendering_api.md) | 模拟器 |
 | 系统文件选择器 | [file_selector_api.md](verified/file_selector_api.md) | 模拟器 |
 | 内建控件、GIF 播放与自定义类 | [controls_api.md](verified/controls_api.md) | 模拟器 |
-| Raw PCM open/write/attenuation/stop | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 |
+| Raw PCM open/write/attenuation/stop | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 + 真机 |
 
 ![图形图元验证](verified/assets/graphics_primitives_bda_verified.png)
 

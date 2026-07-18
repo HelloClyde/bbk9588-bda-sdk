@@ -171,7 +171,7 @@
 | SYS | +0x08c | `BDA_SYS_AUDIO_RESET_LIKE` | 399 | 54 | 中 | raw audio reset/init；C200 无参数，关闭全局 audio object 后进入初始化路径，无稳定 return value。 |
 | SYS | +0x090 | `BDA_SYS_AUDIO_STATE_LIKE` | 143 | 42 | 中 | raw audio state pointer getter；C200 无参数，直接返回全局 state 0x80362830。 |
 | SYS | +0x09c | `BDA_SYS_TIMER_LIKE` | 115 | 17 | 中 | timer/rate preset 选择；C200 把 a0 clamp 到 0..14 后查内部表，无稳定 return value。 |
-| SYS | +0x0a0 | `BDA_SYS_AUDIO_FLUSH_LIKE` | 8 | 4 | 中 | raw audio flush/drain；C200 无参数，连续调用 0x80195db0/0x80195db8/0x80195170，无稳定 return value。 |
+| SYS | +0x0a0 | `BDA_SYS_AUDIO_FLUSH_LIKE` | 8 | 4 | 中 | raw audio finish/stop；C200 无参数，真机安全返回且停止声音；模拟器后端 timer 状态存在差异，无稳定 return value。 |
 | SYS | +0x0ac | `BDA_SYS_ALARM_SET_LIKE` | 70 | 9 | 中 | alarm set；C200 使用 alarm_data,slot，record size 0x2b8，未见 slot bounds check，return value 成功 1。 |
 | SYS | +0x0b0 | `BDA_SYS_ALARM_GET_LIKE` | 7 | 2 | 中 | alarm get；C200 使用 alarm_data,slot，从 file offset 0x578+slot*0x2b8 复制 0x2b8 byte，return value 成功 1。 |
 | SYS | +0x0b8 | `BDA_SYS_ALARM_DUE_GET_LIKE` | 350 | 27 | 中 | alarm due record get；C200 打开 alarm.db，扫描 0x2b8 byte record，并向 out buffer 复制整条 record。 |

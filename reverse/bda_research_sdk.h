@@ -2324,7 +2324,8 @@ static inline void bda_sys_audio_reset_like(void) {
 }
 
 /*
- * raw audio reset/flush 没有稳定 return value 约定，因此 wrapper 是 void。
+ * raw audio finish/stop。真机可安全停止并返回；模拟器后端仍可能报告 AIC timer active。
+ * 没有稳定 return value 约定，因此研究 wrapper 保持 void。
  */
 static inline void bda_sys_audio_flush_like(void) {
     typedef void (*flush_fn)(void);

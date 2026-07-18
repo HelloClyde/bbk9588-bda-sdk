@@ -814,8 +814,8 @@ SYS+0x0a0 -> 0x801891e8
   state 区域，最后清 `0x804781b4` 并返回 `1`。这是全局 raw audio state 写入
   helper，不是只读 probe。
 - `SYS+0x0a0` 入口同样不读取调用者参数。它依次调用 `0x80195db0`、
-  `0x80195db8`、`0x80195170`；V3 动态证明它不清除 AIC replay/global enable，
-  不能独立命名为 stop。
+  `0x80195db8`、`0x80195170`。模拟器后端仍显示 AIC timer active，但真机 V4 已确认
+  调用后可返回菜单、无残留声音且系统正常，因此公开 SDK 可把它作为 stop。
 - 两个 entry 都没有稳定 return value 约定；C200 disasm 也没有显示它们向调用者返回可用状态码。
 
 开发建议：
@@ -826,11 +826,10 @@ SYS+0x0a0 -> 0x801891e8
   pointer 做 probe，不要写入该结构，也不要把它当 high-level 播放器对象。
 - SDK 不公开 `SYS+0x094` wrapper。不要把它命名为 audio state setter、resume
   或 high-level player restore；普通 BDA 不应写入 `0x80362830` 全局 state。
-- `SYS+0x08c` 和 `SYS+0x0a0` 都不能独立完成 raw close。V3-V5 证明 raw open
-  不写 `0x80362830` 的前四个 state word，且 `+0x0a0` 后 AIC timer 仍运行。
-- 当前固件的完整停止顺序是 `SYS+0x0a0` 后调用内部 `0x80195b24(0)`；公开头
-  `bda_audio.h` 将其封装为固件绑定的 `bda_audio_stop()`。SDK 本身只面向 9588，
-  因此公开方法名不重复设备型号。
+- `SYS+0x08c` 不是 raw close；raw open 不写 `0x80362830` 的前四个 state word。
+- 不得从 BDA 直调 `0x80195b24(0)`。它直接操作 AIC MMIO，模拟器探针可返回，但真机
+  V3 在 `SYS+0x0a0` 之后调用它会立即死锁。公开 `bda_audio_stop()` 只调用
+  `SYS+0x0a0`，与原厂 `GAMEBOY.BDA` 的清理路径一致。
 - 不要把它们套用到飞天音乐/数码录音的 high-level 播放器后端；那些应用还使用
   `SYS+0x020/+0x02c/+0x034/+0x038/+0x094` 等另一组未公开 offset。
 
