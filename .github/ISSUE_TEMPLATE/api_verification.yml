@@ -1,0 +1,49 @@
+name: API verification
+description: 提交系统 API 的模拟器或真机动态证据
+title: "[API] "
+labels: [verification]
+body:
+  - type: input
+    id: table_offset
+    attributes:
+      label: 系统表与 offset
+      placeholder: GUI+0x000
+    validations:
+      required: true
+  - type: input
+    id: candidate
+    attributes:
+      label: 候选签名和名称
+      placeholder: int candidate(...)
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: 证据等级
+      options:
+        - 真机闭环
+        - 8013 模拟器动态验证
+        - 静态逆向
+        - Probe 未完成
+    validations:
+      required: true
+  - type: textarea
+    id: lifecycle
+    attributes:
+      label: 完整生命周期
+      description: 描述创建、调用、消息分发、释放和返回菜单顺序。
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 测试程序、日志和结果
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: 失败路径和未覆盖参数
+    validations:
+      required: true

@@ -482,7 +482,9 @@ reverse/examples/tile_blit_probe.c           危险的 tile blit ABI/build probe
 reverse/examples/time_probe.c                delay/timer/alarm 只读 probe
 reverse/examples/game_api_probe.c            MEM/display metric/delay 模拟器动态 probe
 reverse/examples/game_audio_probe.c          raw PCM open/ready/write/cleanup 模拟器动态 probe
-reverse/examples/game_audio_cleanup_probe.c  raw PCM AIC stop/reopen 模拟器动态 probe
+reverse/examples/game_audio_cleanup_probe.c  raw PCM AIC stop/reopen 模拟器历史 probe
+reverse/examples/audio_pcm_hw_stop_probe.c   真机固定 AIC 地址死锁反例 V3
+reverse/examples/audio_pcm_hw_finish_probe.c 真机 SYS+0x0a0 安全停止闭环 V4
 reverse/examples/game_audio_volume_probe.c   raw PCM attenuation set/get 与幅度动态 probe
 reverse/examples/game_graphics_probe.c       window primitives/font/VX sprite 模拟器动态 probe
 reverse/examples/game_image_probe.c          VX/BMP decode、descriptor、render 和 cleanup 动态 probe

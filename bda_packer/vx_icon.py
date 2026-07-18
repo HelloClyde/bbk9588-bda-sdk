@@ -5,6 +5,8 @@ import struct
 import zlib
 from pathlib import Path
 
+from . import __version__
+
 from .header import decoded_header_words, fix_header_checksum
 
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
@@ -202,6 +204,7 @@ def main() -> None:
     ap._positionals.title = "位置参数"
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("input", type=Path, help="要修改的 BDA")
     ap.add_argument("--png", type=Path, required=True, help="RGB/RGBA 8-bit 非隔行 PNG")
     ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")

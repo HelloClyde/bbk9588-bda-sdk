@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from . import __version__
+
 from .header import (
     CATEGORY_OFFSET,
     CHECKSUM_OFF,
@@ -208,6 +210,7 @@ def main() -> None:
     ap._positionals.title = "位置参数"
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("bda", type=Path, help="要校验的 BDA 文件")
     ap.add_argument("--json", action="store_true", help="输出 JSON，便于脚本集成")
     ns = ap.parse_args()

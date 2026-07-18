@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私密安全报告
+    url: https://github.com/HelloClyde/bbk9588-bda-sdk/security/advisories/new
+    about: 设备数据、供应链或凭据问题请使用私密报告。

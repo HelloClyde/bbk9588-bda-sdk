@@ -42,7 +42,17 @@ class SdkDocsTest(unittest.TestCase):
         self.assertFalse((ROOT / "reverse" / "sdk").exists())
 
         public_docs = sorted(path.name for path in (ROOT / "docs").glob("*.md"))
-        self.assertEqual(public_docs, ["README.md", "minesweeper_v1.md", "sdk_api_layout.md"])
+        self.assertEqual(
+            public_docs,
+            [
+                "README.md",
+                "compatibility.md",
+                "getting_started.md",
+                "minesweeper_v1.md",
+                "releasing.md",
+                "sdk_api_layout.md",
+            ],
+        )
         verified_docs = sorted(path.name for path in (ROOT / "docs" / "verified").glob("*.md"))
         self.assertEqual(
             verified_docs,
@@ -283,7 +293,16 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(name, header)
             self.assertIn(name, docs)
             self.assertIn(name, example)
-        self.assertIn("0x80195b24u", header)
+        self.assertNotIn("0x80195b24", header)
+        self.assertIn("SYS+0x0a0", docs)
+        self.assertIn("真机", docs)
+        self.assertIn("BEFORE AIC RESET", docs)
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/audio_pcm_true_hardware_v3_log.txt").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/audio_pcm_true_hardware_v4_result.txt").is_file()
+        )
         self.assertIn("02a16107b11a3281067871c6fe3d4c289", docs)
         self.assertNotIn("bda_sys_audio_reset_like", header)
         self.assertNotIn("bda_sys_audio_flush_like", header)
@@ -2823,7 +2842,7 @@ class SdkDocsTest(unittest.TestCase):
             "不是 DLX loader",
             "其他值返回 -1 并设置内部 error 9",
             "find_data 必须至少是 bda_fs_find_data_like_t 大小",
-            "raw audio reset/flush 没有稳定 return value 约定",
+            "raw audio finish/stop。真机可安全停止并返回",
             "常用开发词保留英文",
             "album-backed picture decode descriptor",
             "C200-backed directory enumeration",

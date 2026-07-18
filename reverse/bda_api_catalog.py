@@ -188,7 +188,7 @@ NOTES: dict[tuple[str, int], str] = {
     ("SYS", 0x08C): "raw audio reset/init；C200 无参数，关闭全局 audio object 后进入初始化路径，无稳定 return value。",
     ("SYS", 0x090): "raw audio state pointer getter；C200 无参数，直接返回全局 state 0x80362830。",
     ("SYS", 0x09C): "timer/rate preset 选择；C200 把 a0 clamp 到 0..14 后查内部表，无稳定 return value。",
-    ("SYS", 0x0A0): "raw audio flush/drain；C200 无参数，连续调用 0x80195db0/0x80195db8/0x80195170，无稳定 return value。",
+    ("SYS", 0x0A0): "raw audio finish/stop；C200 无参数，真机安全返回且停止声音；模拟器后端 timer 状态存在差异，无稳定 return value。",
     ("SYS", 0x0AC): "alarm set；C200 使用 alarm_data,slot，record size 0x2b8，未见 slot bounds check，return value 成功 1。",
     ("SYS", 0x0B0): "alarm get；C200 使用 alarm_data,slot，从 file offset 0x578+slot*0x2b8 复制 0x2b8 byte，return value 成功 1。",
     ("SYS", 0x0B8): "alarm due record get；C200 打开 alarm.db，扫描 0x2b8 byte record，并向 out buffer 复制整条 record。",

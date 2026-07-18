@@ -1,0 +1,12 @@
+BBK 9588 Native BDA SDK
+Copyright 2026 HelloClyde
+
+This is an independent, unofficial project. It is not affiliated with,
+endorsed by, or sponsored by BBK or the manufacturers of the target devices.
+BBK and related product names are trademarks of their respective owners.
+
+The Apache License 2.0 applies only to material that the project's copyright
+holders are authorized to license. It does not license firmware, NAND images,
+original device applications, dictionaries, DLX resources, audio, trademarks,
+or other third-party material. Git submodules and external toolchains remain
+under their respective licenses.

@@ -20,7 +20,6 @@
 #define BDA_AUDIO_INTERNAL_READY      0x074u
 #define BDA_AUDIO_INTERNAL_WRITE      0x078u
 #define BDA_AUDIO_INTERNAL_FINISH     0x0a0u
-#define BDA_AUDIO_INTERNAL_AIC_RESET_VA 0x80195b24u
 
 /*
  * Queue attenuation for the next PCM write. Firmware clamps to 0..98 and
@@ -73,24 +72,14 @@ static inline int bda_audio_write(const void *pcm, bda_size_t bytes) {
     );
 }
 
-/*
- * Stop playback and the AIC output timer on kj409588/C200.
- *
- * SYS+0x0a0 alone does not disable raw playback. The second call is the
- * firmware's AIC reset primitive recovered at a fixed C200 address. This SDK
- * targets the 9588, so the public API name does not repeat the device model.
- */
+/* Stop raw PCM through the true-hardware-verified SYS+0x0a0 service. */
 static inline void bda_audio_stop(void) {
     typedef void (*finish_fn_t)(void);
-    typedef void (*aic_reset_fn_t)(u32);
     finish_fn_t finish_fn = (finish_fn_t)bda_sdk_internal_api(
         bda_sdk_internal_sys(), BDA_AUDIO_INTERNAL_FINISH
     );
-    aic_reset_fn_t reset_fn =
-        (aic_reset_fn_t)BDA_AUDIO_INTERNAL_AIC_RESET_VA;
 
     finish_fn();
-    reset_fn(0u);
 }
 
 #endif

@@ -27,5 +27,5 @@
 - [系统文件选择器 API](file_selector_api.md)：8013 验证的默认目录、后缀过滤、选择/取消和结果链表释放。
 - [控件 API](controls_api.md)：8013 验证的内建控件、`medit/listbox` VX 皮肤绑定、
   内存 GIF 自动播放、消息 helper、自定义类注册和失败边界。
-- [Raw PCM 音频 API](audio_pcm_api.md)：8013 验证的 22050 Hz/16-bit/mono、衰减控制
-  open、write、立即 stop 和 reopen，以及 9588 固件绑定边界。
+- [Raw PCM 音频 API](audio_pcm_api.md)：8013 与真机验证的 22050 Hz/16-bit/mono、
+  衰减控制、open/write/stop，以及禁止直调 AIC MMIO 的真机边界。

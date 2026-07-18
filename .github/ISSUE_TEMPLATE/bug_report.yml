@@ -1,0 +1,54 @@
+name: SDK / BDA bug
+description: 报告打包器、公开 API、示例或文档问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传固件、NAND、字典数据库、原机 BDA 或个人数据。
+  - type: input
+    id: commit
+    attributes:
+      label: SDK commit / version
+      placeholder: 0.1.0-alpha.1 or git SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行环境
+      options:
+        - 8013 模拟器
+        - BBK 9588 真机
+        - 仅构建主机
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: 固件或模拟器版本
+      placeholder: kj409588 / bbk9588-emulator-v0.1.5
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 包含构建命令、最小源码路径和操作顺序。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 实时日志和结果
+      description: 给出死锁前最后日志，并说明重启或返回菜单后的状态。
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: data
+    attributes:
+      label: 数据确认
+      options:
+        - label: 报告不包含固件、NAND、版权资源或个人数据
+          required: true

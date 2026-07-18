@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from . import __version__
 from .header import BdaHeaderFields, write_header
 from .validate import validate_bda
 from .vx_icon import make_vx, read_png, resize_cover, rgb565_bytes
@@ -19,7 +21,8 @@ ICON_START = 0x88
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
 ICON_SIZES = tuple(24 + width * height * 2 for width, height in ICON_SPECS)
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SDK_INCLUDE_DIR = REPO_ROOT / "sdk" / "include"
+SOURCE_SDK_INCLUDE_DIR = REPO_ROOT / "sdk" / "include"
+PACKAGED_SDK_INCLUDE_DIR = Path(__file__).resolve().parent / "include"
 
 
 def bundled_prefix() -> str | None:
@@ -33,10 +36,20 @@ def bundled_prefix() -> str | None:
 
 
 def sdk_include_dir() -> Path:
-    header = SDK_INCLUDE_DIR / "bda_sdk.h"
-    if not header.is_file():
-        raise SystemExit(f"打包器缺少 SDK header：{header}")
-    return SDK_INCLUDE_DIR
+    configured = os.environ.get("BDA_SDK_INCLUDE")
+    candidates = [
+        Path(configured).expanduser() if configured else None,
+        SOURCE_SDK_INCLUDE_DIR,
+        PACKAGED_SDK_INCLUDE_DIR,
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "bda_sdk.h").is_file():
+            return candidate
+    searched = ", ".join(str(item) for item in candidates if item is not None)
+    raise SystemExit(
+        "打包器缺少 SDK header；可设置 BDA_SDK_INCLUDE。"
+        f"已搜索：{searched}"
+    )
 
 
 def compiler_include_dirs(extra_dirs: Sequence[Path] = ()) -> list[Path]:
@@ -234,6 +247,7 @@ def main() -> None:
     ap._positionals.title = "位置参数"
     ap._optionals.title = "选项"
     ap.add_argument("-h", "--help", action="help", help="显示帮助并退出")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("source", type=Path, help="包含 bda_main 的 freestanding C 源码")
     ap.add_argument("--title", required=True, help="菜单标题，GBK 编码后最多 16 字节")
     ap.add_argument(
@@ -266,7 +280,12 @@ def main() -> None:
     ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")
     ns = ap.parse_args()
 
-    prefix = ns.prefix or bundled_prefix() or "mipsel-none-elf-"
+    prefix = (
+        ns.prefix
+        or os.environ.get("BDA_TOOLCHAIN_PREFIX")
+        or bundled_prefix()
+        or "mipsel-none-elf-"
+    )
     data = build_bda(
         ns.source,
         ns.title,

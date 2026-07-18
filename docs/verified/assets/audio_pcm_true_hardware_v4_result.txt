@@ -1,0 +1,7 @@
+AudioStopV4 true-hardware observation
+
+returned_to_menu=yes
+sound_after_return=no
+system_responsive_after_return=yes
+
+The probe used SYS+0x0a0 only and did not call the fixed AIC MMIO address.
