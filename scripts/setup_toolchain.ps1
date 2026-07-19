@@ -1,7 +1,7 @@
 param(
-    [string]$Archive = "tools/g++-mipsel-none-elf-15.2.0.zip",
+    [string]$Archive = ".toolchain/g++-mipsel-none-elf-15.2.0.zip",
     [string]$Url = "https://static.grumpycoder.net/pixel/mips/g++-mipsel-none-elf-15.2.0.zip",
-    [string]$Destination = "tools",
+    [string]$Destination = ".toolchain",
     [string]$ExpectedSha256 = "8BA866E25C9826EE04AB4310365D264E3E73769E3738BB58AE38FD6740B7EE8D"
 )
 
@@ -12,16 +12,29 @@ $archivePath = Join-Path $root $Archive
 $destPath = Join-Path $root $Destination
 $expectedDir = Join-Path $destPath "g++-mipsel-none-elf-15.2.0"
 $gcc = Join-Path $destPath "bin/mipsel-none-elf-gcc.exe"
-$legacyGcc = Join-Path $expectedDir "bin/mipsel-none-elf-gcc.exe"
+$versionedGcc = Join-Path $expectedDir "bin/mipsel-none-elf-gcc.exe"
+$defaultDestPath = [IO.Path]::GetFullPath((Join-Path $root ".toolchain"))
+$legacyDestPath = Join-Path $root "tools"
+$legacyGcc = Join-Path $legacyDestPath "bin/mipsel-none-elf-gcc.exe"
+$legacyVersionedGcc = Join-Path $legacyDestPath "g++-mipsel-none-elf-15.2.0/bin/mipsel-none-elf-gcc.exe"
 
 if (Test-Path -LiteralPath $gcc) {
     Write-Host "Toolchain already installed: $destPath"
     exit 0
 }
 
-if (Test-Path -LiteralPath $legacyGcc) {
+if (Test-Path -LiteralPath $versionedGcc) {
     Write-Host "Toolchain already installed: $expectedDir"
     exit 0
+}
+
+if ([IO.Path]::GetFullPath($destPath) -eq $defaultDestPath) {
+    foreach ($legacyCandidate in @($legacyGcc, $legacyVersionedGcc)) {
+        if (Test-Path -LiteralPath $legacyCandidate) {
+            Write-Warning "Using legacy toolchain location: $legacyDestPath. New installations use .toolchain/."
+            exit 0
+        }
+    }
 }
 
 if (!(Test-Path -LiteralPath $archivePath)) {
@@ -45,9 +58,9 @@ if (Test-Path -LiteralPath $gcc) {
     exit 0
 }
 
-if (Test-Path -LiteralPath $legacyGcc) {
+if (Test-Path -LiteralPath $versionedGcc) {
     Write-Host "Toolchain ready: $expectedDir"
     exit 0
 }
 
-throw "Extraction finished, but gcc was not found at: $gcc or $legacyGcc"
+throw "Extraction finished, but gcc was not found at: $gcc or $versionedGcc"

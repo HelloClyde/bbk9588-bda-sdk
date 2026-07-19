@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from bda_packer import __version__
-from bda_packer.build import sdk_include_dir
+from bda_packer import build as build_module
+from bda_packer.build import bundled_prefix, sdk_include_dir
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +48,29 @@ class PythonPackageTest(unittest.TestCase):
             with patch.dict(os.environ, {"BDA_SDK_INCLUDE": str(include)}):
                 self.assertEqual(sdk_include_dir(), include)
 
+    def test_bundled_toolchain_prefers_new_cache_and_supports_legacy_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            current_bin = root / ".toolchain/bin"
+            legacy_bin = root / "tools/bin"
+            current_bin.mkdir(parents=True)
+            legacy_bin.mkdir(parents=True)
+            current_gcc = current_bin / "mipsel-none-elf-gcc.exe"
+            legacy_gcc = legacy_bin / "mipsel-none-elf-gcc.exe"
+            current_gcc.write_bytes(b"")
+            legacy_gcc.write_bytes(b"")
+
+            with patch.object(build_module, "REPO_ROOT", root):
+                self.assertEqual(
+                    bundled_prefix(),
+                    str(current_bin / "mipsel-none-elf-"),
+                )
+                current_gcc.unlink()
+                self.assertEqual(
+                    bundled_prefix(),
+                    str(legacy_bin / "mipsel-none-elf-"),
+                )
+
     def test_public_front_door_links_resolve(self) -> None:
         documents = [
             ROOT / "README.md",
@@ -59,7 +83,6 @@ class PythonPackageTest(unittest.TestCase):
             ROOT / "docs/compatibility.md",
             ROOT / "docs/releasing.md",
             ROOT / "example/README.md",
-            ROOT / "tools/README.md",
         ]
         pattern = re.compile(r"!?\[[^]]*\]\(([^)]+)\)")
         for document in documents:

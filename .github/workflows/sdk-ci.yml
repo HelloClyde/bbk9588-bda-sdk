@@ -35,8 +35,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            tools/bin
-            tools/g++-mipsel-none-elf-15.2.0.zip
+            .toolchain/bin
+            .toolchain/g++-mipsel-none-elf-15.2.0.zip
           key: mipsel-none-elf-15.2.0-8ba866e25c9826ee
 
       - name: Install verified MIPS toolchain
@@ -55,7 +55,7 @@ jobs:
           $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
           python -m venv build\wheel-smoke
           & build\wheel-smoke\Scripts\python.exe -m pip install $wheel
-          $prefix = (Resolve-Path tools\bin).Path + "\mipsel-none-elf-"
+          $prefix = (Resolve-Path .toolchain\bin).Path + "\mipsel-none-elf-"
           & build\wheel-smoke\Scripts\bda-pack.exe `
             example\basic\hello_world\hello_world_msgbox.c `
             --prefix $prefix --title WheelSmoke --category 9 `

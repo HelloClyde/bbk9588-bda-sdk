@@ -15,7 +15,7 @@ PC 侧 tail 日志文件
 
 ```text
 reverse/examples/usb_debug_bridge.c
-tools/usb_debug_host.py
+scripts/usb_debug_host.py
 build/UsbDebugBridge.bda
 ```
 
@@ -36,13 +36,13 @@ F:\应用\数据\debug\cmd.txt
 ## 常用命令
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --tail
-python tools\usb_debug_host.py --drive F: -c ping
-python tools\usb_debug_host.py --drive F: -c status
-python tools\usb_debug_host.py --drive F: -c "msg hello"
-python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt
-python tools\usb_debug_host.py --drive F: --scan-table fs --start 0 --end 0x90 --argc 0
-python tools\usb_debug_host.py --drive F: -c quit
+python scripts\usb_debug_host.py --drive F: --tail
+python scripts\usb_debug_host.py --drive F: -c ping
+python scripts\usb_debug_host.py --drive F: -c status
+python scripts\usb_debug_host.py --drive F: -c "msg hello"
+python scripts\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt
+python scripts\usb_debug_host.py --drive F: --scan-table fs --start 0 --end 0x90 --argc 0
+python scripts\usb_debug_host.py --drive F: -c quit
 ```
 
 BDA 读取后会删除 `cmd.txt`，因此每条命令都应作为新文件发送。
@@ -84,9 +84,9 @@ gui fs sys mem res
 示例：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: -c "call fs 7c 0"
-python tools\usb_debug_host.py --drive F: -c "call gui 2b8 4 0 0 0 0"
-python tools\usb_debug_host.py --drive F: -c "peek 81c00000 8"
+python scripts\usb_debug_host.py --drive F: -c "call fs 7c 0"
+python scripts\usb_debug_host.py --drive F: -c "call gui 2b8 4 0 0 0 0"
+python scripts\usb_debug_host.py --drive F: -c "peek 81c00000 8"
 ```
 
 这里没有原生 try/catch。如果调用跳到坏 table entry、传入坏 pointer，或违反 GUI 生命周期，
@@ -99,7 +99,7 @@ python tools\usb_debug_host.py --drive F: -c "peek 81c00000 8"
 主机 helper 可以循环执行命令：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --timeout 5
+python scripts\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --timeout 5
 ```
 
 batch 文件格式：
@@ -121,7 +121,7 @@ sleep 2
 不会阻塞时，才使用：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --continue-on-timeout
+python scripts\usb_debug_host.py --drive F: --batch build\usbdebug_batch.txt --continue-on-timeout
 ```
 
 部分 GUI 命令需要人工观察，或会弹出模态 UI。给这些行加 `manual` 前缀：
@@ -149,16 +149,16 @@ sleep 3
 offset 扫描模式会生成原始 `call` 命令：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 0
-python tools\usb_debug_host.py --drive F: --scan-table fs  --start 0 --end 0x90  --argc 0
-python tools\usb_debug_host.py --drive F: --scan-table sys --start 0 --end 0xc0  --argc 0
+python scripts\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 0
+python scripts\usb_debug_host.py --drive F: --scan-table fs  --start 0 --end 0x90  --argc 0
+python scripts\usb_debug_host.py --drive F: --scan-table sys --start 0 --end 0xc0  --argc 0
 ```
 
 也可以提供参数模板：
 
 ```powershell
-python tools\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 1 --arg 0
-python tools\usb_debug_host.py --drive F: --scan-table gui --start 0x2b8 --end 0x2b8 --argc 4 --arg 0 --arg 0 --arg 0 --arg 0
+python scripts\usb_debug_host.py --drive F: --scan-table gui --start 0 --end 0x900 --argc 1 --arg 0
+python scripts\usb_debug_host.py --drive F: --scan-table gui --start 0x2b8 --end 0x2b8 --argc 4 --arg 0 --arg 0 --arg 0 --arg 0
 ```
 
 扫描不会一次性证明语义。很多 GUI function 需要有效 handle、string pointer、draw context

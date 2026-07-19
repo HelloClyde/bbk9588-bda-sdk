@@ -14,6 +14,8 @@ All notable SDK and packer changes are recorded here. The project follows
 - Split the public SDK into focused memory, filesystem, input, time, window,
   graphics, dialogs, controls, and audio headers while retaining `bda_sdk.h`
   as the complete umbrella include.
+- Keep repository automation in `scripts/` and downloaded compiler state in
+  the ignored `.toolchain/` directory.
 
 ## 0.1.0-alpha.1
 
