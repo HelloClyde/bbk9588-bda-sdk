@@ -12,6 +12,8 @@ from bda_header import (
     BdaHeaderFields,
     CHECKSUM_OFF,
     CHECKSUM_XOR_KEY,
+    FIRMWARE_CATEGORY_CAPACITIES,
+    FIRMWARE_CATEGORY_LABELS,
     decoded_header_words,
     encode_word,
     get_title,
@@ -30,6 +32,27 @@ TOOLCHAIN_PREFIX = bundled_prefix() or "mipsel-none-elf-"
 
 
 class BdaHeaderTest(unittest.TestCase):
+    def test_firmware_category_labels_match_desktop_menu(self) -> None:
+        self.assertEqual(
+            FIRMWARE_CATEGORY_LABELS,
+            {
+                1: "听说",
+                2: "语法",
+                3: "阅读",
+                4: "娱乐天地",
+                5: "考试",
+                6: "背诵",
+                7: "词典",
+                8: "娱乐",
+                9: "工具",
+            },
+        )
+
+        self.assertEqual(
+            FIRMWARE_CATEGORY_CAPACITIES,
+            {1: 7, 2: 5, 3: 9, 4: 10, 5: 10, 6: 8, 7: 15, 8: 10, 9: 20},
+        )
+
     def test_compile_user_errors_are_chinese(self) -> None:
         with self.assertRaisesRegex(Exception, "背景色必须是 RRGGBB 六位十六进制"):
             parse_bg("bad")

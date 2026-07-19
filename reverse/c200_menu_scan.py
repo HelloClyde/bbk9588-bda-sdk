@@ -4,12 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import struct
 
 from capstone import CS_ARCH_MIPS, CS_MODE_32, CS_MODE_LITTLE_ENDIAN, Cs
 
 
 DEFAULT_C200 = Path("系统") / "数据" / "C200.bin"
 DEFAULT_BASE = 0x80004000
+CATEGORY_LABEL_TABLE_VA = 0x80366444
+CATEGORY_LABEL_STRIDE = 0x14
+CATEGORY_STATE_TABLE_VA = 0x80366834
+CATEGORY_STATE_STRIDE = 10
+CATEGORY_COUNT = 9
 
 MENU_NEEDLES = [
     "a:\\系统\\数据\\Config.inf",
@@ -51,6 +57,28 @@ def c_string(data: bytes, off: int) -> str:
     if end < 0:
         end = min(len(data), off + 128)
     return data[off:end].decode("gbk", "replace")
+
+
+def read_category_limits(data: bytes, base: int) -> list[dict[str, int | str]]:
+    rows: list[dict[str, int | str]] = []
+    for category in range(1, CATEGORY_COUNT + 1):
+        label_va = CATEGORY_LABEL_TABLE_VA + (category - 1) * CATEGORY_LABEL_STRIDE
+        state_va = CATEGORY_STATE_TABLE_VA + category * CATEGORY_STATE_STRIDE
+        label_off = label_va - base
+        state_off = state_va - base
+        if label_off < 0 or state_off < 0 or state_off + 4 > len(data):
+            raise ValueError("C200 category table is outside the supplied image")
+        capacity, initial_count = struct.unpack_from("<HH", data, state_off)
+        rows.append(
+            {
+                "category": category,
+                "label": c_string(data, label_off).replace(" ", ""),
+                "capacity": capacity,
+                "initial_count": initial_count,
+                "state_va": state_va,
+            }
+        )
+    return rows
 
 
 def mips_hi_lo_refs(data: bytes, va: int) -> list[dict[str, int | str]]:
@@ -118,7 +146,9 @@ def disasm_context(data: bytes, use_off: int, base: int, before: int = 0x18, aft
     lines: list[str] = []
     for ins in md.disasm(data[start:end], base + start):
         mark = "=>" if ins.address == base + use_off else "  "
-        lines.append(f"{mark} {ins.address:08x}: {ins.mnemonic:<8} {ins.op_str}")
+        lines.append(
+            f"{mark} {ins.address:08x}: {ins.mnemonic:<8} {ins.op_str}".rstrip()
+        )
     return lines
 
 
@@ -170,7 +200,13 @@ def scan(data: bytes, base: int) -> list[dict[str, object]]:
     return rows
 
 
-def write_markdown(rows: list[dict[str, object]], out: Path, source: Path, base: int) -> None:
+def write_markdown(
+    rows: list[dict[str, object]],
+    category_limits: list[dict[str, int | str]],
+    out: Path,
+    source: Path,
+    base: int,
+) -> None:
     context_rows = [row for row in rows if row.get("xrefs")]
     lines = [
         "# C200 首页菜单索引线索",
@@ -186,15 +222,34 @@ def write_markdown(rows: list[dict[str, object]], out: Path, source: Path, base:
         "",
         "## 结论",
         "",
-        "- C200 同时包含 `a:\\系统\\数据\\Config.inf` 和 `A:\\应用\\程序\\*.bda`，说明存在下载/额外应用表和 BDA 目录扫描路径。",
+        "- C200 同时包含 `a:\\系统\\数据\\Config.inf` 和 `A:\\应用\\程序\\*.bda`，但它们属于独立代码路径；字符串共存不能建立两者的索引关系。",
         "- 首页 carousel 还硬编码了一批 `A:\\应用\\程序\\*.bda` 路径，例如 `时间.bda`、`系统设置.bda`、`模拟考场.bda`、`作文.bda`、`九门课程.bda`、`电子图书.bda` 和 `我的相册.bda`。",
-        "- 因此仅替换 `Config.inf` slot 不能证明新增 BDA 会出现在首页；deploy 后仍需要菜单可见性和点击启动 smoke。",
+        "- `Config.inf` 与内置 BDA 的目录扫描、category 分类、排序、展示和菜单索引无关；替换其 slot 不会改变 BDA 菜单。",
+        "- BDA 扫描器按分类执行 `current_count < capacity`；各分类容量不同，固件预置或硬编码菜单项也会占用容量。",
+        "- category 4 的第 11 个 BDA 不展示已有动态证据；其他分类容量目前是 C200 静态证据，尚未逐类做满容量动态测试。",
+        "",
+        "## 分类容量表",
+        "",
+        "容量来自 `0x80366834 + category * 10` 的首个 halfword；`initial_count` 是",
+        "`0x8002c378..0x8002c3cc` 初始化后的预置菜单项数，不等于 BDA 文件数。",
+        "扫描器还会跳过已硬编码的“模拟考场”“作文”“九门课程”，因此不能简单用",
+        "`capacity - BDA 文件数` 计算剩余槽位。",
+        "",
+        "| category | 固件标签 | capacity | initial_count | state VA |",
+        "|---:|---|---:|---:|---:|",
+    ]
+    for item in category_limits:
+        lines.append(
+            f"| `{int(item['category'])}` | {item['label']} | `{int(item['capacity'])}` | "
+            f"`{int(item['initial_count'])}` | `0x{int(item['state_va']):08x}` |"
+        )
+    lines.extend([
         "",
         "## 字符串表",
         "",
         "| file_off | VA | xrefs | text |",
         "|---:|---:|---:|---|",
-    ]
+    ])
     for row in rows:
         text = str(row["text"]).replace("|", "\\|")
         lines.append(
@@ -220,9 +275,8 @@ def write_markdown(rows: list[dict[str, object]], out: Path, source: Path, base:
             lines.extend(str(line) for line in ref.get("context", []))
             lines.append("```")
             lines.append("")
-    lines.append("")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines), encoding="utf-8")
+    out.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -241,11 +295,18 @@ def main() -> int:
 
     data = ns.bin.read_bytes()
     rows = scan(data, ns.base)
+    category_limits = read_category_limits(data, ns.base)
     if ns.json is not None:
         ns.json.parent.mkdir(parents=True, exist_ok=True)
         ns.json.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
     if ns.markdown is not None:
-        write_markdown(rows, ns.markdown, ns.bin, ns.base)
+        write_markdown(rows, category_limits, ns.markdown, ns.bin, ns.base)
+
+    for item in category_limits:
+        print(
+            f"category={int(item['category'])} label={item['label']} "
+            f"capacity={int(item['capacity'])} initial={int(item['initial_count'])}"
+        )
 
     for row in rows:
         print(

@@ -559,6 +559,38 @@ class SdkDocsTest(unittest.TestCase):
         self.assertNotIn("python reverse\\bda_compile_c.py", docs)
         self.assertNotIn("python reverse\\bda_validate.py", docs)
 
+    def test_bda_packer_category_mapping_is_documented(self) -> None:
+        getting_started = read("docs/getting_started.md")
+        packer_readme = read("bda_packer/README.md")
+        header_notes = read("reverse/docs/bda_header_notes.md")
+        documents = [getting_started, packer_readme, header_notes]
+        expected = {
+            1: "听说",
+            2: "语法",
+            3: "阅读",
+            4: "娱乐天地",
+            5: "考试",
+            6: "背诵",
+            7: "词典",
+            8: "娱乐",
+            9: "工具",
+        }
+        capacities = {1: 7, 2: 5, 3: 9, 4: 10, 5: 10, 6: 8, 7: 15, 8: 10, 9: 20}
+        for document in documents:
+            for value, label in expected.items():
+                self.assertIn(f"`{value}` | {label} | `{capacities[value]}`", document)
+            self.assertIn("没有发现对应", document)
+            self.assertIn("总菜单项上限", document)
+
+        self.assertIn("游戏", getting_started)
+        self.assertIn("影音", getting_started)
+        self.assertIn("第 11 个 BDA", getting_started)
+        self.assertIn("其他分类上限来自 C200 固件", getting_started)
+        self.assertIn("0x80366444..0x803664e4", header_notes)
+        self.assertIn("54 个", header_notes)
+        self.assertIn("0x80366834 + category * 10", header_notes)
+        self.assertIn("current_count < capacity", header_notes)
+
     def test_verification_notes_document_current_verify_boundary(self) -> None:
         notes = read("reverse/docs/verification_notes.md")
         readme = read("reverse/docs/README.md")
@@ -954,7 +986,8 @@ class SdkDocsTest(unittest.TestCase):
             "## 唯一构建入口",
             "打包器不接受任何已有 BDA",
             "静态通过只证明文件会通过已还原的 loader 条件",
-            "category 4 已有 10 个菜单项",
+            "category 4）总容量为 10",
+            "第 11 个合法 BDA 文件",
             "属于菜单索引容量边界，不是 header 校验失败",
         ]
         for phrase in required:
@@ -3433,6 +3466,13 @@ class SdkDocsTest(unittest.TestCase):
             "`Config.inf` 与内置 BDA 的目录扫描、category 分类、排序、展示和菜单索引无关",
             "`A:\\应用\\程序\\我的相册.bda`",
             "`A:\\应用\\程序\\时间.bda`",
+            "## 分类容量表",
+            "`current_count < capacity`",
+            "| `1` | 听说 | `7` | `0` | `0x8036683e` |",
+            "| `4` | 娱乐天地 | `10` | `0` | `0x8036685c` |",
+            "| `7` | 词典 | `15` | `7` | `0x8036687a` |",
+            "| `9` | 工具 | `20` | `4` | `0x8036688e` |",
+            "其他分类容量目前是 C200 静态证据",
         ]
         for phrase in required:
             self.assertIn(phrase, report)
@@ -3691,7 +3731,14 @@ class SdkDocsTest(unittest.TestCase):
             "reverse/bda_compile_c.py": [
                 "包含 bda_main 的 freestanding C 源码",
                 "菜单标题，GBK 编码后最多 16 字节",
-                "菜单分类；固件要求低 16 位小于 10",
+                "菜单分类编号，通常使用 1..9",
+                "1  听说（总菜单项上限 7）",
+                "4  娱乐天地（游戏目录；总菜单项上限 10）",
+                "8  娱乐（影音、多媒体目录；总菜单项上限 10）",
+                "9  工具（总菜单项上限 20）",
+                "0  固件范围检查允许",
+                "固件内建项也会占用槽位",
+                "category 4 的第 11 个 BDA 不展示已动态验证",
                 "菜单图标 PNG",
                 "输出 BDA 路径",
             ],
