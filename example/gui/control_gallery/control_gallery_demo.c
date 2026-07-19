@@ -1,4 +1,8 @@
 #include "bda_controls.h"
+#include "bda_input.h"
+#include "bda_memory.h"
+#include "bda_time.h"
+#include "bda_window.h"
 
 #define CONTROL_COUNT 8u
 

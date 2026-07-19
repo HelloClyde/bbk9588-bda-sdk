@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class PythonPackageTest(unittest.TestCase):
     def test_version_is_synchronized(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        public_header = (ROOT / "sdk/include/bda_sdk.h").read_text(
+        public_header = (ROOT / "sdk/include/bda_types.h").read_text(
             encoding="utf-8"
         )
 

@@ -1,7 +1,8 @@
 #ifndef BDA_AUDIO_H
 #define BDA_AUDIO_H
 
-#include "bda_sdk.h"
+#include "bda_types.h"
+#include "bda/detail/runtime.h"
 
 /* Dynamically verified raw PCM format on the kj409588/C200 firmware. */
 #define BDA_AUDIO_SAMPLE_RATE_22050 22050u

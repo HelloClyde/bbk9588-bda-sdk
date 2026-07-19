@@ -1,11 +1,14 @@
 # 控件 API
 
 `sdk/include/bda_controls.h` 收录 kj409588/C200 固件上已由独立 BDA 在 8013 模拟器
-动态验证的控件接口。它会自动包含 `bda_sdk.h`：
+动态验证的控件接口：
 
 ```c
 #include "bda_controls.h"
 ```
+
+该模块不会自动包含完整 `bda_sdk.h`。带 Frame、输入和绘图的控件程序还应按需包含
+`bda_window.h`、`bda_input.h`、`bda_time.h` 或 `bda_graphics.h`。
 
 验证使用 `E:\bbk9588-emulator-v0.1.5` 的专用 `runtime\bda_test` NAND。测试时
 `C200.bin` SHA-256 始终为

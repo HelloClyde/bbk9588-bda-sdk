@@ -1,4 +1,7 @@
 #include "bda_dialogs.h"
+#include "bda_filesystem.h"
+#include "bda_input.h"
+#include "bda_time.h"
 
 static const char k_log_path[] =
     "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\\xd3\xce\xcf\xb7\\TOUCHPRESS.TXT";

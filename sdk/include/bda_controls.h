@@ -1,7 +1,8 @@
 #ifndef BDA_CONTROLS_H
 #define BDA_CONTROLS_H
 
-#include "bda_sdk.h"
+#include "bda_types.h"
+#include "bda/detail/runtime.h"
 
 /* Dynamically verified control classes on the kj409588/C200 firmware. */
 #define BDA_CONTROL_CLASS_STATIC      "static"

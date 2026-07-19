@@ -1,4 +1,9 @@
 #include "bda_controls.h"
+#include "bda_graphics.h"
+#include "bda_input.h"
+#include "bda_memory.h"
+#include "bda_time.h"
+#include "bda_window.h"
 
 #define CUSTOM_WIDTH  170
 #define CUSTOM_HEIGHT 100

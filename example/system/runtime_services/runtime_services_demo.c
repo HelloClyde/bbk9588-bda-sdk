@@ -1,4 +1,5 @@
 #include "bda_dialogs.h"
+#include "bda_filesystem.h"
 
 static const char k_data_root[] =
     "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\\xd3\xce\xcf\xb7";
