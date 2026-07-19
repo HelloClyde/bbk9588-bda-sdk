@@ -1,6 +1,6 @@
 # 游戏系统 API 验证进度
 
-更新时间：2026-07-18
+更新时间：2026-07-20
 
 > 研究头兼容说明：`reverse/bda_research_sdk.h` 暂时保留
 > `bda_gui_tick_count_25ms_like()`、`bda_gui_tick_elapsed_25ms_like()`、
@@ -31,6 +31,9 @@ open/write/attenuation 和 `SYS+0x0a0` stop 已在真机形成安全返回闭环
 | 显示参数 | GUI `+0x300` | 是 | V1 两次通过 | 待测 | `240*320`、16 bpp、2 bytes/pixel |
 | 阻塞延时 | SYS `+0x080` | 是 | 已有使用 | 真机已有使用 | 是 busy-wait，不是游戏 tick |
 | 单调计时 | GUI `+0x6d8` | 是 | V9 通过 | 待测 | 32-bit raw tick，周期 25 ms；elapsed 用无符号差值 |
+| TCU1/CP0 高分辨率计时 | 直接 MMIO / `mfc0 $9` | 是 | V2 通过 | V2 失败 | 真机 MMIO 全一、CP0 恒零；模拟器专用结果，不可公开 |
+| 未启用毫秒全局 | RAM `0x80473ed0` | 是 | V3 失败 | 不测 | 四个窗口恒零；旧 timer-0 初始化未进入当前启动流程 |
+| 标称 1 ms 系统计时器 | GUI `+0x714/+0x718/+0x71c` | 是 | V4 通过 | V4 通过 | 真机窗口 194..200 count，subtick 与 stop 通过；已公开 |
 | 窗口定时消息 | GUI `+0x1ac/+0x1b0` + 静态框架 | 部分 | 待重建 | 待测 | 表入口只发送 `0x162/0x163`，调度在原机根窗口框架 |
 | 批量绘图 | GUI `+0x3f8/+0x400` 调用链 | 部分 | 暂停危险探针 | 真机失败过 | 缺少原机 game surface/context 生命周期 |
 | 字体指标 | GUI `+0x4a4/+0x4d0/+0x4d4` | 是 | V3 通过 | 待测 | 当前字体有效，cell 为 `16*16` |
@@ -131,6 +134,147 @@ replace helper 报告的 `C200.bin` SHA-256 仍为
 为 16 bit，metric `6` 为 2 bytes/pixel。CP0 Count 在三档 busy-wait 前后都递增，
 但两次运行中短延时的差值并不稳定，不能直接用作毫秒换算。它目前只作为后续
 计时研究的单调硬件计数基线。
+
+## HighResolutionTimerProbeV2
+
+源码：`reverse/examples/high_resolution_timer_probe.c`
+
+输出：`A:\HRTIMER.TXT`
+
+构建目标：`build/HighResolutionTimerProbeV2.bda`
+
+静态证据：
+
+1. C200 `0x8012bcd4` 配置 JZ4740 TCU channel 1：`TDFR1=TDHR1=18750`，
+   `TCSR1=0x14`。12 MHz external clock 经 `/16` prescale 后为 750 kHz。
+2. IRQ `0x8012bb90` 每次递增 GUI `+0x6d8` 使用的 coarse tick，并清 timer-1 flag。
+3. U-Boot `0x8091ce34` 是 `mfc0 v0, c0_count` 的直接 getter，证明 CP0 Count 在该
+   平台存在；C200 runtime table 和官方 BDA 中未找到可调用的同类 getter。
+4. 因此研究头使用只读 MMIO 把 `GUI+0x6d8` 与 `TCNT1` 组合成 750 kHz counter，
+   并在 coarse tick 或 pending flag 变化时重试，避免跨 rollover 混合两个 epoch。
+
+8013 模拟器 V2 结果：
+
+```text
+TDFR1=0x0000493E
+TDHR1=0x0000493E
+TCSR1=0x00000014
+WINDOW=0 TICKS=8 CP0=33600732 TCU=150003 HIRES=150004 CP0/TCU=224 US=200005
+WINDOW=1 TICKS=8 CP0=33599347 TCU=149997 HIRES=149997 CP0/TCU=224 US=199996
+WINDOW=2 TICKS=8 CP0=33600068 TCU=150000 HIRES=150000 CP0/TCU=224 US=200000
+WINDOW=3 TICKS=8 CP0=33600070 TCU=150000 HIRES=150000 CP0/TCU=224 US=200000
+FAILURES=0x00000000
+RESULT=PASS
+```
+
+真机 V2 结果：
+
+```text
+START HIGH RESOLUTION TIMER PROBE V2
+TDFR1=0x0000FFFF
+TDHR1=0x0000FFFF
+TCSR1=0x0000FFFF
+TFR=0xFFFFFFFF
+WINDOW=0 TICKS=8 CP0=0 TCU=524280 HIRES=150000 CP0/TCU=0 US=200000 C0=0 C1=0
+WINDOW=1 TICKS=8 CP0=0 TCU=524280 HIRES=150000 CP0/TCU=0 US=200000 C0=0 C1=0
+WINDOW=2 TICKS=8 CP0=0 TCU=524280 HIRES=150000 CP0/TCU=0 US=200000 C0=0 C1=0
+WINDOW=3 TICKS=8 CP0=0 TCU=524280 HIRES=150000 CP0/TCU=0 US=200000 C0=0 C1=0
+FAILURES=0x00000004
+RESULT=FAIL
+END HIGH RESOLUTION TIMER PROBE V2
+```
+
+结论：模拟器中的 CP0 Count 为 168 MHz，TCU1 为 750 kHz，但这两项都不能从真机
+BDA 直接读取。真机 `TCNT1` 前后均为 `0xffff`，所以日志中的 `HIRES=150000` 只是
+8 个 coarse tick 乘以 18750，并没有 fine counter 贡献。750 kHz 组合 helper 已撤销；
+这条路径不进入公开 `sdk/include/bda_time.h`。
+
+## HighResolutionTimerProbeV3
+
+源码：`reverse/examples/high_resolution_timer_probe.c`
+
+输出：`A:\HRTIMER.TXT`
+
+构建目标：`build/HighResolutionTimerProbeV3.bda`
+
+V3 改为验证 C200 内部的 1 ms 固件计数器：
+
+1. `0x800043f8` 把 timer-0 配置为 12 MHz external clock、`/4` prescale、3000 count。
+2. timer-0 因此每 1 ms 触发一次；IRQ `0x800043e0` 递增 RAM word `0x80473ed0`。
+3. 四段 8 个 GUI tick 的窗口应各得到约 200 个毫秒计数。
+4. subtick 测试要求 `0x80473ed0` 在 `GUI+0x6d8` 尚未变化时先增加，直接证明粒度
+   小于 25 ms。
+
+8013 V3 结果：
+
+```text
+MILLI START=0x00000000
+WINDOW=0..3 TICKS=8 MS=0 M0=0 M1=0
+SUBTICK=FAIL TICK=554 M0=0 M1=0
+FAILURES=0x00000005
+RESULT=FAIL
+```
+
+结论：该 RAM word 在当前 C200 启动流程中没有启用，不再作为候选，也不送真机测试。
+
+## HighResolutionTimerProbeV4
+
+源码：`reverse/examples/high_resolution_timer_probe.c`
+
+输出：`A:\HRTIMER.TXT`
+
+构建目标：`build/HighResolutionTimerProbeV4.bda`
+
+继续扫描 GUI 表后找到了真正的 timer API：
+
+1. GUI `+0x714` 指向 `0x8001dce0`，把 TCU0 配置为 external 12 MHz、`/16`、
+   `TDFR0=TDHR0=750`，并注册 IRQ `0x17`。
+2. IRQ callback `0x8001dec0` 每次递增 `0x80473fd0`，理论周期为 1 ms。
+3. GUI `+0x71c` 指向 `0x8001dde0`，无参数返回该 32-bit counter。
+4. GUI `+0x718` 指向 `0x8001ddb0`，mask timer-0 并注销 IRQ `0x17`。
+5. V4 检查 200 ms 窗口、25 ms 内 subtick 变化，以及 stop 后 50 ms 内 counter 保持。
+
+该组入口有明确 start/read/stop 生命周期；每次 start 必须在 BDA 退出前匹配一次 stop。
+8013 V4 结果：
+
+```text
+START HIGH RESOLUTION TIMER PROBE V4
+BEFORE TIMER START
+TIMER STARTED
+MILLI START=0x00000010
+WINDOW=0 TICKS=8 MS=200 M0=34 M1=234
+WINDOW=1 TICKS=8 MS=200 M0=259 M1=459
+WINDOW=2 TICKS=8 MS=200 M0=484 M1=684
+WINDOW=3 TICKS=8 MS=200 M0=709 M1=909
+SUBTICK=PASS TICK=549 M0=934 M1=935
+BEFORE TIMER STOP
+TIMER STOPPED
+STOP CHECK TICKS=2 C0=943 C1=943
+FAILURES=0x00000000
+RESULT=PASS
+END HIGH RESOLUTION TIMER PROBE V4
+```
+
+真机 V4 结果：
+
+```text
+START HIGH RESOLUTION TIMER PROBE V4
+MILLI START=0x0000001C
+WINDOW=0 TICKS=8 MS=200 M0=64 M1=264
+WINDOW=1 TICKS=8 MS=194 M0=292 M1=486
+WINDOW=2 TICKS=8 MS=194 M0=514 M1=708
+WINDOW=3 TICKS=8 MS=194 M0=736 M1=930
+SUBTICK=PASS TICK=197589 M0=959 M1=960
+TIMER STOPPED
+STOP CHECK TICKS=2 C0=1017 C1=1017
+FAILURES=0x00000000
+RESULT=PASS
+```
+
+模拟器与真机生命周期都已闭环，因此该组接口进入公开 `sdk/include/bda_time.h`。
+`194..200` 的窗口结果同时说明它只能称为标称 1 ms counter，不能宣称墙钟误差为
+1 ms。完整真机日志见
+`docs/verified/assets/high_resolution_timer_v4_hardware_log.txt`。
 
 ## 雷霆窗口定时器静态对照
 

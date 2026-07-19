@@ -91,6 +91,7 @@ class SdkDocsTest(unittest.TestCase):
                 "game_rendering_api.md",
                 "graphics_primitives_api.md",
                 "help_page_api.md",
+                "high_resolution_timer_api.md",
                 "input_polling_api.md",
                 "msgbox_api.md",
                 "picture_rendering_api.md",
@@ -1256,6 +1257,76 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("24.853 ms/tick", progress)
         self.assertIn("真机待测", time_notes)
         self.assertIn("进入 `sdk/include`", time_notes)
+
+    def test_high_resolution_timer_public_api_matches_hardware_evidence(self) -> None:
+        header = SDK_HEADER.read_text(encoding="utf-8")
+        stable_header = public_sdk_text()
+        verified = read("docs/verified/high_resolution_timer_api.md")
+        hardware_log = read(
+            "docs/verified/assets/high_resolution_timer_v4_hardware_log.txt"
+        )
+        time_notes = read("reverse/docs/time_notes.md")
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
+
+        self.assertIn("bda_cp0_count_raw_like(void)", header)
+        self.assertIn("BDA_TCU_TIMER1_COUNTS_PER_SECOND_LIKE 750000u", header)
+        self.assertIn("0xb0002058u", header)
+        self.assertIn("bda_tcu_timer1_available_like(void)", header)
+        self.assertNotIn("bda_time_counter_750khz_like", header)
+        self.assertNotIn("bda_firmware_millisecond_count_raw_like", header)
+        self.assertIn("BDA_GUI_MILLISECOND_TIMER_START_LIKE 0x714u", header)
+        self.assertIn("BDA_GUI_MILLISECOND_TIMER_STOP_LIKE  0x718u", header)
+        self.assertIn("BDA_GUI_MILLISECOND_COUNT_LIKE       0x71cu", header)
+        self.assertIn("bda_gui_millisecond_timer_start_like(void)", header)
+        self.assertIn("bda_gui_millisecond_timer_stop_like(void)", header)
+        self.assertIn("bda_gui_millisecond_count_like(void)", header)
+        self.assertIn("bda_gui_millisecond_elapsed_like(u32 start, u32 end)", header)
+        self.assertNotIn("bda_time_counter_750khz", stable_header)
+        self.assertNotIn("bda_cp0_count_raw", stable_header)
+        for offset in [
+            "BDA_SDK_INTERNAL_GUI_MILLISECOND_TIMER_START 0x714u",
+            "BDA_SDK_INTERNAL_GUI_MILLISECOND_TIMER_STOP  0x718u",
+            "BDA_SDK_INTERNAL_GUI_MILLISECOND_COUNT       0x71cu",
+        ]:
+            self.assertIn(offset, stable_header)
+        for name in [
+            "bda_gui_millisecond_timer_start(void)",
+            "bda_gui_millisecond_timer_stop(void)",
+            "bda_gui_millisecond_count(void)",
+            "bda_gui_millisecond_elapsed(u32 start, u32 end)",
+        ]:
+            self.assertIn(name, stable_header)
+            self.assertIn(name, verified)
+        self.assertIn("0x8091ce34", time_notes + c200_notes + progress)
+        self.assertIn("HighResolutionTimerProbeV2", time_notes + progress)
+        self.assertIn("TDFR1=0x0000FFFF", time_notes + progress)
+        self.assertIn("CP0 Count 恒为零", time_notes + c200_notes + progress)
+        self.assertIn("HighResolutionTimerProbeV3", time_notes + c200_notes + progress)
+        self.assertIn("HighResolutionTimerProbeV4", time_notes + c200_notes + progress)
+        self.assertIn("0x8001dce0", time_notes + c200_notes + progress)
+        self.assertIn("0x8001dec0", time_notes + c200_notes + progress)
+        self.assertIn("0x8001dde0", time_notes + c200_notes + progress)
+        self.assertIn("0x8001ddb0", time_notes + c200_notes + progress)
+        for phrase in [
+            "标称 1 ms",
+            "每次 BDA 只启动一次",
+            "不要连续调用\n两次 `start`",
+            "不承诺计数与真实毫秒\n严格相等",
+            "STOP CHECK TICKS=2 C0=1017 C1=1017",
+            "SUBTICK=PASS",
+            "RESULT=PASS",
+        ]:
+            self.assertIn(phrase, verified + "\n" + hardware_log)
+        self.assertIn("WINDOW=1 TICKS=8 MS=194", hardware_log)
+        self.assertIn("high_resolution_timer_api.md", read("docs/verified/README.md"))
+        self.assertIn(
+            "high_resolution_timer_api.md",
+            read("docs/verified/public_api_policy.md"),
+        )
+        self.assertTrue(
+            (ROOT / "example/system/high_resolution_timer/HighResolutionTimer.bda").is_file()
+        )
 
     def test_stub_and_constant_query_apis_are_not_misleading(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")

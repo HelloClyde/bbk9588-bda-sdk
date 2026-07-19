@@ -2470,6 +2470,55 @@ system function VA：`0x8012bdb0`
 - 当前公开等级是模拟器稳定；研究头保留 `_like` 供 probe 使用，普通应用使用上面的
   无后缀公开名称。真机状态仍为待复测。
 
+### TCU1 / CP0 Count：高分辨率计时研究
+
+这组直接硬件读取不是 runtime table offset；证据来自固件 timer 初始化、U-Boot
+和只读探针：
+
+- `0x8012bcd4` 把 TCU channel 1 的 `TDFR1/TDHR1` 都设为 `18750`，`TCSR1`
+  设为 `0x14`。12 MHz external clock 经 `/16` 后，`TCNT1` 频率为 750 kHz。
+- `0x8012bb90` 是对应 IRQ；它递增 coarse tick 并向 `0xb0002028` 清 timer-1 flag。
+- U-Boot `0x8091ce34` 直接执行 `mfc0 v0, c0_count` 后返回；C200 image 与官方 BDA
+  中未找到同类可调用 wrapper。
+- `HighResolutionTimerProbeV2` 在 8013 上四段 8-tick 窗口得到约 150000 个 TCU
+  count 和约 33600000 个 CP0 count，`CP0/TCU=224`，组合 counter 换算均约 200 ms。
+- 同一 V2 在真机上读到 `TDFR1/TDHR1/TCSR1=0xffff`、`TFR=0xffffffff`、CP0 Count
+  恒为零。日志中的 150000 只是 coarse tick 换算，不能证明存在 fine counter。
+
+因此研究头只保留 `bda_cp0_count_raw_like()`、TCU1 raw getter 和 availability helper
+用于复现实验，750 kHz 组合 helper 已撤销。直接 JZ4740 MMIO/CP0 路径不得进入公开
+SDK。
+
+### Timer-0 固件毫秒全局：V3 否定
+
+这仍不是 runtime table offset，而是 C200 固件内部状态：
+
+- `0x800043f8` 把 timer-0 的 external 12 MHz clock 设为 `/4`，将
+  `TDFR0/TDHR0` 写为 `3000`，并注册 IRQ `0x17`。
+- `0x800043e0` 是该 IRQ 的极短 handler，每次把 `0x80473ed0` 的 32-bit word 加一。
+- 静态上该 word 应是 1 ms counter，但 `HighResolutionTimerProbeV3` 在 8013 的四个
+  200 ms 窗口内始终读到零，subtick 也失败。
+
+结论：`0x800043f8` 没有进入当前 C200 启动流程，这个内部全局不是可用计时源；相关
+helper 已撤销。
+
+### GUI +0x714/+0x718/+0x71c：1 ms timer 生命周期
+
+这三个此前未命名的 GUI table entry 已由 V4 在模拟器和真机完成动态闭环：
+
+- `GUI+0x714 -> 0x8001dce0`：配置 TCU0。`TCSR0=0x14` 表示 external 12 MHz `/16`，
+  `TDFR0=TDHR0=0x2ee` 即 750 count，并把 `0x8001dec0` 注册为 IRQ `0x17`。
+- `0x8001dec0` 每次把全局 `0x80473fd0` 加一，因此理论频率为 1000 Hz。
+- `GUI+0x71c -> 0x8001dde0`：无参数，直接返回 `0x80473fd0`。
+- `GUI+0x718 -> 0x8001ddb0`：mask timer-0 并注销 IRQ `0x17`。
+
+8013 上四个 200 ms 窗口均精确得到 200，subtick 从 934 增到 935，stop 后等待
+50 ms 保持 943。真机窗口为 `200/194/194/194`，subtick 从 959 增到 960，stop 后
+保持 1017，`FAILURES=0`。每个 start 必须在退出前配对一次 stop；counter 不会在 start
+时清零，应用必须保存基线并使用无符号差值。公开 wrapper 已进入
+`sdk/include/bda_time.h`；由于真机窗口存在约 3% 差异，公开语义是标称 1 ms 的
+高分辨率单调计数，不是精确墙钟。
+
 ### GUI +0x738: `BDA_GUI_SCREEN_WIDTH_LIKE`
 
 system function VA：`0x80024708`

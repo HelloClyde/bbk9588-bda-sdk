@@ -31,6 +31,100 @@ u32 bda_gui_tick_elapsed_ms(u32 start, u32 end);
 稳定等级进入 `sdk/include`，真机待测。
 这与 `SYS+0x080` busy-wait delay 和 `SYS+0x09c` preset selector 是三条不同路径。
 
+## 高分辨率计时研究
+
+官方 BDA 没有直接执行 `mfc0 ..., $9`；U-Boot `0x8091ce34` 虽提供 CP0 Count
+getter，但 U-Boot 地址在 C200/BDA 运行期不可作为 SDK 入口调用。继续扫描 GUI 表的
+未命名入口后，已定位到一组独立的 1 ms timer start/read/stop API。
+
+### V2 否定的路径
+
+C200 `0x8012bcd4` 把 JZ4740 TCU channel 1 配置为：
+
+```text
+TDFR1  0xb0002050 = 18750
+TDHR1  0xb0002054 = 18750
+TCNT1  0xb0002058 = 0..18749
+TCSR1  0xb000205c = 0x14  // external 12 MHz, /16
+```
+
+8013 模拟器把 `TCNT1` 实现为 750 kHz、约 1.333 us 粒度的 fine counter；V2 四段
+200 ms 窗口分别得到 `150004/149997/150000/150000`，CP0 Count 与 TCU1 比例为
+224。但真机 V2 返回：
+
+```text
+TDFR1=0x0000FFFF
+TDHR1=0x0000FFFF
+TCSR1=0x0000FFFF
+TFR=0xFFFFFFFF
+WINDOW=0..3 CP0=0 TCU=524280 HIRES=150000
+FAILURES=0x00000004
+RESULT=FAIL
+```
+
+真机中的直接 TCU MMIO 是全一开路值，CP0 Count 恒为零。`HIRES=150000` 仅来自
+`8 * 18750` 的 coarse tick 换算；前后 `TCNT1` 都为 `0xffff`，相减后没有提供任何
+fine 时间。因此 750 kHz 组合 helper 已撤销，TCU/CP0 路径明确判定为不可公开。
+
+### V3 否定的路径：未启用固件全局
+
+C200 还包含独立 timer-0 路径：
+
+```text
+0x800043f8  TCSR0 = external clock / 4，TDFR0 = TDHR0 = 3000
+0x800043e0  timer-0 IRQ：将 *(u32 *)0x80473ed0 加一
+```
+
+12 MHz external clock 经 `/4` 后为 3 MHz，3000 count 周期正好是 1 ms。但 V3 在
+8013 上四个窗口的 `0x80473ed0` 差值全部为零，subtick 也失败，说明这段旧 timer-0
+初始化没有进入当前 C200 启动流程。直接读取该 RAM word 的 helper 已撤销。
+
+### V4 已验证：GUI 标称 1 ms timer API
+
+GUI 表靠后的三个未命名入口构成完整生命周期：
+
+```text
+GUI +0x714 -> 0x8001dce0  start：TCU0 external 12 MHz /16，period 750
+GUI +0x718 -> 0x8001ddb0  stop：mask timer-0 并注销 IRQ 0x17
+GUI +0x71c -> 0x8001dde0  read：返回 *(u32 *)0x80473fd0
+IRQ callback 0x8001dec0   每次将 0x80473fd0 加一
+```
+
+`750000 / 750 = 1000 Hz`，因此该 API 的理论粒度为 1 ms。8013 V4 的四个 200 ms
+窗口均得到 `MS=200`；同一 25 ms GUI tick 内 counter 从 934 增到 935；stop 后等待
+50 ms，counter 保持 943。真机 V4 的四个窗口为 `200/194/194/194`，同一 25 ms tick
+内 counter 从 959 增到 960，stop 后保持 `1017`，最终 `RESULT=PASS`。该组 API 已进入
+`sdk/include/bda_time.h`；公开文档明确将它描述为标称 1 ms 的单调计数，不承诺墙钟
+误差为 1 ms。
+
+研究头当前提供以下符号：
+
+```c
+#define BDA_TCU_TIMER1_FLAG_LIKE              0x00000002u
+#define BDA_TCU_TIMER1_COUNTS_PER_TICK_LIKE   18750u
+#define BDA_TCU_TIMER1_COUNTS_PER_SECOND_LIKE 750000u
+#define BDA_GUI_MILLISECOND_TIMER_START_LIKE  0x714u
+#define BDA_GUI_MILLISECOND_TIMER_STOP_LIKE   0x718u
+#define BDA_GUI_MILLISECOND_COUNT_LIKE        0x71cu
+
+u32 bda_cp0_count_raw_like(void);
+u32 bda_tcu_flags_raw_like(void);
+u32 bda_tcu_timer1_period_raw_like(void);
+u32 bda_tcu_timer1_half_period_raw_like(void);
+u32 bda_tcu_timer1_count_raw_like(void);
+u32 bda_tcu_timer1_control_raw_like(void);
+int bda_tcu_timer1_available_like(void);
+void bda_gui_millisecond_timer_start_like(void);
+void bda_gui_millisecond_timer_stop_like(void);
+u32 bda_gui_millisecond_count_like(void);
+u32 bda_gui_millisecond_elapsed_like(u32 start, u32 end);
+```
+
+TCU raw getter 只用于复现 V2 的模拟器/真机差异；
+`bda_tcu_timer1_available_like()` 在真机返回 false。V4 的 1 ms API 必须严格配对调用
+start/stop，elapsed helper 使用无符号差值。带 `_like` 的符号保留给历史 probe；普通
+应用使用公开的 `bda_gui_millisecond_*` 名称。
+
 ## SYS 表调用
 
 ```text
@@ -87,6 +181,10 @@ alarm slot 的 `SYS+0x0b0`，然后显示 return value 和原始 byte。
 
 `reverse/examples/game_tick_probe.c` 只读 `GUI+0x6d8`，等待至少 40 个 raw tick，
 将每条结果立即写入 `A:\应用\数据\游戏\GAMETICK.TXT` 后返回菜单。
+
+`reverse/examples/high_resolution_timer_probe.c` V4 调用 GUI `+0x714/+0x718/+0x71c`
+并用 `GUI+0x6d8` 交叉验证，将实时结果写入 `A:\HRTIMER.TXT`。真机测试构建产物为
+`build/HighResolutionTimerProbeV4.bda`。
 
 该 probe 刻意不调用 `SYS+0x0ac`。`SYS+0x0a8` 在 C200 中是 no-op stub，已经从
 SDK 公开 wrapper 中移除。
