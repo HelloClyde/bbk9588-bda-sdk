@@ -26,12 +26,12 @@ PACKAGED_SDK_INCLUDE_DIR = Path(__file__).resolve().parent / "include"
 
 
 def bundled_prefix() -> str | None:
-    root = REPO_ROOT / "tools"
-    direct = root / "bin" / "mipsel-none-elf-gcc.exe"
-    if direct.is_file():
-        return str(direct.parent / "mipsel-none-elf-")
-    for gcc in root.glob("g++-mipsel-none-elf-*/bin/mipsel-none-elf-gcc.exe"):
-        return str(gcc.parent / "mipsel-none-elf-")
+    for root in (REPO_ROOT / ".toolchain", REPO_ROOT / "tools"):
+        direct = root / "bin" / "mipsel-none-elf-gcc.exe"
+        if direct.is_file():
+            return str(direct.parent / "mipsel-none-elf-")
+        for gcc in root.glob("g++-mipsel-none-elf-*/bin/mipsel-none-elf-gcc.exe"):
+            return str(gcc.parent / "mipsel-none-elf-")
     return None
 
 

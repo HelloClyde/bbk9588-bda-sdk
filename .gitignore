@@ -6,10 +6,8 @@
 /build/
 /dist/
 
-# Toolchain bundle: keep the packaged archive and docs, ignore extracted files.
-/tools/*
-!/tools/README.md
-!/tools/*.py
+# Downloaded MIPS toolchain and archive are generated local state.
+/.toolchain/
 
 # Python caches and local virtual environments.
 __pycache__/

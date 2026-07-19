@@ -25,6 +25,6 @@ They are ignored by `.gitignore`. Scripts and notes may refer to paths under
 those directories, but users should provide their own local dump.
 
 The setup script can download a public MIPS little-endian toolchain archive
-under `tools/` so the SDK can build native BDA files locally. Do not commit the
+under `.toolchain/` so the SDK can build native BDA files locally. Do not commit the
 downloaded archive or the extracted toolchain directory; both are generated
 local state.
