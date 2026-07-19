@@ -22,6 +22,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/graphics/picture_render/PictureRender.bda", "PictureRaw", 9),
         ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
+        ("example/system/high_resolution_timer/HighResolutionTimer.bda", "HighResTimer", 9),
         ("example/system/file_selector/FileSelector.bda", "FileSelect", 9),
         ("example/system/confirm_dialog/ConfirmDialog.bda", "Confirm", 9),
         ("example/system/three_button_dialog/ThreeButtonDialog.bda", "ThreeDialog", 9),
@@ -235,6 +236,12 @@ class SdkExamplesTest(unittest.TestCase):
             "example/system/runtime_services/runtime_services_demo.c", "RuntimeSvc"
         )
 
+    def test_high_resolution_timer_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/high_resolution_timer/high_resolution_timer_demo.c",
+            "HighResTimer",
+        )
+
     def test_audio_pcm_example_builds(self) -> None:
         self.build_and_validate(
             "example/system/audio_pcm/audio_pcm_demo.c", "AudioPCM"
@@ -322,6 +329,11 @@ class SdkExamplesTest(unittest.TestCase):
 
     def test_game_tick_probe_builds(self) -> None:
         self.build_and_validate("reverse/examples/game_tick_probe.c", "GameTickV9")
+
+    def test_high_resolution_timer_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/high_resolution_timer_probe.c", "HiResTimerV4"
+        )
 
     def test_game_polyline_clip_probe_builds(self) -> None:
         self.build_and_validate(

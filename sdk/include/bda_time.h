@@ -21,6 +21,40 @@ static inline u32 bda_gui_tick_elapsed_ms(u32 start, u32 end) {
     return bda_gui_tick_elapsed_25ms(start, end) * 25u;
 }
 
+/*
+ * Firmware-owned, nominal 1 ms timer. Start it once, take counter snapshots,
+ * then stop it exactly once before the BDA exits. It is not reference counted.
+ */
+static inline void bda_gui_millisecond_timer_start(void) {
+    typedef void (*fn_t)(void);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_MILLISECOND_TIMER_START
+    );
+    fn();
+}
+
+static inline void bda_gui_millisecond_timer_stop(void) {
+    typedef void (*fn_t)(void);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_MILLISECOND_TIMER_STOP
+    );
+    fn();
+}
+
+/* Read only between the matching start and stop calls. */
+static inline u32 bda_gui_millisecond_count(void) {
+    typedef u32 (*fn_t)(void);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(), BDA_SDK_INTERNAL_GUI_MILLISECOND_COUNT
+    );
+    return fn();
+}
+
+/* Unsigned subtraction remains correct across one u32 counter wrap. */
+static inline u32 bda_gui_millisecond_elapsed(u32 start, u32 end) {
+    return end - start;
+}
+
 /* Busy-wait delay exercised by the verified input, touch and graphics BDAs. */
 static inline void bda_sys_delay(u32 delay_units) {
     (void)bda_sdk_internal_call1(

@@ -19,6 +19,8 @@ All notable SDK and packer changes are recorded here. The project follows
 - Document the complete firmware menu mapping for `bda-pack --category`.
 - Document each category's firmware menu capacity and distinguish the
   dynamically verified category 4 boundary from other static limits.
+- Publish the true-hardware-verified nominal 1 ms timer lifecycle API, while
+  documenting its observed 194-200 count range over nominal 200 ms windows.
 
 ## 0.1.0-alpha.1
 

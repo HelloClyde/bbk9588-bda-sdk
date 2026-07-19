@@ -197,6 +197,9 @@ V9 验证了 `0xfffffff0 -> 0x10` 的回绕差值为 `0x20`，并用宿主独立
 `24.7-24.9 ms/tick`。`elapsed_ms` 是 32-bit 乘法，超长运行程序应直接保留 tick 或
 自行使用更宽的累计值。
 
+需要分辨 25 ms 内变化时，使用真机验证的标称 1 ms timer，并严格配对 start/stop；
+完整生命周期和真机误差边界见[高分辨率计时 API](high_resolution_timer_api.md)。
+
 ## 窗口生命周期
 
 离屏绘制不改变 frame 的强制退出顺序。扫雷使用并验证了以下完整链路：

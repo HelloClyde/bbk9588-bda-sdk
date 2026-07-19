@@ -168,6 +168,9 @@ typedef unsigned long long u64;
 #define BDA_GUI_TOUCH_POSITION_LIKE    0x6c0u
 #define BDA_GUI_TICK_COUNT_25MS_LIKE   0x6d8u
 #define BDA_GUI_GAME_DISPLAY_PUMP_LIKE 0x6e0u
+#define BDA_GUI_MILLISECOND_TIMER_START_LIKE 0x714u
+#define BDA_GUI_MILLISECOND_TIMER_STOP_LIKE  0x718u
+#define BDA_GUI_MILLISECOND_COUNT_LIKE       0x71cu
 #define BDA_GUI_STATE_QUERY_LIKE       0x72cu
 #define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u
 #define BDA_GUI_EVENT_FETCH_LIKE       0x750u
@@ -1871,6 +1874,72 @@ static inline u32 bda_gui_tick_elapsed_25ms_like(u32 start, u32 end) {
 
 static inline u32 bda_gui_tick_elapsed_ms_like(u32 start, u32 end) {
     return bda_gui_tick_elapsed_25ms_like(start, end) * 25u;
+}
+
+/*
+ * GUI+0x714 configures TCU channel 0 for a 1 ms period and registers IRQ 0x17;
+ * +0x718 masks/unregisters it; +0x71c returns the IRQ's 32-bit incrementing
+ * counter. The timer owns a firmware resource, so every successful start must
+ * have one matching stop before the BDA exits. Hardware V4 passed; stable
+ * applications should use the counterparts in sdk/include/bda_time.h.
+ */
+static inline void bda_gui_millisecond_timer_start_like(void) {
+    (void)bda_call0(bda_gui_table(), BDA_GUI_MILLISECOND_TIMER_START_LIKE);
+}
+
+static inline void bda_gui_millisecond_timer_stop_like(void) {
+    (void)bda_call0(bda_gui_table(), BDA_GUI_MILLISECOND_TIMER_STOP_LIKE);
+}
+
+static inline u32 bda_gui_millisecond_count_like(void) {
+    return (u32)bda_call0(bda_gui_table(), BDA_GUI_MILLISECOND_COUNT_LIKE);
+}
+
+static inline u32 bda_gui_millisecond_elapsed_like(u32 start, u32 end) {
+    return end - start;
+}
+
+/*
+ * Emulator-only TCU1 observation path. The 8013 emulator exposes these JZ4740
+ * registers, but true 9588 hardware returned all ones and CP0 Count returned
+ * zero in HighResolutionTimerProbeV2. Do not use these raw reads for timing.
+ */
+#define BDA_TCU_TIMER1_FLAG_LIKE              0x00000002u
+#define BDA_TCU_TIMER1_COUNTS_PER_TICK_LIKE   18750u
+#define BDA_TCU_TIMER1_COUNTS_PER_SECOND_LIKE 750000u
+
+static inline u32 bda_cp0_count_raw_like(void) {
+    u32 value;
+
+    __asm__ volatile("mfc0 %0, $9" : "=r"(value));
+    return value;
+}
+
+static inline u32 bda_tcu_flags_raw_like(void) {
+    return *(volatile u32 *)0xb0002020u;
+}
+
+static inline u16 bda_tcu_timer1_period_raw_like(void) {
+    return *(volatile u16 *)0xb0002050u;
+}
+
+static inline u16 bda_tcu_timer1_half_period_raw_like(void) {
+    return *(volatile u16 *)0xb0002054u;
+}
+
+static inline u16 bda_tcu_timer1_count_raw_like(void) {
+    return *(volatile u16 *)0xb0002058u;
+}
+
+static inline u16 bda_tcu_timer1_control_raw_like(void) {
+    return *(volatile u16 *)0xb000205cu;
+}
+
+static inline int bda_tcu_timer1_available_like(void) {
+    return
+        bda_tcu_timer1_period_raw_like() == BDA_TCU_TIMER1_COUNTS_PER_TICK_LIKE &&
+        bda_tcu_timer1_half_period_raw_like() == BDA_TCU_TIMER1_COUNTS_PER_TICK_LIKE &&
+        bda_tcu_timer1_control_raw_like() == 0x14u;
 }
 
 /*

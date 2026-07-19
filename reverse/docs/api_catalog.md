@@ -138,6 +138,9 @@
 | GUI | +0x6c8 | `BDA_GUI_FILE_SELECTOR_UPDATE_LIKE` | 17 | 13 | 中 | file selector modal run；a0=descriptor，C200 entry 将它原样传给内部 helper。 |
 | GUI | +0x6d8 | `BDA_GUI_TICK_COUNT_25MS_LIKE` | 4 | 1 | 中 | 25 ms raw tick counter；无参数返回 u32，C200 定时 IRQ 递增，BBVM 用无符号差值乘 25 转为毫秒。 |
 | GUI | +0x6e0 | `BDA_GUI_GAME_DISPLAY_PUMP_LIKE` | 51 | 19 | 中 | 触摸长按驱动的 game state pump；C200 无参数，先查 pen GPIO，阈值 0x1068 后写全局状态；有副作用。 |
+| GUI | +0x714 | `BDA_GUI_MILLISECOND_TIMER_START_LIKE` | 0 | 0 | 中 | 1 ms timer start；C200 配置 TCU0 为 750 kHz/750 count 并注册 IRQ 0x17；必须与 +0x718 配对。 |
+| GUI | +0x718 | `BDA_GUI_MILLISECOND_TIMER_STOP_LIKE` | 0 | 0 | 中 | 1 ms timer stop；C200 mask TCU0 并注销 IRQ 0x17；每个成功 start 在退出前调用一次。 |
+| GUI | +0x71c | `BDA_GUI_MILLISECOND_COUNT_LIKE` | 0 | 0 | 中 | 标称 1 ms raw counter；无参数返回 u32，只有 +0x714 start 后才持续递增；V4 在 8013 和真机通过，真机 200 ms 窗口实测 194..200 count。 |
 | GUI | +0x72c | `BDA_GUI_STATE_QUERY_LIKE` | 9 | 6 | 中 | GAMEBOY 状态查询；C200 table entry 无参数并更新内部状态 word。 |
 | GUI | +0x738 | `BDA_GUI_SCREEN_WIDTH_LIKE` | 12 | 6 | 中 | 返回屏幕宽度常量；C200 当前返回 0x130。 |
 | GUI | +0x750 | `BDA_GUI_EVENT_FETCH_LIKE` | 2 | 2 | 中 | event/key 获取；C200 使用 a0/a1 两个输出 pointer，无事件时写 -1。 |
