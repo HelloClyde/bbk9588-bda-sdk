@@ -1,9 +1,9 @@
 # `sdk/include` 准入规则
 
-`sdk/include/bda_sdk.h` 是基础公开头，`sdk/include/bda_dialogs.h`、
-`sdk/include/bda_controls.h` 和 `sdk/include/bda_audio.h` 分别是模态消息框、系统帮助页及
-文件选择器、控件与 raw PCM 公开头。这里不是逆向 API 候选目录，只能放入已经动态验证、
-ABI 稳定且结论确定的系统或固件绑定 API。
+`sdk/include/bda_sdk.h` 是全部已验证模块的聚合入口；内存、文件、输入、计时、窗口、
+绘图、对话框、控件和音频分别位于独立 `bda_*.h`。`bda/detail/runtime.h` 只承载这些
+wrapper 共用的动态函数表实现。这里不是逆向 API 候选目录，只能放入已经动态验证、ABI
+稳定且结论确定的系统或固件绑定 API。
 
 ## 必须满足的条件
 

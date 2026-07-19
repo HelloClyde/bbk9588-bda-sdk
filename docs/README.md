@@ -14,13 +14,22 @@
 
 | 头文件 | 用途 |
 |---|---|
-| [`bda_sdk.h`](../sdk/include/bda_sdk.h) | 基础类型、窗口、绘图、输入、文件和内存 |
+| [`bda_sdk.h`](../sdk/include/bda_sdk.h) | 聚合全部已验证公共模块 |
+| [`bda_types.h`](../sdk/include/bda_types.h) | SDK 版本、基础类型和 handle |
+| [`bda_memory.h`](../sdk/include/bda_memory.h) | freestanding 内存 helper 和 heap |
+| [`bda_filesystem.h`](../sdk/include/bda_filesystem.h) | 文件、seek、目录和枚举 |
+| [`bda_input.h`](../sdk/include/bda_input.h) | 按键包和触摸状态 |
+| [`bda_time.h`](../sdk/include/bda_time.h) | tick、elapsed 和 busy-wait delay |
+| [`bda_window.h`](../sdk/include/bda_window.h) | Frame、消息、事件泵和生命周期 |
+| [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX 和 picture |
 | [`bda_dialogs.h`](../sdk/include/bda_dialogs.h) | 消息框、确认框、帮助页和文件选择器 |
 | [`bda_controls.h`](../sdk/include/bda_controls.h) | 内建控件、GIF 与自定义控件 |
 | [`bda_audio.h`](../sdk/include/bda_audio.h) | raw PCM 写入、衰减和停止 |
 
 公开应用不要包含 `reverse/bda_research_sdk.h`。该文件中的名称、参数和生命周期仍可
 变化，也可能包含真机会死锁的实验接口。
+
+模块依赖和按需包含方法见 [SDK API 目录](sdk_api_layout.md)。
 
 ## API 指南
 

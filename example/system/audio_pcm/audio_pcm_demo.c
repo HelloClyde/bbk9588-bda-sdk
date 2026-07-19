@@ -1,4 +1,6 @@
 #include "bda_audio.h"
+#include "bda_filesystem.h"
+#include "bda_time.h"
 
 #define PCM_SAMPLE_COUNT 512u
 #define PCM_BYTE_COUNT (PCM_SAMPLE_COUNT * (u32)sizeof(s16))

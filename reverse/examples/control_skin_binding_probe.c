@@ -1,4 +1,9 @@
 #include "bda_controls.h"
+#include "bda_filesystem.h"
+#include "bda_graphics.h"
+#include "bda_input.h"
+#include "bda_time.h"
+#include "bda_window.h"
 
 #define TEXT_A_BACKGROUND_INDEX 11u
 #define BLACK_BACKGROUND_INDEX   1u

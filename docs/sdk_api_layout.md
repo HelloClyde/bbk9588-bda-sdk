@@ -1,54 +1,48 @@
 # SDK API 目录
 
-`sdk/` 只保存 API header，且只允许已经验证的公开接口，不再混放候选接口、示例、
-图片或开发文档：
-
-```text
-sdk/include/bda_sdk.h  动态验证后公开的稳定 API
-sdk/include/bda_dialogs.h  已验证 Message Box、确认框、帮助页与文件选择器 API
-sdk/include/bda_controls.h  已验证控件与自定义控件 API
-sdk/include/bda_audio.h  已验证 raw PCM open/write/attenuation/stop API
-```
-
-未验证的候选 API 单独保存在 `reverse/bda_research_sdk.h`。
-
-仓库打包器默认加入 `sdk/include`，因此普通程序可以直接：
+`sdk/include/` 只保存动态验证后公开的 API。普通应用可以包含完整聚合头：
 
 ```c
 #include "bda_sdk.h"
 ```
 
-需要内建或自定义控件时直接包含扩展头；它会自动包含基础头：
+也可以按能力显式包含模块，避免一个对话框或音频程序得到全部 SDK 声明：
+
+| 头文件 | 能力 |
+|---|---|
+| `bda_types.h` | SDK 版本、freestanding 基础类型和 handle |
+| `bda_memory.h` | `memset`、`memcpy`、堆分配与释放 |
+| `bda_filesystem.h` | 文件读写、seek、目录与枚举 |
+| `bda_input.h` | 六键轮询和触摸按下状态 |
+| `bda_time.h` | 25 ms tick、elapsed helper 和 busy-wait delay |
+| `bda_window.h` | Frame、消息、事件泵和窗口生命周期 |
+| `bda_graphics.h` | draw context、图元、文字、VX、picture 和 context copy |
+| `bda_dialogs.h` | Message Box、确认框、帮助页和文件选择器 |
+| `bda_controls.h` | 内建控件、GIF 和自定义控件类 |
+| `bda_audio.h` | raw PCM open/write/attenuation/stop |
+| `bda_sdk.h` | 聚合上述全部公共模块 |
+
+例如，一个带窗口、按键和绘图的游戏可以只包含：
 
 ```c
-#include "bda_controls.h"
+#include "bda_graphics.h"
+#include "bda_input.h"
+#include "bda_time.h"
+#include "bda_window.h"
 ```
 
-需要消息框、确认框、帮助页或文件选择器时包含 dialog 头；它同样自动包含基础头：
+模块头只包含自身实现所需的依赖，不会自动包含 `bda_sdk.h`。底层动态函数表和调用
+helper 位于 `bda/detail/runtime.h`，它是公开 wrapper 的实现细节，应用不应直接包含。
 
-```c
-#include "bda_dialogs.h"
-```
+未验证候选 API 单独保存在 `reverse/bda_research_sdk.h`。只有
+`reverse/examples/` 中的受控研究 probe 才显式传入 `-I reverse`；普通应用不得依赖
+候选 header。
 
-需要 raw PCM 音频时包含独立音频头；它同样自动包含基础头：
-
-```c
-#include "bda_audio.h"
-```
-
-只有 `reverse/examples/` 中的受控研究 probe 才显式传入 `-I reverse`；普通应用不应
-依赖候选 header。
-
-- 已验证示例：[example/README.md](../example/README.md)
-- 开发者文档：[docs/README.md](README.md)
-- 公开 API 准入规则：[docs/verified/public_api_policy.md](verified/public_api_policy.md)
-- 触摸与窗口生命周期：[touch_window_lifecycle_api.md](verified/touch_window_lifecycle_api.md)
-- 游戏绘图与计时：[game_rendering_api.md](verified/game_rendering_api.md)
-- 堆、seek 与目录服务：[runtime_services_api.md](verified/runtime_services_api.md)
-- 原始 RGB565 picture 提交：[picture_rendering_api.md](verified/picture_rendering_api.md)
-- 系统文件选择器：[file_selector_api.md](verified/file_selector_api.md)
-- 系统帮助页：[help_page_api.md](verified/help_page_api.md)
-- Message Box 与确认框：[msgbox_api.md](verified/msgbox_api.md)
-- 内建控件：[controls_api.md](verified/controls_api.md)
-- Raw PCM 音频：[audio_pcm_api.md](verified/audio_pcm_api.md)
-- 自定义控件教程：[custom_controls.md](tutorials/custom_controls.md)
+- [已验证示例](../example/README.md)
+- [开发者文档](README.md)
+- [公开 API 准入规则](verified/public_api_policy.md)
+- [触摸与窗口生命周期](verified/touch_window_lifecycle_api.md)
+- [游戏绘图与计时](verified/game_rendering_api.md)
+- [堆、seek 与目录服务](verified/runtime_services_api.md)
+- [内建控件](verified/controls_api.md)
+- [Raw PCM 音频](verified/audio_pcm_api.md)

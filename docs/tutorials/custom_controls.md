@@ -1,7 +1,8 @@
 # 自定义控件教程
 
 自定义控件适合游戏 HUD、特殊按钮、画板或固件没有提供的交互部件。已验证示例位于
-`example/gui/custom_control/custom_control_demo.c`，只依赖 `bda_controls.h`。
+`example/gui/custom_control/custom_control_demo.c`，显式包含控件、窗口、绘图、输入、
+计时和内存模块。
 
 ## 1. 注册类
 

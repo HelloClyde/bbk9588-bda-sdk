@@ -3,8 +3,8 @@
 本目录只收录已经在 BBK 9588 真机或 8013 完整 NAND 模拟器中形成运行闭环的
 开发者示例。逆向候选和危险探针保留在 `reverse/examples/`，不会混入这里。
 
-所有源码只包含 `sdk/include/bda_sdk.h`、独立 dialog 头 `sdk/include/bda_dialogs.h`、
-控件头 `sdk/include/bda_controls.h` 或音频头 `sdk/include/bda_audio.h`，不会访问
+所有源码只包含 `sdk/include/` 中的公开模块头；复杂示例显式列出窗口、绘图、输入等
+依赖，扫雷等完整程序也可以使用聚合 `bda_sdk.h`。示例不会访问
 `reverse/bda_research_sdk.h`。
 
 每个叶子目录中的 `.bda` 都由同目录 `.c` 构建，并已通过 header、entry、checksum 和

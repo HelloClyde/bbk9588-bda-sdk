@@ -1,7 +1,8 @@
 #ifndef BDA_DIALOGS_H
 #define BDA_DIALOGS_H
 
-#include "bda_sdk.h"
+#include "bda_memory.h"
+#include "bda/detail/runtime.h"
 
 /* Dynamically verified GUI+0x2b8 modal layouts. */
 #define BDA_MSGBOX_TYPE_OK          0u

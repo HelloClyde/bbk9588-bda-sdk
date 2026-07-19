@@ -1,4 +1,5 @@
 #include "bda_dialogs.h"
+#include "bda_filesystem.h"
 
 static const char k_log_path[] = "A:\\DIALOG6.LOG";
 static char g_result_message[160];

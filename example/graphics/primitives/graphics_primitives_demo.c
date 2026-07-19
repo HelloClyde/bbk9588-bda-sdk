@@ -1,4 +1,9 @@
 #include "bda_dialogs.h"
+#include "bda_graphics.h"
+#include "bda_input.h"
+#include "bda_memory.h"
+#include "bda_time.h"
+#include "bda_window.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320

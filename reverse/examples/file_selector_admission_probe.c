@@ -1,4 +1,5 @@
 #include "bda_dialogs.h"
+#include "bda_filesystem.h"
 
 static bda_file_selector_t g_selector;
 

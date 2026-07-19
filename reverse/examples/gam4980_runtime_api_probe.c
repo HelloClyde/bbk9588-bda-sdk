@@ -1,4 +1,5 @@
 #include "bda_dialogs.h"
+#include "bda_filesystem.h"
 
 /*
  * Admission probe for the runtime APIs needed by gam4980-9588.

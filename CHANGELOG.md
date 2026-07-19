@@ -11,6 +11,9 @@ All notable SDK and packer changes are recorded here. The project follows
 - Add CI, compatibility documentation, and a focused developer quick start.
 - License original project material under Apache License 2.0 and document
   third-party data boundaries in `NOTICE` and `DATA_NOTICE.md`.
+- Split the public SDK into focused memory, filesystem, input, time, window,
+  graphics, dialogs, controls, and audio headers while retaining `bda_sdk.h`
+  as the complete umbrella include.
 
 ## 0.1.0-alpha.1
 

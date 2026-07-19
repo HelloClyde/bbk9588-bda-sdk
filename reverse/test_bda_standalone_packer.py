@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,42 @@ from bda_packer.validate import validate_bda
 
 
 class StandalonePackerTest(unittest.TestCase):
+    def test_each_public_header_is_self_contained(self) -> None:
+        prefix = bundled_prefix() or "mipsel-none-elf-"
+        try:
+            gcc = find_tool(prefix, "gcc")
+        except SystemExit as exc:
+            self.skipTest(str(exc))
+
+        include_dir = sdk_include_dir()
+        headers = sorted(
+            path.relative_to(include_dir).as_posix()
+            for path in include_dir.rglob("*.h")
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for index, header in enumerate(headers):
+                source = root / f"header_{index}.c"
+                output = root / f"header_{index}.o"
+                source.write_text(
+                    f'#include "{header}"\nint header_smoke(void) {{ return 0; }}\n',
+                    encoding="ascii",
+                )
+                subprocess.check_call(
+                    [
+                        gcc,
+                        "-std=c99",
+                        "-ffreestanding",
+                        "-fno-builtin",
+                        "-I",
+                        str(include_dir),
+                        "-c",
+                        str(source),
+                        "-o",
+                        str(output),
+                    ]
+                )
+
     def test_custom_include_dirs_precede_stable_sdk(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             custom = Path(temp_dir) / "candidate"
@@ -37,6 +74,10 @@ class StandalonePackerTest(unittest.TestCase):
     def test_public_header_enforces_dynamic_verification_boundary(self) -> None:
         include_dir = sdk_include_dir()
         header_text = (include_dir / "bda_sdk.h").read_text(encoding="utf-8")
+        public_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(include_dir.rglob("*.h"))
+        )
         policy_text = (
             Path(__file__).resolve().parents[1]
             / "docs"
@@ -46,10 +87,10 @@ class StandalonePackerTest(unittest.TestCase):
 
         self.assertIn("Admission rule", header_text)
         self.assertIn("动态验证", policy_text)
-        self.assertNotIn("_like", header_text.lower())
-        self.assertNotIn("bda_gui_touch_position_like", header_text)
-        self.assertNotIn("bda_gui_create_window_like", header_text)
-        self.assertNotIn("bda_fs_mkdir_like", header_text)
+        self.assertNotIn("_like", public_text.lower())
+        self.assertNotIn("bda_gui_touch_position_like", public_text)
+        self.assertNotIn("bda_gui_create_window_like", public_text)
+        self.assertNotIn("bda_fs_mkdir_like", public_text)
         for public_name in [
             "bda_alloc",
             "bda_free",
@@ -61,7 +102,7 @@ class StandalonePackerTest(unittest.TestCase):
             "bda_fs_findclose",
             "bda_gui_render_picture",
         ]:
-            self.assertIn(public_name, header_text)
+            self.assertIn(public_name, public_text)
 
     def test_header_is_built_from_firmware_constants(self) -> None:
         data = bytearray(b"\0" * 0x200)
