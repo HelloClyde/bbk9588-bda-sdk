@@ -34,10 +34,8 @@ jobs:
       - name: Cache MIPS toolchain
         uses: actions/cache@v4
         with:
-          path: |
-            .toolchain/bin
-            .toolchain/g++-mipsel-none-elf-15.2.0.zip
-          key: mipsel-none-elf-15.2.0-8ba866e25c9826ee
+          path: .toolchain
+          key: mipsel-none-elf-15.2.0-8ba866e25c9826ee-full-v1
 
       - name: Install verified MIPS toolchain
         shell: pwsh
