@@ -19,9 +19,10 @@ python -m bda_packer example\games\minesweeper\minesweeper_bda.c `
 `example/games/minesweeper/minesweeper_icon.png`，打包器会生成固件需要的两个 `80x80` 图标，以及
 `54x54` 和 `58x58` RGB565 VX 图标。
 
-原版固件的分类 4 已占满 10 个菜单项；直接追加第 11 个 BDA 不会显示。8013 验证时
-只在专用测试 NAND 中替换已有的 `雷霆战机.bda` 路径，菜单第二页成功显示新标题和
-图标，并可启动后通过 ESC 正常返回。`C200.bin` 校验哈希保持不变。
+C200 分类状态表确认 category 4 的总菜单容量为 10；8013 动态测试中直接追加第 11 个
+BDA 不会显示。验证时只在专用测试 NAND 中替换已有的 `雷霆战机.bda` 路径，菜单
+第二页成功显示新标题和图标，并可启动后通过 ESC 正常返回。`C200.bin` 校验哈希保持
+不变。
 
 最终测试包 SHA-256：
 

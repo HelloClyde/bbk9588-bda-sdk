@@ -9,7 +9,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
-from .header import BdaHeaderFields, write_header
+from .header import (
+    BdaHeaderFields,
+    FIRMWARE_CATEGORY_CAPACITIES,
+    FIRMWARE_CATEGORY_LABELS,
+    write_header,
+)
 from .validate import validate_bda
 from .vx_icon import make_vx, read_png, resize_cover, rgb565_bytes
 
@@ -23,6 +28,31 @@ ICON_SIZES = tuple(24 + width * height * 2 for width, height in ICON_SPECS)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SDK_INCLUDE_DIR = REPO_ROOT / "sdk" / "include"
 PACKAGED_SDK_INCLUDE_DIR = Path(__file__).resolve().parent / "include"
+
+
+def category_help_epilog() -> str:
+    usage_notes = {
+        4: "游戏目录",
+        8: "影音、多媒体目录",
+    }
+    lines = ["菜单分类（header category 低 16 位）："]
+    for value, label in FIRMWARE_CATEGORY_LABELS.items():
+        note = usage_notes.get(value)
+        capacity = FIRMWARE_CATEGORY_CAPACITIES[value]
+        details = [note] if note else []
+        details.append(f"总菜单项上限 {capacity}")
+        suffix = f"（{'；'.join(details)}）"
+        lines.append(f"  {value}  {label}{suffix}")
+    lines.extend(
+        [
+            "  0  固件范围检查允许，但未发现对应的原机应用目录，不建议使用",
+            "",
+            "上限是分类的总菜单项容量，固件内建项也会占用槽位。",
+            "category 4 的第 11 个 BDA 不展示已动态验证；其他上限来自 C200 静态分析。",
+            "通常直接传 1..9。原机个别 BDA 的高 16 位带有标志，含义尚未确认。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def bundled_prefix() -> str | None:
@@ -242,6 +272,8 @@ def build_bda(
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="从 freestanding C 源码直接编译、链接并打包 BBK 9588 BDA。",
+        epilog=category_help_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
     ap._positionals.title = "位置参数"
@@ -254,7 +286,8 @@ def main() -> None:
         "--category",
         type=lambda text: int(text, 0),
         required=True,
-        help="菜单分类；固件要求低 16 位小于 10",
+        metavar="N",
+        help="菜单分类编号，通常使用 1..9；完整映射见下方",
     )
     ap.add_argument("--icon-png", type=Path, help="菜单图标 PNG；省略时生成内置诊断图标")
     ap.add_argument(

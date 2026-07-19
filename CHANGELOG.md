@@ -16,6 +16,9 @@ All notable SDK and packer changes are recorded here. The project follows
   as the complete umbrella include.
 - Keep repository automation in `scripts/` and downloaded compiler state in
   the ignored `.toolchain/` directory.
+- Document the complete firmware menu mapping for `bda-pack --category`.
+- Document each category's firmware menu capacity and distinguish the
+  dynamically verified category 4 boundary from other static limits.
 
 ## 0.1.0-alpha.1
 

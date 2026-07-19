@@ -18,6 +18,28 @@ FIRMWARE_WORD04 = 0x5D245562
 FIRMWARE_VERSION = 0x01000102
 FIRMWARE_MIN_VERSION_LOW16 = 0x0102
 FIRMWARE_CATEGORY_LIMIT = 10
+FIRMWARE_CATEGORY_LABELS = {
+    1: "听说",
+    2: "语法",
+    3: "阅读",
+    4: "娱乐天地",
+    5: "考试",
+    6: "背诵",
+    7: "词典",
+    8: "娱乐",
+    9: "工具",
+}
+FIRMWARE_CATEGORY_CAPACITIES = {
+    1: 7,
+    2: 5,
+    3: 9,
+    4: 10,
+    5: 10,
+    6: 8,
+    7: 15,
+    8: 10,
+    9: 20,
+}
 FIRMWARE_HIDDEN_TITLE = "资源管理"
 
 
