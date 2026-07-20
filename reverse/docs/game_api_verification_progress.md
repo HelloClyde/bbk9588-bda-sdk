@@ -12,7 +12,7 @@
 
 - **静态确认**：C200 或原机 BDA 反汇编已经确认入口和参数边界。
 - **模拟器通过**：在 `bbk9588-emulator-v0.1.5` 的完整 NAND 固件路径运行通过。
-- **真机通过**：在 C200 真机形成可重复闭环后，才能进入 `docs/verified/`。
+- **真机通过**：在 C200 真机形成可重复闭环，是高于模拟器结果的独立证据等级。
 
 模拟器通过不自动等于真机通过，也不会让全部候选 API 自动进入公开 SDK。V6/V8/V9、
 V19-V21 和完整扫雷闭环重复确认的 compatible context、VX、context copy、洋红色键、
@@ -34,7 +34,7 @@ open/write/attenuation 和 `SYS+0x0a0` stop 已在真机形成安全返回闭环
 | TCU1/CP0 高分辨率计时 | 直接 MMIO / `mfc0 $9` | 是 | V2 通过 | V2 失败 | 真机 MMIO 全一、CP0 恒零；模拟器专用结果，不可公开 |
 | 未启用毫秒全局 | RAM `0x80473ed0` | 是 | V3 失败 | 不测 | 四个窗口恒零；旧 timer-0 初始化未进入当前启动流程 |
 | 标称 1 ms 系统计时器 | GUI `+0x714/+0x718/+0x71c` | 是 | V4 通过 | V4 通过 | 真机窗口 194..200 count，subtick 与 stop 通过；已公开 |
-| 窗口定时消息 | GUI `+0x1ac/+0x1b0` + 静态框架 | 部分 | 待重建 | 待测 | 表入口只发送 `0x162/0x163`，调度在原机根窗口框架 |
+| 窗口定时消息 | GUI `+0x1ac..+0x1bc` | 是 | V4 通过 | V4 通过 | 10 ms 调度、`0x144` 消息、16 槽与完整注销已验证并公开 |
 | 批量绘图 | GUI `+0x3f8/+0x400` 调用链 | 部分 | 暂停危险探针 | 真机失败过 | 缺少原机 game surface/context 生命周期 |
 | 字体指标 | GUI `+0x4a4/+0x4d0/+0x4d4` | 是 | V3 通过 | 待测 | 当前字体有效，cell 为 `16*16` |
 | frame client rect | GUI `+0x0a4` | 是 | V3 通过 | 待测 | 有效 frame 返回 `(0,0)-(240,320)` |
@@ -276,25 +276,51 @@ RESULT=PASS
 1 ms。完整真机日志见
 `docs/verified/assets/high_resolution_timer_v4_hardware_log.txt`。
 
-## 雷霆窗口定时器静态对照
+## 窗口定时器静态与动态闭环
 
-配套源码调用 `WinStartTimer(win, interval)`，雷霆 BDA 中对应静态 wrapper
-`0x81c10060`。它实际执行：
+雷霆的 `WinStartTimer` wrapper 位于 `0x81c10060`，实际执行：
 
 ```text
-GUI+0x1ac(root_object, win, interval)
+GUI+0x1ac(frame, timer_id, period_ms)
 ```
 
 `WinStopTimer` 对应静态 wrapper `0x81c1009c`：
 
 ```text
-GUI+0x1b0(root_object, win_or_timer)
+GUI+0x1b0(frame, timer_id)
 ```
 
-C200 已确认 `+0x1ac/+0x1b0` 只同步发送内部消息 `0x162/0x163`。定时器列表、
-周期推进和 `WM_TIMER` 转发属于雷霆静态链接的根窗口框架，不能只给这两个表入口
-改名就得到通用系统定时器。后续要重建该框架，或者基于 CP0 Count 在 SDK 实现独立
-游戏时钟。
+C200 全局 dispatcher 把内部 `0x162/0x163` 转给原生注册/注销函数。timer 记录为
+`{frame,timer_id,period_ms,elapsed_ms}`，单条 16 byte，全局最多 16 条。调度器时钟每次
+增加 10 ms；到期后事件获取路径返回 message `0x144`、`wparam=timer_id`、`lparam=0`。
+
+`WindowTimerProbeV4.bda` 在 8013 模拟器和 BBK 9588 真机均验证了 40 ms 连续触发、
+改为 20 ms、exists 状态、停止以及稀疏 timer 表场景，两边结果都是
+`FAILURES=0x00000000`、`RESULT=PASS`。公开 API 位于
+`sdk/include/bda_time.h`，说明和完整日志见 `docs/verified/window_timer_api.md`、
+`docs/verified/assets/window_timer_v4_emulator_log.txt` 和
+`docs/verified/assets/window_timer_v4_hardware_log.txt`。
+
+原生 `GUI+0x1b8` 的改周期实现会在稀疏表中无判空解引用，因此没有公开。SDK 的
+`bda_gui_window_timer_set_period()` 使用已验证的 stop/start 组合。Frame 关闭前必须停止
+它拥有的每一个 timer。真机 40/20 ms scheduler clock 增量已经闭环；16 timer 并发、
+事件泵长期阻塞和其他固件版本的负载上限仍待验证。
+
+`WindowTimerPrecisionV6.bda` 进一步在 8013 模拟器执行四组各 12 个无日志干扰样本：
+
+```text
+REQUEST=5  EXPECT=10  SCHED_MIN=10 SCHED_MAX=10 SCHED_AVG=10
+REQUEST=10 EXPECT=10  SCHED_MIN=10 SCHED_MAX=10 SCHED_AVG=10
+REQUEST=15 EXPECT=20  SCHED_MIN=20 SCHED_MAX=20 SCHED_AVG=20
+REQUEST=25 EXPECT=30  SCHED_MIN=30 SCHED_MAX=30 SCHED_AVG=30
+SCHED FAILURES=0x00000000
+SCHED RESULT=PASS
+RESULT=PASS
+```
+
+这把 `ceil(period_ms / 10) * 10 ms` 从静态推断提升为模拟器动态结论。模拟器中的标称
+1 ms counter 与 GUI scheduler 不同步，跨时钟 delivery 检查超出容差；V6 真机复测将
+单独判断实际投递抖动，不能用模拟器该项结果宣称真机回调延迟。
 
 ## GameAudioProbeV2
 
@@ -1464,4 +1490,4 @@ END MINESWEEPER V1
 2. 从原机图片/游戏调用点继续恢复 alpha/其他 blend mode，并确认是否存在硬件加速 sprite 专用入口。
 3. 继续恢复原机 raw `GUI+0x3f8/+0x400` full-screen blit 的 shell 状态；安全闭环前仍不直接测试。
 4. 从 GAMEBOY/飞天影音退出路径恢复 raw PCM 的真正 stop/close 顺序。
-5. 从雷霆根窗口过程恢复 `0x162/0x163 -> WM_TIMER` 的静态调度逻辑。
+5. 压测 16 个窗口 timer 并发、事件泵长期阻塞后的消息合并行为和 clock 回绕。

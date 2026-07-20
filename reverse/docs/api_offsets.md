@@ -272,7 +272,11 @@ GUI +0x098  frame activate/state-like；handle,mode，mode 不是 show flag
 GUI +0x134  active frame set-like；切换内部 +0xd8，向旧/新 frame 发 0x31/0x30
 GUI +0x13c  active child get-like；读取 context，解析所属 container 后返回 container+0xd8
 GUI +0x17c  close frame-like；释放 frame 并清空 active frame 全局槽
-GUI +0x1b4  BDA_GUI_OBJECT_PAIR_EXISTS_LIKE；只读扫描 GUI 全局记录表，比较 record+0/record+4，返回 0/1
+GUI +0x1ac  BDA_GUI_WINDOW_TIMER_START_LIKE；frame,timer_id,period_ms，经内部 0x162 注册
+GUI +0x1b0  BDA_GUI_WINDOW_TIMER_STOP_LIKE；frame,timer_id，经内部 0x163 注销
+GUI +0x1b4  BDA_GUI_WINDOW_TIMER_EXISTS_LIKE；扫描 timer 表的 record+0/+4，返回 0/1
+GUI +0x1b8  BDA_GUI_WINDOW_TIMER_SET_PERIOD_LIKE；raw 更新存在稀疏表空指针风险
+GUI +0x1bc  BDA_GUI_WINDOW_TIMER_CLOCK_MS_LIKE；10 ms 分辨率 scheduler 毫秒时钟
 ```
 
 `TouchStageV11.bda` 已在真机确认顶层窗口的完整顺序是：`+0x088 stop`、`+0x04c

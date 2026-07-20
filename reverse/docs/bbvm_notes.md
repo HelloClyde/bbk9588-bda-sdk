@@ -57,8 +57,8 @@ GUI+0x030  event/status poll-like；在 VM 循环中反复调用
 GUI+0x050  事件/update 辅助候选
 GUI+0x054  事件/update 辅助候选，常在 GUI+0x050 后调用
 GUI+0x074  高频绘制/window flush/update-like
-GUI+0x1ac  object update3；同步发送内部 message 0x162
-GUI+0x1b0  object update2；同步发送内部 message 0x163
+GUI+0x1ac  window timer start；frame,timer_id,period_ms，经内部 message 0x162 注册
+GUI+0x1b0  window timer stop；frame,timer_id，经内部 message 0x163 注销
 GUI+0x334  set background/fill color-like
 GUI+0x374  RGB/color query 或 pixel/color conversion-like
 GUI+0x3f8  framebuffer/region blit-like
@@ -67,9 +67,8 @@ GUI+0x4d0  text width/height metric-like
 GUI+0x4d4  text width/height metric-like
 ```
 
-`GUI+0x1ac/+0x1b0` 对模拟器工作尤其值得关注，但不能再按 lock/unlock 命名。
-C200 已确认这两个 entry 会构造 stack message packet，并通过同步 send 向对象
-派发内部 `0x162/0x163` message；实际效果由目标 object/control 的 callback 决定。
+`GUI+0x1ac/+0x1b0` 是窗口 timer 注册/注销，不是 lock/unlock 或 object refresh。
+C200 内部 `0x162/0x163` 最终维护 timer 表；到期后 Frame callback 收到 `0x144`。
 
 ## 触摸坐标数据流
 
@@ -182,7 +181,7 @@ object/descriptor，不能替代普通 `fread` wrapper。
 BBVM 增强了以下探针的优先级：
 
 ```text
-ObjectUpdateProbe  组合 GUI+0x1ac/+0x1b0 和真实 object/control callback
+WindowTimerProbe  验证 GUI+0x1ac/+0x1b0、0x144 callback 和 timer 生命周期
 InputPollProbe 探测 GUI+0x030/+0x050/+0x054 事件/status 行为
 TickProbe      比较 SYS+0x080/+0x09c 单位和可见延时
 ```

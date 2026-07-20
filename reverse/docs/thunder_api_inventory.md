@@ -50,8 +50,8 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "reverse\docs\
 | GUI | +0x134 | 1 | `BDA_GUI_ACTIVE_FRAME_SET_LIKE` | `0x800cad3c` | `addiu $sp, $sp, -0x20` | 设置/切换当前 active frame；C200 写内部 +0xd8，并向旧/新 frame 发 0x31/0x30。 |
 | GUI | +0x17c | 2 | `BDA_GUI_CLOSE_FRAME_LIKE` | `0x800cdffc` | `addiu $sp, $sp, -0x18` | 关闭并释放 frame/window；V11 真机确认应在 stop/release 和 event poll 结束后调用，且无稳定返回值。 |
 | GUI | +0x1a8 | 1 | `BDA_GUI_DESTROY_LIKE` | `0x800cd41c` | `addiu $sp, $sp, -0x30` | destroy control/object；C200 要求 kind=1 subtype=0x12，先发内部 0x64 再摘链释放。 |
-| GUI | +0x1ac | 1 | `BDA_GUI_OBJECT_UPDATE3_LIKE` | `0x800de150` | `addiu $sp, $sp, -0x28` | object update/layout；C200 构造 stack message packet 并同步发送内部 0x162。 |
-| GUI | +0x1b0 | 1 | `BDA_GUI_OBJECT_UPDATE2_LIKE` | `0x800de190` | `addiu $sp, $sp, -0x28` | object update/layout；C200 构造 stack message packet 并同步发送内部 0x163。 |
+| GUI | +0x1ac | 1 | `BDA_GUI_WINDOW_TIMER_START_LIKE` | `0x800de150` | `addiu $sp, $sp, -0x28` | window timer start；注册 (frame,timer_id,period_ms)，内部消息 0x162，最多 16 个活动记录。 |
+| GUI | +0x1b0 | 1 | `BDA_GUI_WINDOW_TIMER_STOP_LIKE` | `0x800de190` | `addiu $sp, $sp, -0x28` | window timer stop；按 (frame,timer_id) 注销，内部消息 0x163。 |
 | GUI | +0x2b8 | 1 | `BDA_GUI_MSGBOX` | `0x800c6544` | `addiu $sp, $sp, -0x28` | message box，hardware probe 已确认可用于简单 BDA demo。 |
 | GUI | +0x2fc | 7 | `BDA_GUI_DRAW_OBJECT_CREATE_LIKE` | `0x800bd36c` | `sll $v1, $a0, 2` | draw/resource object table 查询；C200 只读取 kind/index，范围为 0..16。 |
 | GUI | +0x300 | 3 | `BDA_GUI_DISPLAY_METRIC_LIKE` | `0x800bc8fc` | `addiu $sp, $sp, -0x18` | display backend metric 查询；C200 使用 context,metric，metric 范围 0..6；Thunder 用 metric=6 作为 framebuffer 像素字节因子。 |
@@ -82,8 +82,8 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "reverse\docs\
 | GUI | +0x5d4 | 1 | `BDA_GUI_INPUT_PACKET_LIKE` | `0x8001b518` | `addiu $sp, $sp, -0x18` | GAMEBOY/input 按键包 helper；C200 清 6 byte packet 后写入按键状态。 |
 | GUI | +0x6a8 | 1 | `BDA_GUI_FILE_SELECTOR_OPEN_LIKE` | `0x80021334` | `addiu $sp, $sp, -0x5e0` | file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。 |
 | GUI | +0x6e0 | 2 | `BDA_GUI_GAME_DISPLAY_PUMP_LIKE` | `0x8005b844` | `addiu $sp, $sp, -0x20` | 触摸长按驱动的 game state pump；C200 无参数，先查 pen GPIO，阈值 0x1068 后写全局状态；有副作用。 |
-| SYS | +0x040 | 3 | `BDA_SYS_AUDIO_ATTENUATION_SET_LIKE` | `0x8018921c` | `slti $v0, $a0, 0` | raw PCM attenuation setter；写 pending value，下一次 write 量化并应用。 |
-| SYS | +0x044 | 1 | `BDA_SYS_AUDIO_ATTENUATION_GET_LIKE` | `0x80189248` | `addiu $sp, $sp, -0x18` | raw PCM attenuation getter；返回 effective `0..96`、步进 3。 |
+| SYS | +0x040 | 3 | `BDA_SYS_AUDIO_ATTENUATION_SET_LIKE` | `0x8018921c` | `slti $v0, $a0, 0` | raw PCM attenuation setter；C200 clamp 到 0..98，写 pending value，下一次 audio write 量化并应用。 |
+| SYS | +0x044 | 1 | `BDA_SYS_AUDIO_ATTENUATION_GET_LIKE` | `0x80189248` | `addiu $sp, $sp, -0x18` | raw PCM attenuation getter；C200 无参数，返回当前 effective attenuation（0..96，步进 3）。 |
 | SYS | +0x050 | 1 | 未公开 | `0x8018ef04` | `jr $ra` | C200 中是立即返回 1 的 stub，不公开 SDK wrapper。 |
 | SYS | +0x054 | 1 | 未公开 | `0x8018ef0c` | `jr $ra` | C200 中是立即返回 1 的 stub，不公开 SDK wrapper。 |
 | SYS | +0x058 | 2 | `BDA_SYS_PACKAGE_SOUND_OP58_LIKE` | `0x8018ecb4` | `lui $v0, 0x804c` | 打包音效 init/start；C200 使用 a0=descriptor，成功置 0x804c4ba4 并返回 1。 |

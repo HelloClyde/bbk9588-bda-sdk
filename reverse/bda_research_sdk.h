@@ -83,9 +83,11 @@ typedef unsigned long long u64;
 #define BDA_GUI_SUBTRACT_ORIGIN_LIKE   0x0f8u
 #define BDA_GUI_ACTIVE_FRAME_SET_LIKE  0x134u
 #define BDA_GUI_ACTIVE_FRAME_GET_LIKE  0x13cu
-#define BDA_GUI_OBJECT_UPDATE3_LIKE    0x1acu
-#define BDA_GUI_OBJECT_UPDATE2_LIKE    0x1b0u
-#define BDA_GUI_OBJECT_PAIR_EXISTS_LIKE 0x1b4u
+#define BDA_GUI_WINDOW_TIMER_START_LIKE      0x1acu
+#define BDA_GUI_WINDOW_TIMER_STOP_LIKE       0x1b0u
+#define BDA_GUI_WINDOW_TIMER_EXISTS_LIKE     0x1b4u
+#define BDA_GUI_WINDOW_TIMER_SET_PERIOD_LIKE 0x1b8u
+#define BDA_GUI_WINDOW_TIMER_CLOCK_MS_LIKE    0x1bcu
 #define BDA_GUI_DRAW_OBJECT_CREATE_LIKE 0x2fcu
 #define BDA_GUI_DISPLAY_METRIC_LIKE  0x300u
 #define BDA_GUI_CURRENT_DRAW_LIKE    0x304u
@@ -490,6 +492,7 @@ typedef struct bda_fs_path_info_like {
 #define BDA_MSG_INPUT_0842_LIKE 0x0842u
 #define BDA_MSG_KEYDOWN_LIKE  0x0844u
 #define BDA_MSG_FOCUS_LIKE    0x0841u
+#define BDA_MSG_WINDOW_TIMER_LIKE 0x0144u
 
 /*
  * 在 message wparam 低/高 16 位中见到的 provisional command/control ID。
@@ -1137,24 +1140,56 @@ static inline bda_handle_t bda_gui_active_child_get_like(bda_handle_t context) {
 }
 
 /*
- * object update helper。C200 把参数写成 stack message packet 后通过 GUI+0x040 同步发送
- * 内部 0x162/0x163 message；参数语义依赖具体 control，SDK 只固定 ABI。
+ * Register one periodic window timer. C200 stores at most 16 active records
+ * globally in this GUI context. period_ms is compared against a millisecond-valued clock with 10 ms
+ * scheduling resolution, and a
+ * due timer is returned by event_poll as message 0x144 with timer_id in
+ * wparam. The pair (frame, timer_id) identifies the timer; the return value
+ * is only success/failure and is not a timer handle.
  */
-static inline int bda_gui_object_update3_like(bda_handle_t handle, u32 a1, u32 a2) {
-    return bda_call3(bda_gui_table(), BDA_GUI_OBJECT_UPDATE3_LIKE, (u32)handle, a1, a2);
+static inline int bda_gui_window_timer_start_like(
+    bda_handle_t frame, u32 timer_id, u32 period_ms
+) {
+    return bda_call3(
+        bda_gui_table(), BDA_GUI_WINDOW_TIMER_START_LIKE,
+        (u32)frame, timer_id, period_ms
+    );
 }
 
-static inline int bda_gui_object_update2_like(bda_handle_t handle, u32 a1) {
-    return bda_call2(bda_gui_table(), BDA_GUI_OBJECT_UPDATE2_LIKE, (u32)handle, a1);
+static inline int bda_gui_window_timer_stop_like(
+    bda_handle_t frame, u32 timer_id
+) {
+    return bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_TIMER_STOP_LIKE,
+        (u32)frame, timer_id
+    );
 }
 
-/*
- * 只读 object pair 查询。C200 扫描 0x804a6b40 起的 GUI 全局记录表，比较记录
- * +0/+4 两个 word 是否等于 a0/a1，命中返回 1，否则返回 0。它不验证 handle
- * 是否适合绘制，也不是通用 high-level exists API。
- */
-static inline int bda_gui_object_pair_exists_like(u32 a0, u32 a1) {
-    return bda_call2(bda_gui_table(), BDA_GUI_OBJECT_PAIR_EXISTS_LIKE, a0, a1);
+/* Reset both the period and accumulated elapsed ticks of an active timer. */
+static inline int bda_gui_window_timer_set_period_like(
+    bda_handle_t frame, u32 timer_id, u32 period_ms
+) {
+    return bda_call3(
+        bda_gui_table(), BDA_GUI_WINDOW_TIMER_SET_PERIOD_LIKE,
+        (u32)frame, timer_id, period_ms
+    );
+}
+
+/* Raw clock used by the window timer scheduler; increments in 10 ms steps. */
+static inline u32 bda_gui_window_timer_clock_ms_like(void) {
+    return (u32)bda_call0(
+        bda_gui_table(), BDA_GUI_WINDOW_TIMER_CLOCK_MS_LIKE
+    );
+}
+
+/* Return 1 when the frame/timer_id pair is present in the timer table. */
+static inline int bda_gui_window_timer_exists_like(
+    bda_handle_t frame, u32 timer_id
+) {
+    return bda_call2(
+        bda_gui_table(), BDA_GUI_WINDOW_TIMER_EXISTS_LIKE,
+        (u32)frame, timer_id
+    );
 }
 
 /*

@@ -19,7 +19,7 @@
 | [`bda_memory.h`](../sdk/include/bda_memory.h) | freestanding 内存 helper 和 heap |
 | [`bda_filesystem.h`](../sdk/include/bda_filesystem.h) | 文件、seek、目录和枚举 |
 | [`bda_input.h`](../sdk/include/bda_input.h) | 按键包和触摸状态 |
-| [`bda_time.h`](../sdk/include/bda_time.h) | 25 ms tick、标称 1 ms timer、elapsed 和 busy-wait delay |
+| [`bda_time.h`](../sdk/include/bda_time.h) | tick、标称 1 ms counter、Frame 周期定时器和 delay |
 | [`bda_window.h`](../sdk/include/bda_window.h) | Frame、消息、事件泵和生命周期 |
 | [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX 和 picture |
 | [`bda_dialogs.h`](../sdk/include/bda_dialogs.h) | 消息框、确认框、帮助页和文件选择器 |
@@ -45,6 +45,7 @@
 | 图形图元 | [graphics_primitives_api.md](verified/graphics_primitives_api.md) | 8013 模拟器 |
 | 双缓冲、VX、dirty rect、tick | [game_rendering_api.md](verified/game_rendering_api.md) | 8013 模拟器 |
 | 高分辨率计时 | [high_resolution_timer_api.md](verified/high_resolution_timer_api.md) | 模拟器 + 真机 |
+| 窗口消息定时器 | [window_timer_api.md](verified/window_timer_api.md) | 模拟器 + 真机 |
 | Raw RGB565 picture | [picture_rendering_api.md](verified/picture_rendering_api.md) | 8013 模拟器 |
 | 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 8013 模拟器 |
 | 内建控件、GIF 与自定义类 | [controls_api.md](verified/controls_api.md) | 8013 模拟器 |
@@ -59,6 +60,7 @@
 - [窗口生命周期与触摸重绘](verified/touch_window_lifecycle_api.md)
 - [游戏离屏绘制、精灵和计时](verified/game_rendering_api.md)
 - [标称 1 ms timer 生命周期](verified/high_resolution_timer_api.md)
+- [用窗口定时消息驱动周期任务](verified/window_timer_api.md)
 - [自定义控件](tutorials/custom_controls.md)
 - [完整扫雷示例](minesweeper_v1.md)
 - [SDK API 目录与公开/研究边界](sdk_api_layout.md)
