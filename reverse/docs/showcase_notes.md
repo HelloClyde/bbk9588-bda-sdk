@@ -28,7 +28,7 @@ ShowcaseDemo.bda                  立即重启
 从 `reverse/reports/schedule_bda_report.md` 和
 `reverse/reports/ninecourse_bda_report.md` 交叉检查可见：内置显示/内容类应用
 不是启动后直接画一张 bitmap，而是创建/注册 GUI object、运行正常 event pump，并从 callback 或
-对象持有的 draw handle 绘制。九科还使用 `GUI+0x1ac/+0x1b0` 对象更新调用。
+对象持有的 draw handle 绘制。九科还使用 `GUI+0x1ac/+0x1b0` 注册和停止窗口 timer。
 因此当前 Showcase 失败更像生命周期/对象模型不匹配，而不是 BDA header 或 DLX
 解析问题。
 

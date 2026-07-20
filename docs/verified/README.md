@@ -23,6 +23,7 @@
 - [触摸窗口与完整生命周期](touch_window_lifecycle_api.md)：真机 V23 两阶段绘制、无闪烁坐标十字和可返回主菜单的 frame 退出链。
 - [游戏离屏绘制、精灵与计时 API](game_rendering_api.md)：8013 验证的 compatible context、VX、矩形复制、洋红色键、dirty rect 和 25 ms tick。
 - [高分辨率计时 API](high_resolution_timer_api.md)：8013 与真机验证的标称 1 ms counter，以及必须配对的 start/read/stop 生命周期。
+- [窗口消息定时器 API](window_timer_api.md)：8013 与真机验证的 Frame 周期定时器、`0x144` 消息、改周期和注销生命周期。
 - [堆、文件定位与目录 API](runtime_services_api.md)：8013 验证的 alloc/free、seek、mkdir/chdir 和完整目录枚举生命周期。
 - [原始 RGB565 Picture 提交 API](picture_rendering_api.md)：8013 验证的 GUI `+0x410` 原生尺寸动态提交和 28-byte descriptor。
 - [系统文件选择器 API](file_selector_api.md)：8013 验证的默认目录、后缀过滤、选择/取消和结果链表释放。

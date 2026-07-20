@@ -2236,53 +2236,43 @@ GUI+0x0dc -> 0x800ce7a8
 - setter 会改写 object 内部字段，只应在真实 object/control lifecycle 内复刻原机
   调用形态，不要对 frame handle 或 bare 指针调用。
 
-### GUI +0x1ac / +0x1b0: 对象更新通知对
+### GUI +0x1ac..+0x1bc: 窗口定时器
 
 system function VA：
 
 ```text
 GUI+0x1ac -> 0x800de150
 GUI+0x1b0 -> 0x800de190
+GUI+0x1b4 -> 0x800de0a8
+GUI+0x1b8 -> 0x800de1c8
+GUI+0x1bc -> 0x800de144
 ```
 
 当前证据：
 
-- 两个入口都把调用参数写入 `sp+0x10` 起的小消息包，然后通过 GUI+0x040 对应的
-  同步 send 入口 `0x800dd380` 派发。
-- `GUI+0x1ac` 使用内部消息号 `0x162`，参数形态是 `handle, a1, a2`；C200 会把
-  `handle/a1/a2` 分别写到 `sp+0x10/+0x14/+0x18`。
-- `GUI+0x1b0` 使用内部消息号 `0x163`，参数形态是 `handle, a1`；C200 会把
-  `handle/a1` 写到 `sp+0x10/+0x14`。
-- 这两个 helper 自身不排队，也不直接修改对象字段；具体效果来自目标对象处理
-  `0x162/0x163` message 的 wndproc。
-- 九门课程等应用常见形态是 `GUI+0x1ac(handle, 0x64, 0x190)` 后跟
-  `GUI+0x1b0(handle, 0x64)`，像对象布局/刷新通知对。
+- `+0x1ac(frame,timer_id,period_ms)` 经同步 send `0x800dd380` 发送内部 `0x162`；
+  参数分别位于 `sp+0x10/+0x14/+0x18`。全局 dispatcher 最终调用 `0x800ddd04`
+  注册 timer。
+- `+0x1b0(frame,timer_id)` 发送内部 `0x163`；参数位于 `sp+0x10/+0x14`，最终由
+  `0x800dde90` 注销。
+- `+0x1b4(frame,timer_id)` 扫描 `0x804a6b40` 的 timer pointer 表，逐项判空后比较
+  `record+0` 与 `record+4`，存在返回 `1`，否则返回 `0`。
+- 每条记录是 16 byte：`frame`、`timer_id`、`period_ms`、`elapsed_ms`；表上限为
+  16 条。调度器位于 `0x800ddc00`，其时钟以 10 ms 步进。
+- 到期事件由 `0x800dbfd0` 生成 message `0x144`，handle 为 frame、wparam 为
+  timer_id、lparam 为 0。
+- `+0x1b8(frame,timer_id,period_ms)` 经内部 `0x164` 更新周期，但 native
+  `0x800de0f8` 遍历稀疏表时没有检查空 pointer，存在空指针解引用风险。
+- `+0x1bc()` 返回 `0x80474058` 的调度器毫秒时钟，与 GUI `+0x6d8` 的 25 ms tick
+  不是同一个计数器。
 
 开发建议：
 
-- SDK 暂命名为 `bda_gui_object_update3_like()` 和
-  `bda_gui_object_update2_like()`。
-- 参数语义仍未最终命名，优先在克隆原机 control 刷新路径时使用。
-
-### GUI +0x1b4: `BDA_GUI_OBJECT_PAIR_EXISTS_LIKE`
-
-system function VA：`0x800de0a8`
-
-当前证据：
-
-- C200 entry 只读取 `a0/a1`，没有写入调用者 buffer，也没有发送 message。
-- 函数从 `0x804a6b40` 起扫描 GUI 全局记录 pointer 表，每项先判空，再读取记录
-  `record+0` 和 `record+4`。
-- 当 `record+0 == a0` 且 `record+4 == a1` 时返回 `1`；扫描到上限仍未命中时返回
-  `0`。
-- 循环使用 `slti ..., 0x10`，实际只访问这组全局表的有限槽位，不遍历普通
-  window/control 子树。
-
-开发建议：
-
-- SDK 暂命名为 `bda_gui_object_pair_exists_like(a0, a1)`，强调它只是 pair 查询。
-- 不要把它当成通用 handle validity check：它比较的是 GUI 内部记录的前两个 word，
-  不证明该 object 可绘制、可 destroy，或属于当前 BDA 的完整 lifecycle。
+- V4 probe 已在 8013 模拟器和 BBK 9588 真机验证 start/stop/exists/clock、40 ms 与
+  20 ms 周期、稀疏表场景以及完整退出。公开 wrapper 位于
+  `sdk/include/bda_time.h`。
+- 不公开直调 `+0x1b8`；公开 `set_period` 使用 stop/start。Frame stop/release/close 前
+  必须停止全部 timer，避免留下指向失效 Frame 的记录。
 
 ### GUI +0x2fc: `BDA_GUI_DRAW_OBJECT_CREATE_LIKE`
 

@@ -198,9 +198,12 @@ bda_handle_t bda_gui_object_draw_begin_like(bda_handle_t handle);
 void bda_gui_object_draw_end_like(bda_handle_t handle, bda_handle_t draw_handle);
 int bda_gui_active_frame_set_like(bda_handle_t handle);
 bda_handle_t bda_gui_active_child_get_like(bda_handle_t context);
-int bda_gui_object_update3_like(bda_handle_t handle, u32 a1, u32 a2);
-int bda_gui_object_update2_like(bda_handle_t handle, u32 a1);
-int bda_gui_object_pair_exists_like(u32 a0, u32 a1);
+int bda_gui_window_timer_start_like(bda_handle_t frame, u32 timer_id, u32 period_ms);
+int bda_gui_window_timer_stop_like(bda_handle_t frame, u32 timer_id);
+int bda_gui_window_timer_exists_like(bda_handle_t frame, u32 timer_id);
+int bda_gui_window_timer_set_period_like(bda_handle_t frame, u32 timer_id, u32 period_ms);
+u32 bda_gui_window_timer_clock_ms_like(void);
+#define BDA_MSG_WINDOW_TIMER_LIKE 0x0144u
 int bda_gui_object_bind_like(u32 context, u32 value);
 void bda_gui_surface_flush_like(bda_handle_t context);
 void *bda_gui_capture_region_alloc_like(s32 x, s32 y, s32 width, s32 height);

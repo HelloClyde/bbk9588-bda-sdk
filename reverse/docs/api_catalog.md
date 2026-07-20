@@ -64,9 +64,11 @@
 | GUI | +0x17c | `BDA_GUI_CLOSE_FRAME_LIKE` | 483 | 53 | 中 | 关闭并释放 frame/window；V11 真机确认应在 stop/release 和 event poll 结束后调用，且无稳定返回值。 |
 | GUI | +0x1a4 | `BDA_GUI_CREATE` | 133 | 34 | 中 | 创建 window/control，class 字符串常见 edit/listbox/medit 等。 |
 | GUI | +0x1a8 | `BDA_GUI_DESTROY_LIKE` | 474 | 47 | 中 | destroy control/object；C200 要求 kind=1 subtype=0x12，先发内部 0x64 再摘链释放。 |
-| GUI | +0x1ac | `BDA_GUI_OBJECT_UPDATE3_LIKE` | 193 | 27 | 中 | object update/layout；C200 构造 stack message packet 并同步发送内部 0x162。 |
-| GUI | +0x1b0 | `BDA_GUI_OBJECT_UPDATE2_LIKE` | 344 | 28 | 中 | object update/layout；C200 构造 stack message packet 并同步发送内部 0x163。 |
-| GUI | +0x1b4 | `BDA_GUI_OBJECT_PAIR_EXISTS_LIKE` | 86 | 5 | 中 | object pair exists；C200 扫描 0x804a6b40 GUI 记录表，比较 record+0/record+4 后返回 0/1。 |
+| GUI | +0x1ac | `BDA_GUI_WINDOW_TIMER_START_LIKE` | 193 | 27 | 中 | window timer start；注册 (frame,timer_id,period_ms)，内部消息 0x162，最多 16 个活动记录。 |
+| GUI | +0x1b0 | `BDA_GUI_WINDOW_TIMER_STOP_LIKE` | 344 | 28 | 中 | window timer stop；按 (frame,timer_id) 注销，内部消息 0x163。 |
+| GUI | +0x1b4 | `BDA_GUI_WINDOW_TIMER_EXISTS_LIKE` | 86 | 5 | 中 | window timer exists；扫描 0x804a6b40 timer 表并比较 frame/timer_id。 |
+| GUI | +0x1b8 | `BDA_GUI_WINDOW_TIMER_SET_PERIOD_LIKE` | 0 | 0 | 中 | window timer period raw update；内部消息 0x164；稀疏表存在空指针风险，不公开直调。 |
+| GUI | +0x1bc | `BDA_GUI_WINDOW_TIMER_CLOCK_MS_LIKE` | 0 | 0 | 中 | window timer scheduler clock；无参数返回 millisecond-valued counter，10 ms 分辨率。 |
 | GUI | +0x2b8 | `BDA_GUI_MSGBOX` | 382 | 44 | 较高 | message box，hardware probe 已确认可用于简单 BDA demo。 |
 | GUI | +0x2fc | `BDA_GUI_DRAW_OBJECT_CREATE_LIKE` | 780 | 46 | 中 | draw/resource object table 查询；C200 只读取 kind/index，范围为 0..16。 |
 | GUI | +0x300 | `BDA_GUI_DISPLAY_METRIC_LIKE` | 14 | 9 | 中 | display backend metric 查询；C200 使用 context,metric，metric 范围 0..6；Thunder 用 metric=6 作为 framebuffer 像素字节因子。 |

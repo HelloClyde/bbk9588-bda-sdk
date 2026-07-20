@@ -364,10 +364,11 @@ GUI+0x040(listbox,       0xf1b5, slot, draw_object)
 - `GUI+0x1a8(handle)` 用于销毁 `GUI+0x1a4` 创建出的 child control/object。
   C200 要求对象 kind 为 `1`、subtype 为 `0x12`，先同步发送内部 `0x64` message，
   再从 parent/manager 链接中摘除并释放资源。它不是顶层 frame close。
-- `GUI+0x1ac(handle, a1, a2)` 会发送内部 message `0x162`。
-- `GUI+0x1b0(handle, a1)` 会发送内部 message `0x163`。
-- `GUI+0x1b4(a0, a1)` 不发送 message；它只扫描 `0x804a6b40` GUI 记录表，
-  比较记录 `+0/+4` 并返回 `0/1`，不能当成通用 handle validity check。
+- `GUI+0x1ac(frame, timer_id, period_ms)` 经内部 `0x162` 注册窗口 timer。
+- `GUI+0x1b0(frame, timer_id)` 经内部 `0x163` 停止窗口 timer。
+- `GUI+0x1b4(frame, timer_id)` 扫描 `0x804a6b40` timer 表并返回存在状态。
+- `GUI+0x1b8` 经内部 `0x164` 改周期，但稀疏表存在空指针风险；公开 SDK 不直调。
+- `GUI+0x1bc()` 返回以 10 ms 步进的 timer scheduler 毫秒时钟。
 - `GUI+0x07c/+0x080/+0x0b0` 是 kind=1 object 的 `+0x24` flags clear/OR/get helper；
   `+0x080` 置位，`+0x07c` 清除 mask 对应 bit，成功返回 `1`；`+0x0b0`
   读取 flags，失败返回 `0`。它们不是通用 show/hide/enable/disable API。
@@ -380,9 +381,8 @@ GUI+0x040(listbox,       0xf1b5, slot, draw_object)
 - `GUI+0x0d8/+0x0dc` 是 kind=1 object 的 `+0x88` pointer getter/setter；
   setter 只有 value 非 0 时才写入。该字段接近 wndproc/callback 指针，不要随意改。
 - `GUI+0x1ac(handle, 0x64, 0x190)` 与 `GUI+0x1b0(handle, 0x64)` 在九门课程
-  中成对出现，像 object layout/refresh notify。C200 会构造 stack message packet 并
-  通过同步 send 派发，具体效果由目标对象 wndproc 决定。SDK 暂命名为
-  `bda_gui_object_update3_like()` 和 `bda_gui_object_update2_like()`。
+  中分别是启动 timer id 100、周期 400 ms，以及停止同一 timer。到期后 wndproc
+  收到 message `0x144`，wparam 为 timer id。
 - `GUI+0x0e4/+0x0e8` 与 object 级 draw begin/end 相关；C200 内部会分别调用
   `GUI+0x308/+0x30c` 对应函数。SDK 暂命名为
   `bda_gui_object_draw_begin_like()` / `bda_gui_object_draw_end_like()`。

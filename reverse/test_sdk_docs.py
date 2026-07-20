@@ -99,6 +99,7 @@ class SdkDocsTest(unittest.TestCase):
                 "runtime_services_api.md",
                 "touch_press_api.md",
                 "touch_window_lifecycle_api.md",
+                "window_timer_api.md",
             ],
         )
 
@@ -1513,8 +1514,24 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("record+0", c200_notes)
         self.assertIn("typed result", gameboy_notes)
 
-    def test_gui_object_update_c200_message_layout_is_documented(self) -> None:
+    def test_window_timer_c200_layout_and_public_api_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
+        stable_header = read("sdk/include/bda_time.h")
+        umbrella = read("sdk/include/bda_sdk.h")
+        verified = read("docs/verified/window_timer_api.md")
+        probe = read("reverse/examples/window_timer_probe.c")
+        precision_probe = read(
+            "reverse/examples/window_timer_precision_probe.c"
+        )
+        emulator_log = read(
+            "docs/verified/assets/window_timer_v4_emulator_log.txt"
+        )
+        precision_log = read(
+            "docs/verified/assets/window_timer_precision_v6_emulator_log.txt"
+        )
+        hardware_log = read(
+            "docs/verified/assets/window_timer_v4_hardware_log.txt"
+        )
         notes = read("reverse/docs/c200_api_function_notes.md")
         window_notes = read("reverse/docs/window_notes.md")
         bbvm_notes = read("reverse/docs/bbvm_notes.md")
@@ -1532,21 +1549,80 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("成功释放返回 `1`", notes)
         self.assertIn("不是顶层 frame close", window_notes)
         self.assertIn("kind=1 subtype=0x12", catalog_tool)
-        self.assertIn("GUI +0x1ac / +0x1b0", notes)
-        self.assertIn("内部消息号 `0x162`", notes)
-        self.assertIn("内部消息号 `0x163`", notes)
+        self.assertIn("GUI +0x1ac..+0x1bc", notes)
+        self.assertIn("内部 `0x162`", notes)
+        self.assertIn("内部 `0x163`", notes)
         self.assertIn("sp+0x10/+0x14/+0x18", notes)
         self.assertIn("sp+0x10/+0x14", notes)
         self.assertIn("0x800dd380", notes)
-        self.assertIn("自身不排队", notes)
-        self.assertIn("bda_gui_object_pair_exists_like(u32 a0, u32 a1)", header)
-        self.assertIn("GUI +0x1b4: `BDA_GUI_OBJECT_PAIR_EXISTS_LIKE`", notes)
-        self.assertIn("system function VA：`0x800de0a8`", notes)
+        self.assertIn("bda_gui_window_timer_start_like", header)
+        self.assertIn("bda_gui_window_timer_stop_like", header)
+        self.assertIn("bda_gui_window_timer_exists_like", header)
+        self.assertIn("bda_gui_window_timer_set_period_like", header)
+        self.assertIn("bda_gui_window_timer_clock_ms_like", header)
+        self.assertIn("0x800de0a8", notes)
+        self.assertIn("0x800de1c8", notes)
+        self.assertIn("0x800de144", notes)
         self.assertIn("0x804a6b40", notes + "\n" + window_notes + "\n" + catalog_tool)
         self.assertIn("record+0", notes + "\n" + window_notes + "\n" + catalog_tool)
         self.assertIn("record+4", notes + "\n" + window_notes + "\n" + catalog_tool)
         self.assertIn("返回 `0`", notes)
-        self.assertIn("通用 handle validity check", notes + "\n" + window_notes)
+        self.assertIn("message `0x144`", notes)
+        self.assertIn("10 ms", notes)
+        self.assertIn("16 byte", notes)
+        self.assertIn("空指针解引用风险", notes + verified)
+        self.assertNotIn("_like", stable_header.lower())
+        self.assertNotIn("WINDOW_TIMER_SET_PERIOD", read("sdk/include/bda/detail/runtime.h"))
+        self.assertIn('#include "bda_time.h"', umbrella)
+        for name in [
+            "bda_gui_window_timer_start",
+            "bda_gui_window_timer_stop",
+            "bda_gui_window_timer_exists",
+            "bda_gui_window_timer_set_period",
+            "bda_gui_window_timer_clock_ms",
+        ]:
+            self.assertIn(name, stable_header)
+            self.assertIn(name, verified)
+            self.assertIn(name, probe)
+        for name in [
+            "BDA_MSG_WINDOW_TIMER",
+            "BDA_WINDOW_TIMER_MAX_ACTIVE",
+            "BDA_WINDOW_TIMER_RESOLUTION_MS",
+        ]:
+            self.assertIn(name, stable_header)
+            self.assertIn(name, verified)
+        self.assertIn("period_ms == 0u", stable_header)
+        self.assertIn("stop + start", verified)
+        self.assertIn("START WINDOW TIMER PROBE V4", emulator_log)
+        self.assertIn("CLOCK_DELTA=40", emulator_log)
+        self.assertIn("CLOCK_DELTA=20", emulator_log)
+        self.assertIn("SPARSE SET B=0x00000001", emulator_log)
+        self.assertIn("FAILURES=0x00000000", emulator_log)
+        self.assertIn("RESULT=PASS", emulator_log)
+        self.assertIn("START WINDOW TIMER PROBE V4", hardware_log)
+        self.assertIn("REGISTER=0x80A89528", hardware_log)
+        self.assertEqual(hardware_log.count("CLOCK_DELTA=40"), 4)
+        self.assertEqual(hardware_log.count("CLOCK_DELTA=20"), 4)
+        self.assertIn("EXISTS AFTER STOP=0x00000000", hardware_log)
+        self.assertIn("SPARSE SET B=0x00000001", hardware_log)
+        self.assertIn("FAILURES=0x00000000", hardware_log)
+        self.assertIn("RESULT=PASS", hardware_log)
+        self.assertIn("CLOSE RETURNED", hardware_log)
+        self.assertIn("BBK 9588 真机均验证", verified)
+        self.assertIn("START WINDOW TIMER PRECISION PROBE V6", precision_log)
+        for request, expected in [(5, 10), (10, 10), (15, 20), (25, 30)]:
+            self.assertIn(
+                f"REQUEST={request} EXPECT={expected} ", precision_log
+            )
+            self.assertIn(f"{request}u", precision_probe)
+            self.assertIn(f"{expected}u", precision_probe)
+        self.assertEqual(precision_log.count("SAMPLE P="), 48)
+        self.assertIn("SCHED FAILURES=0x00000000", precision_log)
+        self.assertIn("SCHED RESULT=PASS", precision_log)
+        self.assertIn("DELIVERY RESULT=OUTSIDE TOLERANCE", precision_log)
+        self.assertIn("RESULT=PASS", precision_log)
+        self.assertIn("ceil(period_ms / 10) * 10 ms", verified)
+        self.assertIn("V6 真机", verified)
         self.assertIn("bda_gui_object_userdata0_get_like(bda_handle_t handle)", header)
         self.assertIn("bda_gui_object_userdata0_set_like(bda_handle_t handle, u32 value)", header)
         self.assertIn("bda_gui_object_userdata1_get_like(bda_handle_t handle)", header)
@@ -1600,19 +1676,20 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("subtype `0x12`", notes + "\n" + window_notes)
         self.assertIn("setter 返回旧值", window_notes)
         self.assertIn("不要把 `0` return 单独当成失败证明", notes)
-        self.assertIn("同步发送内部 0x162", catalog_tool)
-        self.assertIn("同步发送内部 0x163", catalog_tool)
-        self.assertIn("object update3；同步发送内部 message 0x162", bbvm_notes)
-        self.assertIn("object update2；同步发送内部 message 0x163", bbvm_notes)
-        self.assertIn("不能再按 lock/unlock 命名", bbvm_notes)
-        self.assertIn("不是 lock/unlock\n或 begin/end frame", ninecourse_report)
-        self.assertIn("对象 update notification", ninecourse_report)
-        self.assertIn("ObjectUpdateProbe", bbvm_notes)
+        self.assertIn("window timer start", catalog_tool)
+        self.assertIn("内部消息 0x162", catalog_tool)
+        self.assertIn("window timer stop", catalog_tool)
+        self.assertIn("内部消息 0x163", catalog_tool)
+        self.assertIn("window timer start；frame,timer_id,period_ms", bbvm_notes)
+        self.assertIn("window timer stop；frame,timer_id", bbvm_notes)
+        self.assertIn("不是 lock/unlock 或 object refresh", bbvm_notes)
+        self.assertIn("不是\nlock/unlock、begin/end frame 或对象 update notification", ninecourse_report)
+        self.assertIn("WindowTimerProbe", bbvm_notes)
         self.assertNotIn("lock/begin update-like", bbvm_notes)
         self.assertNotIn("unlock/end update-like", bbvm_notes)
         self.assertNotIn("begin/end frame 或 lock/unlock", bbvm_notes)
         self.assertNotIn("BlitLockProbe", bbvm_notes)
-        self.assertIn("object pair exists", catalog_tool)
+        self.assertIn("window timer exists", catalog_tool)
         self.assertIn("userdata0 getter", catalog_tool)
         self.assertIn("userdata1 setter", catalog_tool)
         self.assertIn("payload word getter", catalog_tool)
