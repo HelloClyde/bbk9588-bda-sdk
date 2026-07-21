@@ -18,6 +18,17 @@ bda-pack example\basic\hello_world\hello_world_msgbox.c `
 bda-validate build\HelloWorld.bda
 ```
 
+传入 RGBA 菜单图标时，`bda-pack` 默认把 alpha 小于等于 `8` 的透明像素写成固件使用的
+洋红 RGB565 色键 `0xf81f`；其余半透明像素先与菜单黑色背景合成，以保留抗锯齿边缘：
+
+```powershell
+bda-pack app.c --title App --category 9 --icon-png icon.png -o build\App.bda
+```
+
+可用 `--icon-alpha-threshold N` 调整阈值。只有需要把透明区域预合成为固定背景色时，才应
+传 `--icon-transparent-key none --icon-background RRGGBB`。`bda-icon` 替换已有 BDA
+图标时采用相同默认规则，对应关闭参数为 `--transparent-key none`。
+
 ## 菜单分类
 
 `--category` 使用 BDA header category 的低 16 位。固件菜单映射为：

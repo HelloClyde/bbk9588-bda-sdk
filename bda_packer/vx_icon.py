@@ -10,6 +10,8 @@ from . import __version__
 from .header import decoded_header_words, fix_header_checksum
 
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
+DEFAULT_TRANSPARENT_KEY = (255, 0, 255)
+DEFAULT_ALPHA_THRESHOLD = 8
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -151,17 +153,18 @@ def rgb565_bytes(
     out = bytearray()
     br, bgc, bb = bg
     for r, g, b, a in pixels:
-        if transparent_key is not None:
-            if a <= alpha_threshold:
-                r, g, b = transparent_key
-            # VX icons only have a color key, not per-pixel alpha. Use the
-            # already despilled source color for visible edge pixels rather
-            # than blending them with the key color and creating a fringe.
+        if transparent_key is not None and a <= alpha_threshold:
+            r, g, b = transparent_key
             a = 255
         if a < 255:
-            r = (r * a + br * (255 - a)) // 255
-            g = (g * a + bgc * (255 - a)) // 255
-            b = (b * a + bb * (255 - a)) // 255
+            # VX has no per-pixel alpha. With a color key enabled, preserve
+            # antialiased edges by compositing partial alpha against the
+            # firmware menu's black background. Without a key, use the
+            # caller-selected matte color for the entire alpha range.
+            mr, mg, mb = (0, 0, 0) if transparent_key is not None else (br, bgc, bb)
+            r = (r * a + mr * (255 - a)) // 255
+            g = (g * a + mg * (255 - a)) // 255
+            b = (b * a + mb * (255 - a)) // 255
         v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
         out.extend(v.to_bytes(2, "little"))
     return bytes(out)
@@ -196,6 +199,22 @@ def parse_bg(s: str) -> tuple[int, int, int]:
     return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
 
 
+def parse_transparent_key(s: str) -> tuple[int, int, int] | None:
+    if s.strip().lower() in {"none", "off"}:
+        return None
+    return parse_bg(s)
+
+
+def parse_alpha_threshold(s: str) -> int:
+    try:
+        value = int(s, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("alpha 阈值必须是 0..255 的整数") from exc
+    if not 0 <= value <= 255:
+        raise argparse.ArgumentTypeError("alpha 阈值必须是 0..255 的整数")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="从 PNG 生成并替换 BDA 的四个 VX 菜单图标。",
@@ -208,9 +227,21 @@ def main() -> None:
     ap.add_argument("input", type=Path, help="要修改的 BDA")
     ap.add_argument("--png", type=Path, required=True, help="RGB/RGBA 8-bit 非隔行 PNG")
     ap.add_argument("-o", "--output", type=Path, required=True, help="输出 BDA 路径")
-    ap.add_argument("--background", type=parse_bg, default=(0, 0, 0), help="PNG 透明背景色，默认 000000")
-    ap.add_argument("--transparent-key", type=parse_bg, default=None, help="把 alpha 透明像素写成该 RGB565 colorkey，例如 FF00FF")
-    ap.add_argument("--alpha-threshold", type=int, default=8, help="alpha 小于等于该值时写 transparent-key，默认 8")
+    ap.add_argument("--background", type=parse_bg, default=(0, 0, 0), help="未启用 transparent-key 时的 PNG alpha 背景色，默认 000000")
+    ap.add_argument(
+        "--transparent-key",
+        type=parse_transparent_key,
+        default=DEFAULT_TRANSPARENT_KEY,
+        metavar="RRGGBB|none",
+        help="把透明像素写成该 RGB565 colorkey，默认 FF00FF；传 none 可关闭",
+    )
+    ap.add_argument(
+        "--alpha-threshold",
+        type=parse_alpha_threshold,
+        default=DEFAULT_ALPHA_THRESHOLD,
+        metavar="N",
+        help="alpha 小于等于该值时写 transparent-key，默认 8",
+    )
     ns = ap.parse_args()
 
     src_w, src_h, src_pixels = read_png(ns.png)

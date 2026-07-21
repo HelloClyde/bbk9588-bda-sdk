@@ -16,7 +16,14 @@ from .header import (
     write_header,
 )
 from .validate import validate_bda
-from .vx_icon import make_vx, read_png, resize_cover, rgb565_bytes
+from .vx_icon import (
+    DEFAULT_ALPHA_THRESHOLD,
+    DEFAULT_TRANSPARENT_KEY,
+    make_vx,
+    read_png,
+    resize_cover,
+    rgb565_bytes,
+)
 
 
 ENTRY_OFFSET = 0x95F8
@@ -25,6 +32,8 @@ RUNTIME_FILE_BASE = ENTRY_VA - ENTRY_OFFSET
 ICON_START = 0x88
 ICON_SPECS = ((80, 80), (80, 80), (54, 54), (58, 58))
 ICON_SIZES = tuple(24 + width * height * 2 for width, height in ICON_SPECS)
+DEFAULT_ICON_TRANSPARENT_KEY = DEFAULT_TRANSPARENT_KEY
+DEFAULT_ICON_ALPHA_THRESHOLD = DEFAULT_ALPHA_THRESHOLD
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SDK_INCLUDE_DIR = REPO_ROOT / "sdk" / "include"
 PACKAGED_SDK_INCLUDE_DIR = Path(__file__).resolve().parent / "include"
@@ -187,6 +196,22 @@ def parse_bg(text: str) -> tuple[int, int, int]:
         raise argparse.ArgumentTypeError("背景色必须是 RRGGBB 六位十六进制") from exc
 
 
+def parse_icon_transparent_key(text: str) -> tuple[int, int, int] | None:
+    if text.strip().lower() in {"none", "off"}:
+        return None
+    return parse_bg(text)
+
+
+def parse_alpha_threshold(text: str) -> int:
+    try:
+        value = int(text, 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("alpha 阈值必须是 0..255 的整数") from exc
+    if not 0 <= value <= 255:
+        raise argparse.ArgumentTypeError("alpha 阈值必须是 0..255 的整数")
+    return value
+
+
 def make_default_icon(
     width: int,
     height: int,
@@ -203,13 +228,30 @@ def make_default_icon(
     return make_vx(width, height, rgb565_bytes(pixels, background))
 
 
-def build_icons(icon_png: Path | None, background: tuple[int, int, int]) -> bytes:
+def build_icons(
+    icon_png: Path | None,
+    background: tuple[int, int, int],
+    *,
+    transparent_key: tuple[int, int, int] | None = DEFAULT_ICON_TRANSPARENT_KEY,
+    alpha_threshold: int = DEFAULT_ICON_ALPHA_THRESHOLD,
+) -> bytes:
     output = bytearray()
     if icon_png is not None:
         source_width, source_height, source_pixels = read_png(icon_png)
         for width, height in ICON_SPECS:
             resized = resize_cover(source_width, source_height, source_pixels, width, height)
-            output.extend(make_vx(width, height, rgb565_bytes(resized, background)))
+            output.extend(
+                make_vx(
+                    width,
+                    height,
+                    rgb565_bytes(
+                        resized,
+                        background,
+                        transparent_key=transparent_key,
+                        alpha_threshold=alpha_threshold,
+                    ),
+                )
+            )
         return bytes(output)
 
     colors = (
@@ -231,6 +273,8 @@ def build_bda(
     icon_png: Path | None,
     icon_background: tuple[int, int, int],
     include_dirs: Sequence[Path] = (),
+    icon_transparent_key: tuple[int, int, int] | None = DEFAULT_ICON_TRANSPARENT_KEY,
+    icon_alpha_threshold: int = DEFAULT_ICON_ALPHA_THRESHOLD,
 ) -> bytearray:
     if not source.is_file():
         raise SystemExit(f"源码不存在：{source}")
@@ -241,7 +285,12 @@ def build_bda(
 
     code = compile_c(source, prefix, include_dirs)
     data = bytearray(b"\0" * ENTRY_OFFSET)
-    icons = build_icons(icon_png, icon_background)
+    icons = build_icons(
+        icon_png,
+        icon_background,
+        transparent_key=icon_transparent_key,
+        alpha_threshold=icon_alpha_threshold,
+    )
     expected_icon_bytes = ENTRY_OFFSET - ICON_START
     if len(icons) != expected_icon_bytes:
         raise SystemExit(
@@ -294,7 +343,21 @@ def main() -> None:
         "--icon-background",
         type=parse_bg,
         default=(0, 0, 0),
-        help="PNG alpha 背景色，RRGGBB，默认 000000",
+        help="关闭透明色键时使用的 PNG alpha 背景色，RRGGBB，默认 000000",
+    )
+    ap.add_argument(
+        "--icon-transparent-key",
+        type=parse_icon_transparent_key,
+        default=DEFAULT_ICON_TRANSPARENT_KEY,
+        metavar="RRGGBB|none",
+        help="PNG 透明像素的 RGB565 色键，默认 FF00FF；传 none 可关闭",
+    )
+    ap.add_argument(
+        "--icon-alpha-threshold",
+        type=parse_alpha_threshold,
+        default=DEFAULT_ICON_ALPHA_THRESHOLD,
+        metavar="N",
+        help="alpha 小于等于该值时写透明色键，默认 8",
     )
     ap.add_argument(
         "--prefix",
@@ -327,6 +390,8 @@ def main() -> None:
         ns.icon_png,
         ns.icon_background,
         ns.include_dir,
+        ns.icon_transparent_key,
+        ns.icon_alpha_threshold,
     )
     ns.output.parent.mkdir(parents=True, exist_ok=True)
     ns.output.write_bytes(data)

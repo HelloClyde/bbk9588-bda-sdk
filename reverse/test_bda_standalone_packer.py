@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bda_packer.build import (
+    ICON_SPECS,
     build_bda,
+    build_icons,
     bundled_prefix,
     compiler_include_dirs,
     find_tool,
@@ -20,6 +24,48 @@ from bda_packer.validate import validate_bda
 
 
 class StandalonePackerTest(unittest.TestCase):
+    @staticmethod
+    def write_rgba_png(path: Path, pixel: tuple[int, int, int, int]) -> None:
+        def chunk(kind: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + kind
+                + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+            )
+
+        path.write_bytes(
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00" + bytes(pixel)))
+            + chunk(b"IEND", b"")
+        )
+
+    def test_build_icons_uses_magenta_for_transparent_png_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png = Path(temp_dir) / "transparent.png"
+            self.write_rgba_png(png, (12, 34, 56, 0))
+
+            keyed = build_icons(png, (0, 0, 0))
+            composited = build_icons(png, (0, 0, 0), transparent_key=None)
+
+        offset = 0
+        for width, height in ICON_SPECS:
+            self.assertEqual(keyed[offset + 24 : offset + 26], b"\x1f\xf8")
+            self.assertEqual(composited[offset + 24 : offset + 26], b"\x00\x00")
+            offset += 24 + width * height * 2
+
+    def test_build_icons_composites_partial_alpha_against_black(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            png = Path(temp_dir) / "partial.png"
+            self.write_rgba_png(png, (255, 255, 255, 128))
+            icons = build_icons(png, (255, 0, 0))
+
+        offset = 0
+        for width, height in ICON_SPECS:
+            self.assertEqual(icons[offset + 24 : offset + 26], b"\x10\x84")
+            offset += 24 + width * height * 2
+
     def test_each_public_header_is_self_contained(self) -> None:
         prefix = bundled_prefix() or "mipsel-none-elf-"
         try:
