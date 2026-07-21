@@ -96,8 +96,9 @@ class SdkDocsTest(unittest.TestCase):
                 "msgbox_api.md",
                 "picture_rendering_api.md",
                 "public_api_policy.md",
+                "raw_input_event_api.md",
                 "runtime_services_api.md",
-                "touch_press_api.md",
+                "touch_position_api.md",
                 "touch_window_lifecycle_api.md",
                 "window_timer_api.md",
             ],
@@ -487,7 +488,6 @@ class SdkDocsTest(unittest.TestCase):
             "example/basic/hello_world/hello_world_msgbox.c",
             "example/filesystem/fs_write/fs_write_demo.c",
             "example/input/key_polling/key_msgbox_demo.c",
-            "example/input/touch_press/touch_press_demo.c",
             "example/input/touch_crosshair/touch_crosshair_demo.c",
             "example/graphics/primitives/graphics_primitives_demo.c",
             "example/games/minesweeper/minesweeper_bda.c",
@@ -1512,7 +1512,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("BDA_GUI_INPUT_PACKET_SIZE", c200_notes)
         self.assertIn("record+4", c200_notes)
         self.assertIn("record+0", c200_notes)
-        self.assertIn("typed result", gameboy_notes)
+        self.assertIn("两个 s32 output pointer", gameboy_notes)
 
     def test_window_timer_c200_layout_and_public_api_are_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
@@ -1972,21 +1972,64 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("height 在 width 前", combined)
         self.assertIn("low-level framebuffer/backend API", c200_notes)
 
-    def test_touch_press_api_is_verified_and_firmware_bound(self) -> None:
-        header = SDK_HEADER.read_text(encoding="utf-8")
-        verified = read("docs/verified/touch_press_api.md")
-        example = read("example/input/touch_press/touch_press_demo.c")
-        combined = header + "\n" + verified + "\n" + example
-        self.assertIn("bda_touch_pressed_9588", combined)
-        self.assertIn("0x80059f68u", header)
-        self.assertIn("PRESS=1 RELEASE=1", verified + example)
-        self.assertIn("固件固定地址 API", verified)
-        self.assertIn("不包含压力、移动轨迹、多点触控或中断回调", verified)
-        self.assertIn("GUI+0x6c0", verified)
-        self.assertIn("没有进入 verified", verified)
-        self.assertIn("assets/touch_press_bda_verified.png", verified)
+    def test_touch_position_api_is_verified_on_hardware(self) -> None:
+        public = public_sdk_text()
+        verified = read("docs/verified/touch_position_api.md")
+        failure = read("reverse/docs/touch_press_fixed_va_failure.md")
+        probe = read("reverse/examples/gameboy_fast_touch_hardware_probe.c")
+        combined = public + "\n" + verified + "\n" + probe
+
+        self.assertIn("BDA_SDK_INTERNAL_GUI_TOUCH_POSITION    0x6c0u", public)
+        self.assertIn("bda_gui_touch_position(u16 *x, u16 *y)", public)
+        self.assertNotIn("bda_touch_pressed_9588", public)
+        self.assertNotIn("0x80059f68u", public)
+        self.assertIn("9,831,102", verified)
+        self.assertIn("不返回触摸是否按下", verified)
+        self.assertIn("BDA_MSG_TOUCH_COORDINATE", verified)
+        self.assertIn("BDA_MSG_TOUCH_RELEASE", verified)
+        self.assertIn("FastTouchV3", combined)
+        self.assertIn("第一次调用", failure)
+        self.assertIn("禁止在真机运行", failure)
         self.assertTrue(
-            (ROOT / "docs/verified/assets/touch_press_bda_verified.png").is_file()
+            (ROOT / "reverse/docs/assets/touch_press_emulator_compat.png").is_file()
+        )
+
+    def test_raw_input_event_api_is_verified_on_hardware(self) -> None:
+        public = public_sdk_text()
+        verified = read("docs/verified/raw_input_event_api.md")
+        progress = read("reverse/docs/game_api_verification_progress.md")
+        gameboy = read("reverse/docs/gameboy_notes.md")
+        indexes = (
+            read("docs/README.md")
+            + read("docs/sdk_api_layout.md")
+            + read("docs/verified/README.md")
+            + read("docs/verified/public_api_policy.md")
+        )
+
+        self.assertIn("BDA_SDK_INTERNAL_GUI_RAW_EVENT_FETCH", public)
+        self.assertIn("bda_gui_raw_event_t", public)
+        self.assertIn("bda_gui_raw_event_fetch", public)
+        self.assertIn("BDA_INPUT_EVENT_TOUCH_DOWN 8u", public)
+        self.assertIn("BDA_INPUT_EVENT_TOUCH_MOVE 12u", public)
+        self.assertIn("BDA_INPUT_EVENT_TOUCH_UP   11u", public)
+        self.assertNotIn("bda_gui_state_query", public)
+        self.assertNotIn("BDA_SDK_INTERNAL_GUI_STATE_QUERY", public)
+
+        for phrase in [
+            "COUNTS C3=361 C8=15 C9=11 C10=7 C11=17 C12=109",
+            "前 512 条详细事件中",
+            "code=3",
+            "不能一直读取到",
+            "全局消费型输入流",
+            "5945bdd2646cc9e4462b5a45413f970e4697e6d613b7da3a810c9d2e628f34a8",
+        ]:
+            self.assertIn(phrase, verified)
+
+        self.assertIn("raw_input_event_api.md", indexes)
+        self.assertIn("RET == CODE", progress)
+        self.assertIn("bda_gui_raw_event_fetch()", gameboy)
+        self.assertTrue(
+            (ROOT / "docs/verified/assets/gameboy_raw_event_v1_hardware_log.txt").is_file()
         )
 
     def test_touch_window_lifecycle_is_verified_on_hardware(self) -> None:
@@ -3437,7 +3480,12 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("0x8005a7e0", c200_notes)
         self.assertIn("0x1068", combined)
         self.assertIn("0x8047402c = 2", c200_notes)
-        self.assertIn("触摸长按驱动的 game state pump", gameboy_notes)
+        self.assertIn("带全局副作用的 game state pump", c200_notes)
+        self.assertIn("GAMEBOY 没有调用", gameboy_notes)
+        self.assertIn("GUI +0x6c0", gameboy_notes)
+        self.assertIn("event code 8", gameboy_notes)
+        self.assertIn("event code 11", gameboy_notes)
+        self.assertIn("不是 10 ms Window Timer", gameboy_notes)
         self.assertIn("active-low pen GPIO", c200_notes)
         self.assertIn("雷霆战机.bda", c200_notes)
         self.assertIn("决战坦克.bda", c200_notes)

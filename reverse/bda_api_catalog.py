@@ -128,7 +128,7 @@ NOTES: dict[tuple[str, int], str] = {
     ("GUI", 0x670): "BMP/VX decode；C200 使用 owner,out,path,out_source_buffer，VX 快路径会写回 file buffer pointer。",
     ("GUI", 0x6A8): "file selector open/session；C200 只读取 a0=mode，内部构造 modal frame。",
     ("GUI", 0x6B0): "内部 screen/framebuffer pointer getter；无参数，不是 allocator；不要直接写或自定义 present。",
-    ("GUI", 0x6C0): "raw-to-logical 触摸坐标转换器；a0/a1 为 u16 output pointer，结果裁剪到 240x320；静态 ABI 已定位，直接 polling 的动态验证无结论，不列入 verified。",
+    ("GUI", 0x6C0): "raw-to-logical 最新触摸坐标 getter；a0/a1 为 u16 output pointer，结果裁剪到 240x320；FastTouchV3 已在真机高频动态验证，公开为 `bda_gui_touch_position()`。",
     ("GUI", 0x6B8): "链表第 N 项 helper；C200 使用 a0=head、a1=index，不是无参数 selector get。",
     ("GUI", 0x6BC): "linked list free helper；C200 将 a0=head 传给 0x8003e868，释放节点和节点 data，不是无参数 selector close。",
     ("GUI", 0x6C8): "file selector modal run；a0=descriptor，C200 entry 将它原样传给内部 helper。",
@@ -139,7 +139,7 @@ NOTES: dict[tuple[str, int], str] = {
     ("GUI", 0x71C): "标称 1 ms raw counter；无参数返回 u32，只有 +0x714 start 后才持续递增；V4 在 8013 和真机通过，真机 200 ms 窗口实测 194..200 count。",
     ("GUI", 0x72C): "GAMEBOY 状态查询；C200 table entry 无参数并更新内部状态 word。",
     ("GUI", 0x738): "返回屏幕宽度常量；C200 当前返回 0x130。",
-    ("GUI", 0x750): "event/key 获取；C200 使用 a0/a1 两个输出 pointer，无事件时写 -1。",
+    ("GUI", 0x750): "全局 raw input event 获取；C200 使用 a0/a1 两个 s32 output pointer；GbTouchEventV1 真机确认 8/12/11 为 touch down/move/up、9/10 为 key down/up，已公开为 `bda_gui_raw_event_fetch()`。code 3 语义未命名，调用方必须有界 drain。",
     ("GUI", 0x808): "JPEG decode；C200 使用 owner,out,path,mode，mode 截成 signed 8-bit，mode==1 先做路径/格式检查。",
     ("FS", 0x000): "fopen-style；原机代码常传 rb/wb 等 mode string。",
     ("FS", 0x004): "fclose-style；C200 单参数 file，return value 来自内部 close helper。",
@@ -230,6 +230,8 @@ def inventory_totals(path: Path) -> tuple[collections.Counter[int], dict[int, se
 
 
 def confidence(table: str, offset: int, total_calls: int, app_count: int, has_name: bool) -> str:
+    if (table, offset) in {("GUI", 0x6C0), ("GUI", 0x750)}:
+        return "高"
     if (table, offset) in {("GUI", 0x2B8), ("MEM", 0x008), ("MEM", 0x00C), ("FS", 0x000), ("FS", 0x004), ("FS", 0x008), ("FS", 0x00C)}:
         return "较高"
     if has_name and ((table, offset) in NOTES or total_calls >= 20 or app_count >= 3):

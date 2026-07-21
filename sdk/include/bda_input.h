@@ -19,9 +19,20 @@
 #define BDA_INPUT_PACKET_ESCAPE_INDEX 4u
 #define BDA_INPUT_PACKET_ENTER_INDEX  5u
 
+#define BDA_INPUT_EVENT_TOUCH_DOWN 8u
+#define BDA_INPUT_EVENT_KEY_DOWN   9u
+#define BDA_INPUT_EVENT_KEY_UP     10u
+#define BDA_INPUT_EVENT_TOUCH_UP   11u
+#define BDA_INPUT_EVENT_TOUCH_MOVE 12u
+
 typedef struct bda_gui_input_packet {
     u8 bytes[BDA_GUI_INPUT_PACKET_SIZE];
 } bda_gui_input_packet_t;
+
+typedef struct bda_gui_raw_event {
+    s32 code;
+    s32 value;
+} bda_gui_raw_event_t;
 
 /* Physical-key packet: GUI+0x5d4. */
 static inline int bda_gui_input_packet(
@@ -57,10 +68,37 @@ static inline int bda_gui_key_pressed(u32 keycode) {
     return bda_gui_input_packet_key_pressed(&packet, keycode);
 }
 
-/* Firmware-bound touch level query dynamically verified on kj409588/C200. */
-static inline int bda_touch_pressed_9588(void) {
-    typedef int (*fn_t)(void);
-    return ((fn_t)0x80059f68u)();
+/*
+ * Consume one item from the firmware's global raw-input stream. This stream
+ * is shared with higher-level GUI input handling, so do not mix this function
+ * with a window event pump. Limit the number consumed per game iteration:
+ * periodic code 3 events may keep the stream continuously non-empty.
+ *
+ * For touch events, value is not a coordinate. Read the latest logical X/Y
+ * with bda_gui_touch_position(). The event pointer must be valid.
+ */
+static inline int bda_gui_raw_event_fetch(bda_gui_raw_event_t *event) {
+    typedef int (*fn_t)(s32 *out_code, s32 *out_value);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_RAW_EVENT_FETCH
+    );
+    return fn(&event->code, &event->value);
+}
+
+/*
+ * Read the latest calibrated logical touch coordinate. This is a cached
+ * position getter, not a pressed-state query. Track the touch lifetime with
+ * either window messages 1/2 or raw events 8/11; do not mix the two streams.
+ * Both output pointers must be valid.
+ */
+static inline void bda_gui_touch_position(u16 *x, u16 *y) {
+    (void)bda_sdk_internal_call2(
+        bda_sdk_internal_gui(),
+        BDA_SDK_INTERNAL_GUI_TOUCH_POSITION,
+        (u32)x,
+        (u32)y
+    );
 }
 
 #endif

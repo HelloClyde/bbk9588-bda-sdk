@@ -1844,6 +1844,11 @@ static inline int bda_gui_screen_width_like(void) {
  * runtime-table entry and must not be assumed portable to another firmware.
  */
 static inline int bda_touch_pressed_9588(void) {
+    /*
+     * UNSAFE: FastTouchV2 stopped on its first true-hardware call. The same VA
+     * contains different instructions on the tested unit; keep only to
+     * reproduce the failed fixed-address experiment.
+     */
     typedef int (*touch_pressed_fn)(void);
     touch_pressed_fn fn = (touch_pressed_fn)0x80059f68u;
     return fn();

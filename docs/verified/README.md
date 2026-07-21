@@ -18,7 +18,8 @@
 - [系统帮助页 API](help_page_api.md)：`GUI+0x5a8` 的标题/正文协议、同步生命周期与父 Frame 恢复。
 - [文件写入 API](fs_write_api.md)：`fopen/fwrite/tell/error/close/reopen/read` 写入闭环。
 - [实体键轮询 API](input_polling_api.md)：`GUI+0x5d4` 六键状态包和 Linux keycode 映射。
-- [触摸按下/抬起 API](touch_press_api.md)：`kj409588/C200` 固件绑定的 pen GPIO 电平查询。
+- [高速触摸坐标 API](touch_position_api.md)：真机验证的 `GUI+0x6c0` 最新逻辑坐标读取。
+- [原始输入事件 API](raw_input_event_api.md)：真机验证的 `GUI+0x750` 触摸/实体键事件流和 GAMEBOY 式有界轮询。
 - [图形图元 API](graphics_primitives_api.md)：有效 frame 中的彩色画点、线、圆、矩形轮廓和文字。
 - [触摸窗口与完整生命周期](touch_window_lifecycle_api.md)：真机 V23 两阶段绘制、无闪烁坐标十字和可返回主菜单的 frame 退出链。
 - [游戏离屏绘制、精灵与计时 API](game_rendering_api.md)：8013 验证的 compatible context、VX、矩形复制、洋红色键、dirty rect 和 25 ms tick。

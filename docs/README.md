@@ -18,7 +18,7 @@
 | [`bda_types.h`](../sdk/include/bda_types.h) | SDK 版本、基础类型和 handle |
 | [`bda_memory.h`](../sdk/include/bda_memory.h) | freestanding 内存 helper 和 heap |
 | [`bda_filesystem.h`](../sdk/include/bda_filesystem.h) | 文件、seek、目录和枚举 |
-| [`bda_input.h`](../sdk/include/bda_input.h) | 按键包和触摸状态 |
+| [`bda_input.h`](../sdk/include/bda_input.h) | 按键包、原始输入事件和高速触摸坐标读取 |
 | [`bda_time.h`](../sdk/include/bda_time.h) | tick、标称 1 ms counter、Frame 周期定时器和 delay |
 | [`bda_window.h`](../sdk/include/bda_window.h) | Frame、消息、事件泵和生命周期 |
 | [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX 和 picture |
@@ -40,7 +40,8 @@
 | 系统文件选择器 | [file_selector_api.md](verified/file_selector_api.md) | 8013 模拟器 |
 | 文件写入与读回 | [fs_write_api.md](verified/fs_write_api.md) | 8013 模拟器 |
 | 六键轮询 | [input_polling_api.md](verified/input_polling_api.md) | 8013 模拟器 |
-| 触摸按下与抬起 | [touch_press_api.md](verified/touch_press_api.md) | 真机 |
+| 高速触摸坐标读取 | [touch_position_api.md](verified/touch_position_api.md) | 真机 |
+| GAMEBOY 式原始输入事件 | [raw_input_event_api.md](verified/raw_input_event_api.md) | 真机 |
 | 触摸坐标与窗口生命周期 | [touch_window_lifecycle_api.md](verified/touch_window_lifecycle_api.md) | 真机 |
 | 图形图元 | [graphics_primitives_api.md](verified/graphics_primitives_api.md) | 8013 模拟器 |
 | 双缓冲、VX、dirty rect、tick | [game_rendering_api.md](verified/game_rendering_api.md) | 8013 模拟器 |

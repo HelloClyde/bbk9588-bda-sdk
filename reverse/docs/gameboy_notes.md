@@ -129,14 +129,15 @@ pointer 存到 `0x81c2051c`，并派生出 `+0x11200` 的另一个 pointer。代
 
 ```text
 GUI +0x6b0  screen/framebuffer pointer getter；C200 table entry 无参数
-GUI +0x6e0  触摸长按驱动的 game state pump；无参数，阈值到达后写全局状态
+GUI +0x6c0  最新校准触摸坐标 getter；GAMEBOY 在低层事件码 8/11 分支各调用一次
 GUI +0x738  screen width-like；C200 table entry 当前直接返回 0x130
-GUI +0x72c  state/query-like；C200 table entry 无参数
-GUI +0x750  event/key fetch-like；C200 ABI 是两个 output pointer，SDK 暴露为 typed result
+GUI +0x72c  state/query-like；C200 table entry 无参数，真机 probe 全程返回 0，仍属研究接口
+GUI +0x750  全局 raw input event fetch；两个 s32 output pointer，真机验证后已公开
 GUI +0x5d4  input packet-like，传入至少 6 byte buffer，C200 会写入按键状态
 ```
 
-这些名称都只是从调用上下文推断。注意该应用没有使用其他游戏常见的
+其中 `+0x750` 的事件 ABI 和 `8/12/11`、`9/10` 语义已经由独立真机 probe 确认；
+其余未公开名称仍只是从调用上下文推断。注意该应用没有使用其他游戏常见的
 `GUI+0x3f8/+0x400` blit 组，而是使用较高 offset 的扩展 GUI/event 表。
 `GUI+0x6b0` 返回的 pointer 属于 firmware display state，不是 SDK 分配的稳定
 framebuffer；普通 BDA 不要直接写入，也不要把它和 `GUI+0x3f8/+0x400`
@@ -183,16 +184,46 @@ hardware probe 确认精确契约。
 
 ## 输入线索
 
-该 BDA 在 `0x81c10d30` 附近有密集 input/status 例程。它使用 `+0x72c`、
-`+0x750`、`+0x5d4` 附近的 GUI 调用，然后更新 `0x81c205f4`、`0x81c205f8`、
-`0x81c205fc` 等 global 变量。C200 中 `GUI+0x5d4` 会清 6 byte packet，并从
-按键/MMIO 状态写入 `packet[0..5]`。
+该 BDA 在 `0x81c10d30` 有完整 input/status 例程。调用链已经确认：
+
+```text
+0x81c0ccb0  内部 emulation budget 到期后调用 input routine
+0x81c10d40  GUI+0x72c，读取并处理全局 state bitmask
+0x81c10db4  GUI+0x750，非阻塞取得低层 event code/value
+event code 11 (touch up)   -> 0x81c11004 GUI+0x6c0(x,y) -> 区域命中和状态调整
+event code 8  (touch down) -> 0x81c11120 GUI+0x6c0(x,y) -> 底部虚拟按钮区域命中
+0x81c10e4c  GUI+0x5d4，读取 6-byte 实体键 packet
+```
+
+两个 `+0x6c0` 调用都先清零 `0x81c205f4/0x81c205f8`，再把两个 stack halfword
+地址作为 `u16 *x/u16 *y` 传入。事件码 8 分支会检查 `y=278..295`，并按不同 x 区间
+设置 `0x81c205fc/0x81c205f4/0x81c205f8`；事件码 11 分支还会处理另外几组触摸区域。
+独立真机事件关联已经确认 `8/12/11` 是 touch down/move/up，`9/10` 是 key
+down/up。原版 GAMEBOY 只对 8/11 建立区域状态，移动坐标并不需要每次改变按钮命中。
+
+C200 中 `GUI+0x5d4` 会清 6 byte packet，并从按键/MMIO 状态写入
+`packet[0..5]`。GAMEBOY 随后把 packet 映射到自身的 GB joypad bitfield。
+
+GAMEBOY 没有调用标准 Frame event poll `GUI+0x030`，也没有调用 Window Timer
+`GUI+0x1ac`。输入检查由模拟器自己的 cycle/budget 调度触发，不是 10 ms Window Timer。
+因此它的实际架构是低层原始事件决定触摸阶段，再读取最新 XY。`+0x750` 现已公开为
+`bda_gui_raw_event_fetch()`，适合不建立标准 Frame 消息泵的自管游戏循环。普通 Frame
+应用仍应使用窗口消息 `1/2`；两条消费路径不能混用。
 
 音频合成路径也会读取 `0x81c204d0` 全局结构里的 button-state-like 字段，offset
 包括 `0x12`、`0x1a`、`0x24`、`0x25`、`0x26`。
 
-这些线索有用，但还不是干净 SDK input API。真正的 touch/key message 仍应结合
-`input_notes.md` 和 hardware probe BDA 继续固定。
+`GUI+0x6c0` 已由 FastTouchV3 在真机独立验证并公开。随后 GbTouchEventV1 真机日志
+确认 `+0x750` 的返回值等于 output code，并确认 8/12/11 和 9/10 的触摸、按键语义，
+因此 `+0x750` 也已公开。`+0x72c` 在整次测试中始终为 0，仍只保留为研究接口。
+
+真机事件关联探针 `reverse/examples/gameboy_event_touch_hardware_probe.c` 按 25 ms
+周期保守复刻 `+0x72c -> +0x750 -> +0x6c0`，每周期最多 drain 4 条事件，并实时写
+`A:\\GBEVT.TXT`。它不调用固定地址、GPIO、Window Timer、raw NAND 或绘图接口；
+最终计数为 `C3=361 C8=15 C9=11 C10=7 C11=17 C12=109`，正常 ESC 退出；
+前 512 条详细记录全部满足 `RET == CODE`。`code=3` 会持续产生但业务语义不明，因此
+SDK 不给它命名，并要求每帧限制 drain 数量。完整日志保存在
+`docs/verified/assets/gameboy_raw_event_v1_hardware_log.txt`。
 
 ## 对 GBA/模拟器项目的意义
 
