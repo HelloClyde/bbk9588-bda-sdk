@@ -16,7 +16,6 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/basic/hello_world/HelloWorld.bda", "HelloWorld", 9),
         ("example/filesystem/fs_write/FsWrite.bda", "FsWrite", 9),
         ("example/input/key_polling/KeyInput.bda", "KeyInput", 9),
-        ("example/input/touch_press/TouchPress.bda", "Touch", 9),
         ("example/input/touch_crosshair/TouchCrosshair.bda", "TouchXY", 9),
         ("example/graphics/primitives/GraphicsPrimitives.bda", "Graphics", 9),
         ("example/graphics/picture_render/PictureRender.bda", "PictureRaw", 9),
@@ -135,12 +134,23 @@ class SdkExamplesTest(unittest.TestCase):
     def test_key_msgbox_example_builds(self) -> None:
         self.build_and_validate("example/input/key_polling/key_msgbox_demo.c", "KeyInput")
 
-    def test_touch_press_example_builds(self) -> None:
-        self.build_and_validate("example/input/touch_press/touch_press_demo.c", "Touch")
-
     def test_touch_crosshair_example_builds(self) -> None:
         self.build_and_validate(
             "example/input/touch_crosshair/touch_crosshair_demo.c", "TouchXY"
+        )
+
+    def test_fast_touch_hardware_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/gameboy_fast_touch_hardware_probe.c",
+            "FastTouchV3",
+            ("reverse",),
+        )
+
+    def test_gameboy_event_touch_hardware_probe_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/gameboy_event_touch_hardware_probe.c",
+            "GbTouchEvtV1",
+            ("reverse",),
         )
 
     def test_touch_stage_v12_probe_builds(self) -> None:

@@ -1,6 +1,6 @@
 # 游戏系统 API 验证进度
 
-更新时间：2026-07-20
+更新时间：2026-07-21
 
 > 研究头兼容说明：`reverse/bda_research_sdk.h` 暂时保留
 > `bda_gui_tick_count_25ms_like()`、`bda_gui_tick_elapsed_25ms_like()`、
@@ -35,6 +35,7 @@ open/write/attenuation 和 `SYS+0x0a0` stop 已在真机形成安全返回闭环
 | 未启用毫秒全局 | RAM `0x80473ed0` | 是 | V3 失败 | 不测 | 四个窗口恒零；旧 timer-0 初始化未进入当前启动流程 |
 | 标称 1 ms 系统计时器 | GUI `+0x714/+0x718/+0x71c` | 是 | V4 通过 | V4 通过 | 真机窗口 194..200 count，subtick 与 stop 通过；已公开 |
 | 窗口定时消息 | GUI `+0x1ac..+0x1bc` | 是 | V4 通过 | V4 通过 | 10 ms 调度、`0x144` 消息、16 槽与完整注销已验证并公开 |
+| 全局原始输入事件 | GUI `+0x750` | 是 | 原子轮询通过 | V1 通过 | `8/12/11` 触摸、`9/10` 实体键；必须有界 drain，已公开 |
 | 批量绘图 | GUI `+0x3f8/+0x400` 调用链 | 部分 | 暂停危险探针 | 真机失败过 | 缺少原机 game surface/context 生命周期 |
 | 字体指标 | GUI `+0x4a4/+0x4d0/+0x4d4` | 是 | V3 通过 | 待测 | 当前字体有效，cell 为 `16*16` |
 | frame client rect | GUI `+0x0a4` | 是 | V3 通过 | 待测 | 有效 frame 返回 `(0,0)-(240,320)` |
@@ -1476,6 +1477,123 @@ END MINESWEEPER V1
 
 替换脚本再次确认 `C200.bin` SHA-256 保持
 `02a16107b11a3281067871c6fe3d4c289c910d8dfa9924573dd87f00351d6525`。
+
+## GameAtomicTouchProbeV1-V6
+
+源码：`reverse/examples/game_atomic_touch_probe.c`
+
+日志：`build/ATOUCH_emulator_v3.txt`、`build/ATOUCH_emulator_v5.txt`、
+`build/ATOUCH_emulator_v6_patched.txt`
+
+本轮针对“游戏是否能绕开阻塞窗口事件泵直接读取触摸”做了三组隔离测试：
+
+1. `GUI+0x750` 空队列读取 50000 次耗时 `18..36 ms`，无 25 ms 阻塞；稳定收到
+   约 40 Hz 的 `code=3` 和实体键 `9/10`，但没有收到前端触摸。
+2. GAMEBOY 顺序中的 `GUI+0x72c` 不能让自建 BDA 获得触摸事件，而且会推进固件
+   全局输入状态，不能包装成无副作用的 `is_touch_down()`。
+3. 固定地址 `0x80059f68` 读取 100000 次耗时 `4..11 ms`，调用成本足够低；但
+   0.1.5 默认 C 设备没有把 touch chardev 状态可靠映射到该函数读取的 GPIOC 位。
+   外部 C200 副本启用旧 latch patch 后仍只能观察到滞后的启动触摸，无法形成可靠的
+   多次 `DOWN/UP` 序列。
+
+因此本轮结论是：固件里确实存在原子 pen GPIO helper，性能也不是问题；当前 8013
+模拟器的 GPIO/SADC 输入模型阻止了语义闭环。`GUI+0x6c0` 继续保留在 reverse 研究区，
+不进入公开 include；游戏触摸在模拟器修复前仍以已验证窗口消息路径为准。
+
+V6 BDA SHA-256：
+
+```text
+1ac1754bf99b85d1cb40d2a63b59b9176ef79aebb09901acc59254f5b2f6bde5
+```
+
+V6 兼容模式日志 SHA-256：
+
+```text
+d41f2cb0423eb409c146b28b7bc9b0a837b48e1065df36a19e950c7daa6f642e
+```
+
+### FastTouch 真机隔离
+
+`FastTouchV1` 真机日志停止在：
+
+```text
+START GAMEBOY FAST TOUCH HARDWARE PROBE V1
+READY TOUCH SCREEN; ESC TO EXIT
+STATE MS=33 VALUE=0x00000000
+```
+
+这证明 `GUI+0x72c` 已返回，但由于后续 `GUI+0x750`、pen GPIO 和坐标转换之间没有
+breadcrumb，尚不能精确定位死点。`FastTouchV2` 移除了 state/event fetch 和 1 ms
+timer。它在每个 tight-loop 读取 pen GPIO，按住期间每轮读取逻辑 XY；25 ms tick
+只负责 heartbeat，不限制坐标采样。为避免 FS 日志反过来拖慢测试，移动过程只在 RAM
+累计 `POS_READS/XYCHG`，每秒写一次最新 XY。
+
+V2 BDA：`build/FastTouchV2.bda`
+
+```text
+3d104fc679e02de3bdc0a378d3ba4e16dbd140e40cb1a794e70caa3dbf4637ed
+```
+
+V2 真机随后只写到：
+
+```text
+START GAMEBOY FAST TOUCH HARDWARE PROBE V2
+PATH=GPIO PEN + GUI POSITION; NO EVENT FETCH; NO 1MS TIMER
+BEFORE FIRST PEN
+```
+
+因此固定地址 `0x80059f68` 在这台真机上不能作为函数调用。V3 先以普通内存读取记录
+该地址的六个 instruction word，再直接只读 GPIOC `0xb0010100`；它不执行 fixed VA，
+也不做 raw NAND 操作。BDA：`build/FastTouchV3.bda`
+
+```text
+265cc332c4dbdc3ba5470a7301c06102fef82f17bfbee5ba7eaf7ff42eef0651
+```
+
+V3 真机结果为 `PASS` 并可正常 ESC 退出。固定地址的六个指令字是
+`3C018049 AC20FD40 3C018049 AC20FD44 3C018049 AC20FD48`，证明真机代码布局与研究
+镜像不一致。GPIOC 始终为 `0x0D527220`，对应 bit 没有随触摸变化，不能作为 pen 状态。
+
+另一方面，`GUI+0x6c0` 在 `0x313` 个 25 ms tick（约 19.675 秒）内完成
+`9,831,102` 次读取，记录到 `131` 次有效坐标变化，最终正常退出。它已提升为公开
+`bda_gui_touch_position()`；这验证的是非阻塞 latest-coordinate getter 吞吐量，不是
+ADC 采样率。游戏应由窗口消息 `1/2` 维护 down/up，并在 down 状态中读取最新 XY。
+错误的 `bda_touch_pressed_9588()` 已从公开 SDK 撤回，只在 reverse 保留失败记录。
+
+### GAMEBOY 低层事件真机验证通过
+
+源码：`reverse/examples/gameboy_event_touch_hardware_probe.c`
+
+该 probe 复刻 GAMEBOY 的 `GUI+0x72c -> GUI+0x750 -> GUI+0x6c0` 顺序，但把调用率
+限制为每个 25 ms tick 一轮，每轮最多 drain 4 条事件。`+0x750` 返回非负 event code
+时立即把 `RET/STATE/CODE/VALUE/X/Y` 追加到 `A:\\GBEVT.TXT` 并关闭文件；heartbeat
+每秒记录 `C8/C11/OTHER` 累计值。它不使用固定 VA、GPIO、Window Timer、raw NAND
+或绘图 API，ESC 通过已验证的 6-byte key packet 退出。
+
+真机构建：`build/GbTouchEventV1.bda`
+
+```text
+SHA-256 6eb26102e14cfb937e768ee71e294d81ce7753c2f0d56ddd8e8f72e1ab2165a8
+```
+
+真机执行多次短按、拖动和实体 ESC 后正常退出：
+
+```text
+COUNTS C3=361 C8=15 C9=11 C10=7 C11=17 C12=109
+RESULT=PASS
+```
+
+前 512 条详细记录全部满足 `RET == CODE`。事件序列确认 `8/12/11` 分别为触摸
+down/move/up，`9/10` 为实体键 down/up；触摸事件的 `VALUE` 为 0，坐标由
+`GUI+0x6c0` 另行读取。启动残留触摸在首个 `8` 前产生了 `12/11`，调用方必须允许
+从半截序列开始。`code=3,value=0` 持续出现且语义仍未命名，所以每个游戏迭代只能
+有界 drain，不能读到队列为空为止。
+
+`GUI+0x72c` 全程保持 `0`，不是 `+0x750` 的前置条件，也没有获得可公开语义。
+本轮只把 `+0x750` 提升为 `bda_gui_raw_event_fetch()`；`+0x72c` 继续留在研究区。
+完整真机日志保存在
+`docs/verified/assets/gameboy_raw_event_v1_hardware_log.txt`，SHA-256 为
+`5945bdd2646cc9e4462b5a45413f970e4697e6d613b7da3a810c9d2e628f34a8`。
 
 ## 安全边界
 

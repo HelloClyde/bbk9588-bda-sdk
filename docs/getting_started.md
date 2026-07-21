@@ -67,7 +67,11 @@ bda-validate build\HelloWorld.bda
 
 通常直接传 `1..9`。固件范围检查也接受 `0`，但原机应用中没有发现对应目录，SDK
 不建议使用。原机个别 BDA 的高 16 位还带有标志，其含义尚未确认。使用
-`--icon-png` 可以生成四个固件要求的 VX 图标尺寸。
+`--icon-png` 可以生成四个固件要求的 VX 图标尺寸。RGBA PNG 的透明像素默认转换为
+固件使用的洋红 RGB565 色键 `0xf81f`，半透明像素与菜单黑色背景合成；可用
+`--icon-alpha-threshold N` 调整透明阈值。
+如需把 alpha 预合成为固定背景色，传
+`--icon-transparent-key none --icon-background RRGGBB`。
 
 这些数值是分类的总菜单项容量，不等于还能添加的 BDA 数量；固件预置或硬编码菜单项
 也会占用槽位。“娱乐天地”（category `4`）放入第 11 个 BDA 时，即使 header、

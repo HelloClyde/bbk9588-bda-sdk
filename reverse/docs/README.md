@@ -6,6 +6,9 @@
 
 以下内容是原生 BDA C SDK 的研究参考，带 `_like` 或 `_LIKE` 的名称均可能调整。
 
+触摸固定地址失败边界见 [`touch_press_fixed_va_failure.md`](touch_press_fixed_va_failure.md)；
+真机已证明该地址不能作为公开 pressed-state API。
+
 本目录面向 BBK 9588 原生 `*.bda` 应用开发。这里的接口不是 BB 虚拟机 API，
 而是原机 BDA 直接调用的 MIPS native runtime table。
 
@@ -213,7 +216,7 @@ void *bda_gui_screen_buffer_like(void);
 void bda_gui_touch_position_like(u16 *x, u16 *y);
 int bda_gui_state_query_like(void);
 int bda_gui_screen_width_like(void);
-int bda_touch_pressed_9588(void);
+int bda_touch_pressed_9588(void); /* 危险固定地址失败探针，禁止真机调用 */
 int bda_gui_event_fetch_like(bda_gui_event_fetch_like_t *out_event);
 int bda_gui_file_selector_update_like(bda_file_selector_like_t *selector);
 void *bda_gui_list_nth_like(void *head, s32 index);
@@ -449,7 +452,6 @@ filesystem raw wrapper 保持保守命名，直到 struct layout 和 return valu
 example/basic/hello_world/hello_world_msgbox.c        最小 verified message box
 example/filesystem/fs_write/fs_write_demo.c              已验证的写入、关闭、重开和读回闭环
 example/input/key_polling/key_msgbox_demo.c            已验证的六键 packet 轮询
-example/input/touch_press/touch_press_demo.c           固件绑定的触摸按下/抬起轮询
 example/input/touch_crosshair/touch_crosshair_demo.c       真机 V23 两阶段绘制的无闪烁触摸定位测试
 example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图元和彩色像素绘制
 example/graphics/picture_render/picture_render_demo.c    已验证的原生尺寸 raw RGB565 动态提交
@@ -512,6 +514,9 @@ reverse/examples/game_color_key_sprite_probe.c V20 RGB565 magenta color-key spri
 reverse/examples/game_dirty_rect_sprite_probe.c V21 three-surface dirty-rectangle sprite probe
 reverse/examples/gam4980_runtime_api_probe.c  gam4980 heap、seek 和目录正式化准入 probe
 reverse/examples/gam4980_picture_api_probe.c  gam4980 raw RGB565 picture 正式化准入 probe
+reverse/examples/gameboy_fast_touch_hardware_probe.c  FastTouchV3 真机高速坐标 getter 验证
+reverse/examples/gameboy_event_touch_hardware_probe.c GAMEBOY +0x750/+0x6c0 真机事件关联通过；+0x72c 保留研究
+reverse/examples/touch_press_fixed_va_probe.c  旧兼容模拟器固定地址失败归档，禁止真机运行
 reverse/examples/touch_input_stage_probe_v12.c  最小文本与触摸 lifecycle 回归
 reverse/examples/touch_input_stage_probe_v13.c  object draw scope 真机回归
 reverse/examples/touch_input_stage_probe_v14.c  compatible context 方向实验

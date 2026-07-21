@@ -70,9 +70,9 @@ refresh、close 或 input message。
 
 ## 触摸/手写笔线索
 
-`0x80059f68` 的触摸按下/抬起查询已经由独立 BDA 动态验证。稳定返回语义、
-固件版本绑定、示例、NAND 导出结果和截图见 `verified/touch_press_api.md`。
-该结论只覆盖 pen GPIO 电平，不自动证明坐标或 window message ABI。
+早期曾把研究镜像地址 `0x80059f68` 当成触摸按下/抬起查询，并在带兼容补丁的模拟器
+观察到按下/抬起。`FastTouchV2/V3` 真机隔离已经推翻这一结论：真机同一地址是不同
+指令，第一次函数调用不会返回。失败证据见 `touch_press_fixed_va_failure.md`。
 
 系统二进制包含诊断字符串：
 
@@ -96,9 +96,11 @@ high16=y 解包。完整地址和 opcode 路径见 `bbvm_notes.md`。
 
 `GUI+0x6c0 -> 0x8001a3a0` 是另一层接口。静态逆向确认它接收两个 `u16 *` 输出参数，
 从 `0x807f7112/7114` 读取 raw 值，使用 `0x807f7120..7154` 的校准参数计算坐标，
-把结果裁剪到 `0..239` 和 `0..319`，并缓存到 `0x807f7116/7118`。对原版 NAND 中
-54 个 BDA 的表调用扫描没有发现应用直接调用 `GUI+0x6c0`；现有证据更符合“固件内部
-校准转换器”，而不是原版应用普遍使用的 polling getter。
+把结果裁剪到 `0..239` 和 `0..319`，并缓存到 `0x807f7116/7118`。重新按已缓存 GUI
+table global 扫描后，确认 `GAMEBOY.BDA` 在 `0x81c11004/0x81c11120` 直接调用
+`GUI+0x6c0`。两个调用分别位于低层 event code `11/8` 分支，输出坐标随后立即用于
+触摸区域命中。此前“54 个 BDA 均未直接调用”的结论来自未正确分类这些间接调用，
+现已撤回。
 
 先前自建 BDA 调用该接口只得到 `(239,319)`，但这次动态测试不能判为接口失败：
 
@@ -110,9 +112,56 @@ high16=y 解包。完整地址和 opcode 路径见 `bbvm_notes.md`。
 - 模拟器测试允许触摸注入后 guest raw globals 保持 `0xffff`，因此必须用同一运行中的
   原版 BDA 作为 positive control，才能区分固件接口问题和模拟器输入模型限制。
 
-对应 provisional wrapper 为 `bda_gui_touch_position_like(u16 *x, u16 *y)`。当前结论是
-“静态 ABI 已定位，动态验证无结论”，不是“API 只会返回 `(239,319)`”。在完成同一次
-按压中的 raw、转换输出和 wndproc `lparam` 三路对照前，它仍不列入 `verified/`。
+对应研究 wrapper 为 `bda_gui_touch_position_like(u16 *x, u16 *y)`。以下模拟器结论只
+说明当时的输入模型没有形成闭环；后续 `FastTouchV3` 已在真机验证该函数表入口可高频
+读取有效逻辑坐标，公开名称为 `bda_gui_touch_position()`。
+
+2026-07-21 在 `bbk9588-emulator-v0.1.5` 的默认 C 设备模式追加了原子轮询对照。
+`GUI+0x750` 连续读取 50000 次只需 `18..36 ms`，确认它本身不会像窗口事件泵那样
+空队列阻塞；但它只收到约 40 Hz 的 `code=3` 系统节拍和实体键 `9/10`，没有收到
+前端注入的触摸。先调用 `GUI+0x72c` 也没有建立触摸路由，而且该入口会推进全局输入
+状态，不是纯查询。
+
+随后 `GbTouchEventV1` 在 BBK 9588 真机完成独立关联：最终收到
+`C3=361 C8=15 C9=11 C10=7 C11=17 C12=109` 并正常退出，前 512 条详细记录全部
+满足 `RET == CODE`。短按和拖动确认 `8/12/11` 为 touch down/move/up，实体 ESC
+确认 `9/10` 为 key down/up。`+0x72c` 全程为 0，不是事件获取前置条件；它不公开。
+`+0x750` 已公开为 `bda_gui_raw_event_fetch()`，但它消费全局队列，不能与标准窗口
+事件泵混用。由于 `code=3` 可持续到达，游戏循环必须限制每轮消费条数。
+
+固定地址 `0x80059f68` 连续调用 100000 次只需 `4..11 ms`，性能满足逐帧轮询；但
+当前模拟器没有把前端 touch chardev 状态可靠同步到它读取的 GPIOC bit。旧
+`c200-touch-gpio-latch` 兼容补丁读取的 `0x807f7110` latch 又不属于当前 C 设备的
+稳定输入合同，只能观察到滞后的启动触摸。由此本轮只能确认调用成本，不能确认当前
+模拟器上的按下/抬起和坐标正确性。它不否定后续独立的真机坐标验证。
+
+`FastTouchV1` 在真机启动后记录了 `STATE MS=33 VALUE=0x00000000`，随后死机。
+该日志只能确认本轮 `GUI+0x72c` 已返回；V1 接下来依次调用 `GUI+0x750`、固定地址
+pen query 和 `GUI+0x6c0`，但没有逐调用 breadcrumb，因此不能仅凭这份日志判定具体
+死点。`FastTouchV2` 已移除 `GUI+0x72c/+0x750` 和独立 1 ms timer：pen GPIO 每轮
+读取，pen-down 期间 `GUI+0x6c0` 也每轮读取，不受 25 ms tick 门控；25 ms tick 只用来
+每秒记录采样次数、坐标变化次数和最新 XY。源码为
+`reverse/examples/gameboy_fast_touch_hardware_probe.c`，真机构建为
+`build/FastTouchV2.bda`，SHA-256 为
+`3d104fc679e02de3bdc0a378d3ba4e16dbd140e40cb1a794e70caa3dbf4637ed`。
+
+V2 真机日志停止在 `BEFORE FIRST PEN`，因此已经确认固定 VA `0x80059f68` 的第一次
+调用没有返回。即使本地 C200 反汇编中该地址只是读取 GPIOC 的短 leaf function，也
+不能再假定真机运行的 firmware layout 与研究镜像相同；
+`bda_touch_pressed_9588()` 继续只算危险的 fixed-address 研究 helper，不能进入公开
+include。`FastTouchV3` 不执行该地址，而是先读取其六个 instruction word 留证，再由
+BDA 直接只读 `0xb0010100` 的 GPIOC word 和 bit `0x00040000`。V3 SHA-256 为
+`265cc332c4dbdc3ba5470a7301c06102fef82f17bfbee5ba7eaf7ff42eef0651`。
+
+V3 真机完整运行到 `FINAL TICK=0x313` 并正常 ESC 退出。最后一个 heartbeat 为
+`LOOPS=9831101 PEN_READS=9831102 POS_READS=9831102 XYCHG=131`；坐标从首次
+`(28,236)` 开始，触摸期间持续更新到多组有效值。约 19.675 秒内完成约 983 万次
+`GUI+0x6c0` 调用，说明 getter 本身没有 25 ms 门控。该数值只是函数调用吞吐量，不是
+ADC 采样率；固件后台更新 raw/cache 的真实频率尚未测量。
+
+同时，GPIOC word 始终为 `0x0D527220`，按研究镜像 mask 解出的 `PEN` 始终为 1，
+无法区分按下和抬起。稳定架构因此是：窗口消息 `1/2` 维护触摸生命周期，按住期间用
+`bda_gui_touch_position()` 读取最新逻辑 XY。公开 SDK 不提供 pressed-state polling。
 
 SDK 已补充 `bda_gui_event_pump_frame_once_like(message, frame)`，用于新注册的 custom
 frame。旧 `bda_gui_event_pump_once_like(message)` 保留为 global/default-slot 兼容入口，

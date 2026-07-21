@@ -3,6 +3,15 @@
 #include "bda_input.h"
 #include "bda_time.h"
 
+/*
+ * Historical fixed-address probe. FastTouchV2 proved that this address does
+ * not contain the same function on the tested hardware and may hang the unit.
+ */
+static int unsafe_touch_pressed_fixed_va(void) {
+    typedef int (*fn_t)(void);
+    return ((fn_t)0x80059f68u)();
+}
+
 static const char k_log_path[] =
     "A:\\\xd3\xa6\xd3\xc3\\\xca\xfd\xbe\xdd\\\xd3\xce\xcf\xb7\\TOUCHPRESS.TXT";
 static const char k_result[] = "PRESS=1 RELEASE=1";
@@ -20,10 +29,10 @@ __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_msgbox("Touch", "Press and release the screen");
 
-    while (!bda_touch_pressed_9588()) {
+    while (!unsafe_touch_pressed_fixed_va()) {
         bda_sys_delay(1);
     }
-    while (bda_touch_pressed_9588()) {
+    while (unsafe_touch_pressed_fixed_va()) {
         bda_sys_delay(1);
     }
 

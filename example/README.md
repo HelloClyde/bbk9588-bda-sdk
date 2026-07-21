@@ -14,7 +14,6 @@
 basic/hello_world/        hello_world_msgbox.c + HelloWorld.bda
 filesystem/fs_write/     fs_write_demo.c + FsWrite.bda
 input/key_polling/        key_msgbox_demo.c + KeyInput.bda
-input/touch_press/        touch_press_demo.c + TouchPress.bda
 input/touch_crosshair/    touch_crosshair_demo.c + TouchCrosshair.bda
 graphics/primitives/      graphics_primitives_demo.c + GraphicsPrimitives.bda
 graphics/picture_render/  picture_render_demo.c + PictureRender.bda
@@ -36,7 +35,6 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 | `basic/hello_world/` | Message Box | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
 | `filesystem/fs_write/` | 文件写入、关闭、重开、读回 | 模拟器 | [API 文档](../docs/verified/fs_write_api.md) |
 | `input/key_polling/` | 六个实体键轮询 | 模拟器 | [API 文档](../docs/verified/input_polling_api.md) |
-| `input/touch_press/` | 触摸按下、抬起状态 | 真机 | [API 文档](../docs/verified/touch_press_api.md) |
 | `input/touch_crosshair/` | 触摸坐标、无闪烁重绘、窗口退出 | 真机 | [生命周期教程](../docs/verified/touch_window_lifecycle_api.md) |
 | `graphics/primitives/` | 点、线、圆、矩形和文字 | 模拟器 | [API 文档](../docs/verified/graphics_primitives_api.md) |
 | `graphics/picture_render/` | 原生尺寸 raw RGB565 动态提交 | 模拟器 | [API 文档](../docs/verified/picture_rendering_api.md) |
