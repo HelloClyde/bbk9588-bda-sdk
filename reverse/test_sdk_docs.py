@@ -84,6 +84,7 @@ class SdkDocsTest(unittest.TestCase):
             verified_docs,
             [
                 "README.md",
+                "audio_capture_api.md",
                 "audio_pcm_api.md",
                 "controls_api.md",
                 "file_selector_api.md",
@@ -318,8 +319,11 @@ class SdkDocsTest(unittest.TestCase):
 
     def test_public_audio_header_matches_verified_scope(self) -> None:
         header = read("sdk/include/bda_audio.h")
-        docs = read("docs/verified/audio_pcm_api.md")
-        example = read("example/system/audio_pcm/audio_pcm_demo.c")
+        playback_docs = read("docs/verified/audio_pcm_api.md")
+        capture_docs = read("docs/verified/audio_capture_api.md")
+        docs = playback_docs + "\n" + capture_docs
+        playback_example = read("example/system/audio_pcm/audio_pcm_demo.c")
+        capture_example = read("example/system/audio_capture/audio_capture_demo.c")
 
         self.assertIn('#include "bda_types.h"', header)
         self.assertIn('#include "bda/detail/runtime.h"', header)
@@ -333,23 +337,220 @@ class SdkDocsTest(unittest.TestCase):
             "bda_audio_stop",
         ]:
             self.assertIn(name, header)
-            self.assertIn(name, docs)
-            self.assertIn(name, example)
+            self.assertIn(name, playback_docs)
+            self.assertIn(name, playback_example)
+        for name in [
+            "bda_audio_capture_is_supported",
+            "bda_audio_capture_open",
+            "bda_audio_capture_read",
+            "bda_audio_capture_stop",
+        ]:
+            self.assertIn(name, header)
+            self.assertIn(name, capture_docs)
+            self.assertIn(name, capture_example)
+        self.assertIn("bda_audio_capture_firmware", header)
+        self.assertIn("bda_audio_capture_firmware", capture_docs)
+        for token in [
+            "BDA_AUDIO_CAPTURE_UNSUPPORTED",
+            "BDA_AUDIO_CAPTURE_INVALID_ARGUMENT",
+            "BDA_AUDIO_CAPTURE_INVALID_STATE",
+            "BDA_AUDIO_CAPTURE_IO_ERROR",
+            "BDA_AUDIO_CAPTURE_BLOCK_BYTES",
+            "dc41701442176ba81bf1b8041b2f9dac449e04f2adf6532993e7c55471de9bea",
+        ]:
+            self.assertIn(token, header)
+            self.assertIn(token, capture_docs)
+        self.assertIn("BDA_AUDIO_INTERNAL_C200_SYS_PCM_OPEN", header)
+        self.assertIn("init_code[0] != 0x27bdffe0u", header)
+        self.assertIn("read_code[0] != 0x27bdffb8u", header)
+        self.assertIn("stop_code[0] != 0x3c03b001u", header)
+        self.assertIn("bytes != BDA_AUDIO_CAPTURE_BLOCK_BYTES", header)
+        self.assertIn("不会调用固件私有地址", capture_docs)
+        self.assertIn("首次 read 会启动 DMA", capture_docs)
+        self.assertIn("实时波形", capture_docs)
+        self.assertIn("calculate_waveform", capture_example)
+        self.assertIn("present_waveform", capture_example)
+        self.assertIn("bda_gui_event_pump_frame_once", capture_example)
+        self.assertIn("START AUDIO CAPTURE WAVEFORM V1", capture_example)
+        self.assertIn("AUDCAP.TXT", capture_example + capture_docs)
+        waveform_result = read(
+            "docs/verified/assets/audio_capture_waveform_hardware_result.txt"
+        )
+        self.assertIn(
+            "D9F27ED3A7D84DE151316AAC84E6B34C36C8A728946769515C9D0102E3979FA0",
+            capture_docs + waveform_result,
+        )
+        self.assertIn("live waveform version is operational", waveform_result)
+        self.assertIn("Pressing ESC stops capture and returns normally", waveform_result)
+        self.assertIn("full 128-block", waveform_result)
+        self.assertLess(
+            capture_example.index("bda_audio_capture_stop(&capture)"),
+            capture_example.index("close_window(&message)"),
+        )
+        self.assertIn("RESULT=PASS", capture_docs)
         self.assertNotIn("0x80195b24", header)
-        self.assertIn("SYS+0x0a0", docs)
+        self.assertIn("SYS+0x0a0", playback_docs)
         self.assertIn("真机", docs)
-        self.assertIn("BEFORE AIC RESET", docs)
+        self.assertIn("BEFORE AIC RESET", playback_docs)
         self.assertTrue(
             (ROOT / "docs/verified/assets/audio_pcm_true_hardware_v3_log.txt").is_file()
         )
         self.assertTrue(
             (ROOT / "docs/verified/assets/audio_pcm_true_hardware_v4_result.txt").is_file()
         )
-        self.assertIn("02a16107b11a3281067871c6fe3d4c289", docs)
+        self.assertIn("02a16107b11a3281067871c6fe3d4c289", playback_docs)
         self.assertNotIn("bda_sys_audio_reset_like", header)
         self.assertNotIn("bda_sys_audio_flush_like", header)
-        self.assertIn('#include "bda_audio.h"', example)
-        self.assertNotIn("bda_sdk_internal_", example)
+        self.assertIn('#include "bda_audio.h"', playback_example)
+        self.assertIn('#include "bda_audio.h"', capture_example)
+        self.assertNotIn("bda_sdk_internal_", playback_example + capture_example)
+
+    def test_record_stream_probe_stays_firmware_private_and_guarded(self) -> None:
+        public = public_sdk_text()
+        research = read("reverse/bda_research_sdk.h")
+        probe = read("reverse/examples/record_stream_hardware_probe.c")
+        v2 = read("reverse/examples/record_stream_hardware_probe_v2.c")
+        v3 = read("reverse/examples/record_stream_hardware_probe_v3.c")
+        v4 = read("reverse/examples/record_stream_hardware_probe_v4.c")
+        v5 = read("reverse/examples/record_stream_hardware_probe_v5.c")
+        v6 = read("reverse/examples/record_stream_hardware_probe_v6.c")
+        v7 = read("reverse/examples/record_stream_hardware_probe_v7.c")
+        v8 = read("reverse/examples/record_stream_hardware_probe_v8.c")
+        v9 = read("reverse/examples/record_stream_hardware_probe_v9.c")
+        v10 = read("reverse/examples/record_stream_hardware_probe_v10.c")
+        v11 = read("reverse/examples/record_stream_hardware_probe_v11.c")
+        v12 = read("reverse/examples/record_stream_hardware_probe_v12.c")
+        v13 = read("reverse/examples/record_stream_hardware_probe_v13.c")
+        report = read("reverse/reports/recorder_bda_report.md")
+        v1_hardware_log = read(
+            "reverse/reports/assets/record_stream_v1_hardware_log.txt"
+        )
+        v2_hardware_log = read(
+            "reverse/reports/assets/record_stream_v2_hardware_log.txt"
+        )
+        v3_hardware_log = read(
+            "reverse/reports/assets/record_stream_v3_hardware_log.txt"
+        )
+        v4_hardware_log = read(
+            "reverse/reports/assets/record_stream_v4_hardware_log.txt"
+        )
+        v5_hardware_log = read(
+            "reverse/reports/assets/record_stream_v5_hardware_log.txt"
+        )
+        v6_hardware_log = read(
+            "reverse/reports/assets/record_stream_v6_hardware_log.txt"
+        )
+        v7_hardware_log = read(
+            "reverse/reports/assets/record_stream_v7_hardware_log.txt"
+        )
+        v8_hardware_log = read(
+            "reverse/reports/assets/record_stream_v8_hardware_log.txt"
+        )
+        v9_hardware_log = read(
+            "reverse/reports/assets/record_stream_v9_hardware_partial_log.txt"
+        )
+        v10_hardware_log = read(
+            "reverse/reports/assets/record_stream_v10_hardware_log.txt"
+        )
+        v11_hardware_log = read(
+            "reverse/reports/assets/record_stream_v11_hardware_log.txt"
+        )
+        v12_hardware_log = read(
+            "reverse/reports/assets/record_stream_v12_hardware_log.txt"
+        )
+
+        self.assertNotIn("bda_c200_record_stream", public)
+        self.assertIn("bda_audio_capture_open", public)
+        self.assertIn("BDA_AUDIO_CAPTURE_UNSUPPORTED", public)
+        self.assertIn("local-image probes only", research)
+        self.assertIn("resolve_capture_open", probe)
+        self.assertIn("ready_address - 0x800u", probe)
+        self.assertIn("guess - 0x20u", probe)
+        self.assertIn("STRUCTURAL RESOLUTION FAILED", probe)
+        self.assertIn("OPEN RESOLVED TO PLAYBACK ENTRY", probe)
+        self.assertIn("analyze_capture_layout", probe)
+        self.assertIn("DIAGNOSTIC ONLY; NO AUDIO CALLS", probe)
+        self.assertIn("#define RECORD_STREAM_PROBE_V2 1", v2)
+        self.assertIn("#define RECORD_STREAM_PROBE_V3 1", v3)
+        self.assertIn("#define RECORD_STREAM_PROBE_V4 1", v4)
+        self.assertIn("#define RECORD_STREAM_PROBE_V5 1", v5)
+        self.assertIn("#define RECORD_STREAM_PROBE_V6 1", v6)
+        self.assertIn("#define RECORD_STREAM_PROBE_V7 1", v7)
+        self.assertIn("#define RECORD_STREAM_PROBE_V8 1", v8)
+        self.assertIn("#define RECORD_STREAM_PROBE_V9 1", v9)
+        self.assertIn("#define RECORD_STREAM_PROBE_V10 1", v10)
+        self.assertIn("#define RECORD_STREAM_PROBE_V11 1", v11)
+        self.assertIn("#define RECORD_STREAM_PROBE_V12 1", v12)
+        self.assertIn("#define RECORD_STREAM_PROBE_V13 1", v13)
+        self.assertIn("READY SIG0=0x27BDFFE8", v1_hardware_log)
+        self.assertIn("READ SIG0=0xAFBE0040", v1_hardware_log)
+        self.assertIn("RESULT=UNSUPPORTED", v1_hardware_log)
+        self.assertIn("OPEN RESOLVED=0x80199AD0", v2_hardware_log)
+        self.assertIn("READ RESOLVED=0x80199290", v2_hardware_log)
+        self.assertIn("READY TIMEOUT BLOCK=0x00000000", v2_hardware_log)
+        self.assertIn("NEAREST BEFORE OLD GUESS=0x80199D4C", v3_hardware_log)
+        self.assertIn("JR RA ADDRESS=0x80199F00", v3_hardware_log)
+        self.assertIn("RESULT=MAP_ONLY", v3_hardware_log)
+        self.assertIn("OPEN RESOLVED=0x80199D4C", v4_hardware_log)
+        self.assertIn("READY TIMEOUT TICKS=0x000000C8", v4_hardware_log)
+        self.assertIn("RESULT=FAIL", v4_hardware_log)
+        self.assertIn("CALL ADDRESS=0x8018EDB4", v5_hardware_log)
+        self.assertIn("CALL OWNER PROLOGUE=0x8018EE00", v5_hardware_log)
+        self.assertIn(
+            "CALL WORD ADDRESS=0x8018EE48 WORD=0x24040003",
+            v5_hardware_log,
+        )
+        self.assertIn("CALL ADDRESS=0x8018D6D8", v5_hardware_log)
+        self.assertIn("RESULT=MAP_ONLY", v5_hardware_log)
+        self.assertIn("CONFIG WRAPPER RETURN=0x00000000", v6_hardware_log)
+        self.assertIn("READY TIMEOUT TICKS=0x000000C8", v6_hardware_log)
+        self.assertIn("RESULT=FAIL", v6_hardware_log)
+        self.assertIn("TRUE HARDWARE SIGNATURE FAILED", v7_hardware_log)
+        self.assertIn("RESULT=UNSUPPORTED", v7_hardware_log)
+        self.assertIn("HARDWARE TARGET A=", probe)
+        self.assertIn("STATE REF ADDRESS=", probe)
+        self.assertIn("AUDIO TARGET JAL COUNT=0x00000008", v8_hardware_log)
+        self.assertIn("RESULT=MAP_ONLY", v8_hardware_log)
+        self.assertIn("STATE REF ADDRESS=0x80199400", v9_hardware_log)
+        self.assertNotIn("END RECORD STREAM HARDWARE PROBE V9", v9_hardware_log)
+        self.assertIn("STATE REF A=0x8019A674", v10_hardware_log)
+        self.assertIn("COMPACT STATE REF COUNT=0x00000056", v10_hardware_log)
+        self.assertIn("END RECORD STREAM HARDWARE PROBE V10", v10_hardware_log)
+        self.assertIn(
+            "CALLBACK PTR A=0x80199D74 W=0x24A5A5A0",
+            v11_hardware_log,
+        )
+        self.assertIn("CALLBACK PTR MATCHES=0x00000002", v11_hardware_log)
+        self.assertIn("END RECORD STREAM HARDWARE PROBE V11", v11_hardware_log)
+        self.assertIn("BLOCK=0 GOT=4096", v12_hardware_log)
+        self.assertIn("BLOCK=3 GOT=4096", v12_hardware_log)
+        self.assertIn("CAPTURE-SPECIFIC STOP RETURNED", v12_hardware_log)
+        self.assertIn("RESULT=PASS", v12_hardware_log)
+        self.assertIn("COMPACT STATE REF COUNT=", probe)
+        self.assertIn("CALLBACK PTR MATCHES=", probe)
+        self.assertIn("READ PRIMES DMA", probe)
+        self.assertIn("BEFORE BLOCKING READ BLOCK=", probe)
+        self.assertIn("BEFORE CAPTURE-SPECIFIC STOP", probe)
+        self.assertIn("RECORD CONTROL CALL GRAPH", probe)
+        self.assertIn("MANAGER JALR ADDRESS=", probe)
+        self.assertIn("record_stream_hardware_probe_v10.c", report)
+        self.assertIn("record_stream_hardware_probe_v11.c", report)
+        self.assertIn("record_stream_hardware_probe_v12.c", report)
+        self.assertIn("record_stream_hardware_probe_v13.c", report)
+        self.assertIn("read_target[0..1]", report)
+        self.assertIn("没有启动录音硬件", report)
+        self.assertIn("raw playback open", report)
+        self.assertIn("RESULT=MAP_ONLY", report)
+        self.assertIn("BEFORE CAPTURE OPEN NOARGS", probe)
+        self.assertIn("CALLERS INIT CANDIDATE", probe)
+        self.assertIn("CALLERS CAPTURE READ", probe)
+        self.assertIn("resolve_capture_config_wrapper_v6", probe)
+        self.assertIn("BEFORE CONFIG WRAPPER 16000", probe)
+        self.assertIn("e168efa236c5ee9afe7816c9c3b78a5a68699f1e381bd165babb4ecfcb514649", report)
+        self.assertIn("fd50ccd5aa87c2a9fa6e4d99e573614b611608787d5edf1397d021fd21b19357", report)
+        self.assertIn("c12a6ed6aacb68a695857e855e8eee5e68cb77ff9b2cc624e065bb376907cc10", report)
+        self.assertIn("f2106a653494ea15ff4cb5a3d0a3bad1407dda8c8e106b69bd10af856f4b5a97", report)
+        self.assertIn("ce4a540788c5b3082364d531c5246e3270b28419dda74b8082de19cd9375a7b2", report)
 
     def test_front_door_build_examples_use_sdk_sources(self) -> None:
         combined = read("README.md") + "\n" + read("reverse/docs/README.md")
@@ -1072,7 +1273,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("system resource/session slot", c200_notes)
         self.assertIn("descriptor+0x00", c200_notes)
         self.assertIn("busy-wait `0xea60`", c200_notes)
-        self.assertIn("SDK 不公开这组 wrapper", c200_notes)
+        self.assertIn("SDK 不公开 type-5 session manager wrapper", c200_notes)
         self.assertIn("SYS +0x000  不公开", api_offsets)
         self.assertIn("#define BDA_SYS_CLOSE_LIKE       0x004u", header)
         self.assertIn("SYS +0x004: `BDA_SYS_CLOSE_LIKE`", c200_notes)

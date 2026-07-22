@@ -160,7 +160,13 @@
 | MEM | +0x02c | `BDA_MEM_TRACK_RELEASE_LIKE` | 126 | 30 | 中 | heap tracking release；C200 查 tracked record table，递减 refcount-like 字段，归零时释放 pointer。 |
 | RES | +0x090 | `BDA_RES_GET_STATE_LIKE` | 143 | 42 | 中 | 资源/图片状态 snapshot；C200 从 0xb0003004 取状态源，向 out_state 写 7 个 word，无稳定 return value。 |
 | RES | +0x094 | `BDA_RES_ENTRY_094_LIKE` | 1987 | 54 | 中 | trace/log；历史 DLX loader 名称已废弃。 |
+| SYS | +0x000 | `BDA_SYS_SESSION_OPEN_LIKE` | 1858 | 54 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
 | SYS | +0x004 | `BDA_SYS_CLOSE_LIKE` | 1178 | 54 | 中 | 内部 system resource close；C200 使用 resource_id 1..10 查资源表并调用 close callback，不是 app exit。 |
+| SYS | +0x014 | `BDA_SYS_SESSION_INIT_WORD_LIKE` | 156 | 34 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
+| SYS | +0x018 | `BDA_SYS_SESSION_OP18_LIKE` | 108 | 23 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
+| SYS | +0x01c | `BDA_SYS_SESSION_OP1C_LIKE` | 95 | 16 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
+| SYS | +0x020 | `BDA_SYS_SESSION_STOP_LIKE` | 217 | 23 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
+| SYS | +0x02c | `BDA_SYS_SESSION_STATUS_LIKE` | 126 | 30 | 中 | 已有 SDK name，但还缺少更细的 ABI/lifecycle 证据。 |
 | SYS | +0x040 | `BDA_SYS_AUDIO_ATTENUATION_SET_LIKE` | 5702 | 52 | 中 | raw PCM attenuation setter；C200 clamp 到 0..98，写 pending value，下一次 audio write 量化并应用。 |
 | SYS | +0x044 | `BDA_SYS_AUDIO_ATTENUATION_GET_LIKE` | 305 | 27 | 中 | raw PCM attenuation getter；C200 无参数，返回当前 effective attenuation（0..96，步进 3）。 |
 | SYS | +0x058 | `BDA_SYS_PACKAGE_SOUND_OP58_LIKE` | 16 | 3 | 中 | 打包音效 init/start；C200 使用 a0=descriptor，成功置 0x804c4ba4 并返回 1。 |

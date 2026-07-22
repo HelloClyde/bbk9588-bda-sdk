@@ -25,6 +25,7 @@ system/confirm_dialog/    confirm_dialog_probe.c + ConfirmDialog.bda
 system/three_button_dialog/ three_button_dialog_demo.c + ThreeButtonDialog.bda
 system/help_page/           help_page_demo.c + HelpPage.bda
 system/audio_pcm/         audio_pcm_demo.c + AudioPcm.bda
+system/audio_capture/     audio_capture_demo.c + AudioCapture.bda
 gui/control_gallery/      control_gallery_demo.c + ControlGallery.bda
 gui/custom_control/       custom_control_demo.c + CustomControl.bda
 gui/gif_player/           gif_player_demo.c + GifPlayer.bda
@@ -46,6 +47,7 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 | `system/three_button_dialog/` | 系统是/全部/否确认框及三个返回值 | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
 | `system/help_page/` | 系统帮助页、同步返回和父 Frame 用法 | 模拟器 | [API 文档](../docs/verified/help_page_api.md) |
 | `system/audio_pcm/` | 22050 Hz raw PCM、衰减控制和安全 stop | 模拟器 + 真机 | [API 文档](../docs/verified/audio_pcm_api.md) |
+| `system/audio_capture/` | 16000 Hz 实时 PCM 录音、波形和固件保护 | C200 真机 | [API 文档](../docs/verified/audio_capture_api.md) |
 | `gui/control_gallery/` | 文本、按钮、列表、组合框、进度条和 toolbar | 模拟器 | [控件 API](../docs/verified/controls_api.md) |
 | `gui/custom_control/` | 自定义类注册、局部绘制、触摸和注销 | 模拟器 | [教程](../docs/tutorials/custom_controls.md) |
 | `gui/gif_player/` | 内存 GIF89a 加载、定时换帧和销毁 | 模拟器 | [控件 API](../docs/verified/controls_api.md) |
@@ -93,6 +95,14 @@ Raw PCM 示例：
 bda-pack example\system\audio_pcm\audio_pcm_demo.c `
   --title AudioPCM --category 9 `
   -o example\system\audio_pcm\AudioPcm.bda
+```
+
+实时录音示例：
+
+```powershell
+bda-pack example\system\audio_capture\audio_capture_demo.c `
+  --title AudioCapture --category 9 `
+  -o example\system\audio_capture\AudioCapture.bda
 ```
 
 ![扫雷运行画面](../docs/verified/assets/game_rendering_minesweeper.png)
