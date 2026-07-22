@@ -24,7 +24,7 @@
 | [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX 和 picture |
 | [`bda_dialogs.h`](../sdk/include/bda_dialogs.h) | 消息框、确认框、帮助页和文件选择器 |
 | [`bda_controls.h`](../sdk/include/bda_controls.h) | 内建控件、GIF 与自定义控件 |
-| [`bda_audio.h`](../sdk/include/bda_audio.h) | raw PCM 写入、衰减和停止 |
+| [`bda_audio.h`](../sdk/include/bda_audio.h) | raw PCM 播放，以及受固件保护的实时录音 |
 
 公开应用不要包含 `reverse/bda_research_sdk.h`。该文件中的名称、参数和生命周期仍可
 变化，也可能包含真机会死锁的实验接口。
@@ -51,6 +51,7 @@
 | 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 8013 模拟器 |
 | 内建控件、GIF 与自定义类 | [controls_api.md](verified/controls_api.md) | 8013 模拟器 |
 | Raw PCM 音频生命周期 | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 + 真机 |
+| 实时 PCM 录音 | [audio_capture_api.md](verified/audio_capture_api.md) | C200 真机 |
 
 ![图形图元验证](verified/assets/graphics_primitives_bda_verified.png)
 

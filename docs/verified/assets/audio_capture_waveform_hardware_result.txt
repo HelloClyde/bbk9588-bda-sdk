@@ -1,0 +1,18 @@
+AudioCapture waveform true-hardware observation
+Date: 2026-07-23
+Target: BBK 9588 C200 hardware
+Artifact: example/system/audio_capture/AudioCapture.bda
+SHA-256: D9F27ED3A7D84DE151316AAC84E6B34C36C8A728946769515C9D0102E3979FA0
+
+Observed result reported by the hardware tester:
+- The BDA starts and runs on the physical device.
+- The live waveform version is operational.
+- AUDCAP.TXT is created and updated successfully.
+- Pressing ESC stops capture and returns normally.
+- The full 128-block, approximately 16.4-second recording completes.
+
+Evidence boundary:
+- These results are a true-hardware manual observation; AUDCAP.TXT and
+  AUDCAP.RAW were not attached to this repository update.
+- Capture read continuity and the capture-specific stop additionally have the
+  archived RecordStreamProbeV12 hardware log and RAW analysis as data evidence.

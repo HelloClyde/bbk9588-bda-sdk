@@ -27,6 +27,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/system/three_button_dialog/ThreeButtonDialog.bda", "ThreeDialog", 9),
         ("example/system/help_page/HelpPage.bda", "HelpPage", 9),
         ("example/system/audio_pcm/AudioPcm.bda", "AudioPCM", 9),
+        ("example/system/audio_capture/AudioCapture.bda", "AudioCapture", 9),
         ("example/gui/control_gallery/ControlGallery.bda", "Controls", 9),
         ("example/gui/custom_control/CustomControl.bda", "CustomCtrl", 9),
         ("example/gui/gif_player/GifPlayer.bda", "GifPlayer", 9),
@@ -255,6 +256,102 @@ class SdkExamplesTest(unittest.TestCase):
     def test_audio_pcm_example_builds(self) -> None:
         self.build_and_validate(
             "example/system/audio_pcm/audio_pcm_demo.c", "AudioPCM"
+        )
+
+    def test_audio_capture_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/audio_capture/audio_capture_demo.c", "AudioCapture"
+        )
+
+    def test_record_stream_hardware_probe_v1_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe.c",
+            "RecPcmV1",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v2_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v2.c",
+            "RecPcmV2",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v3_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v3.c",
+            "RecPcmV3",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v4_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v4.c",
+            "RecPcmV4",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v5_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v5.c",
+            "RecPcmV5",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v6_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v6.c",
+            "RecPcmV6",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v7_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v7.c",
+            "RecPcmV7",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v8_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v8.c",
+            "RecPcmV8",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v9_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v9.c",
+            "RecPcmV9",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v10_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v10.c",
+            "RecPcmV10",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v11_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v11.c",
+            "RecPcmV11",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v12_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v12.c",
+            "RecPcmV12",
+            ("reverse",),
+        )
+
+    def test_record_stream_hardware_probe_v13_builds(self) -> None:
+        self.build_and_validate(
+            "reverse/examples/record_stream_hardware_probe_v13.c",
+            "RecPcmV13",
+            ("reverse",),
         )
 
     def test_gam4980_runtime_admission_probe_builds(self) -> None:

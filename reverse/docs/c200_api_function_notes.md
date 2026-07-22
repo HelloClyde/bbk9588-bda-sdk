@@ -548,7 +548,7 @@ system function VA：`0x8017b0d0`
 
 ## SYS 表
 
-### SYS +0x000 / +0x008 / +0x00c / +0x010: 不公开的 system resource/session manager
+### SYS +0x000 / +0x008 / +0x00c / +0x010 及 +0x014..+0x02c: 不公开的 system resource/session manager
 
 system function VA：
 
@@ -557,6 +557,11 @@ SYS+0x000 -> 0x80184d30
 SYS+0x008 -> 0x80185628
 SYS+0x00c -> 0x80185814
 SYS+0x010 -> 0x801859f0
+SYS+0x014 -> 0x80185be0
+SYS+0x018 -> 0x80187c5c
+SYS+0x01c -> 0x80187d10
+SYS+0x020 -> 0x80185d34
+SYS+0x02c -> 0x80185e20
 ```
 
 当前证据：
@@ -575,15 +580,77 @@ SYS+0x010 -> 0x801859f0
 - `SYS+0x010(resource_id, state_ptr)` 同样要求 `resource_id` 在 1..10；当
   `state_ptr != 0` 时会读取其中 3 个 word 写入对应 slot，随后更新 countdown/
   status 并可能触发 scheduler helper。
+- `SYS+0x014(resource_id, word_ptr)` 会清理 slot 的部分状态/countdown 字段，并在
+  pointer 非空时复制一个 word。`数码录音.bda` 和 `情景会话.bda` 都在 type-5
+  session open 后立即调用它，但该 word 的准确业务含义仍未确认。
+- `SYS+0x018/+0x01c/+0x020` 是同一 slot manager 的状态迁移入口。`+0x020` 在
+  两个录音样本中都紧接着 `+0x004` 出现在正常 teardown，因此当前只保守命名为
+  stop/deactivate-like；还不能把三者直接公开成 pause/resume/stop。
+- `SYS+0x02c(resource_id, out)` 查询 slot/backend 状态并输出 0x20 byte。录音应用
+  会读取 `out+0x0c`；各 word 的准确名称和单位仍未确认。
 - 这组 entry 和 `SYS+0x004` 共享 10-slot resource/session table，但语义覆盖
   open/dispatch/tick/update，不是普通文件、音频或 GUI API。
 
+#### type 5: 固件录音 backend
+
+`数码录音.bda` 与 `情景会话.bda` 都向 `SYS+0x000` 传入同一个 24-byte descriptor：
+
+```text
++0x00 = 5                 recording backend type
++0x04 = 2                 flags/mode
++0x08 = output WAV path
++0x0c = 0x1f40            backend parameter；open 中改写为 0x3e80
++0x10 = event callback
++0x14 = 0                 callback user/aux data
+```
+
+type-5 callback table 的关键地址：
+
+```text
+open          0x801897f0
+close         0x80189a9c
+PCM sink      0x80189c78
+status query  0x80189da8
+```
+
+- open 以 `wb` 创建文件，写 0x3c-byte placeholder header，分配 0x404c byte state，
+  并初始化固定 PCM mono/16-bit/16000-Hz 录音格式。
+- PCM sink 每次复制 0x1000 byte 到 state 内的 0x4000-byte 聚合缓冲，满后写文件。
+- type-5 special init 经 `0x801891c0 -> 0x80194900` 建立 AIC/DMA/IRQ 采集链；BDA
+  本身不轮询麦克风 buffer。
+- close 写出 partial buffer，取得最终文件长度，seek 回开头重写 RIFF/WAVE/fmt/data
+  header，随后关闭文件并释放 state。
+- status query 从 backend state 复制状态，再由 `SYS+0x02c` 整理为 0x20-byte 输出。
+
+这确认 `SYS+0x004` 对录音尤其关键：只有它会分派 type-5 close callback 并修正
+WAV 长度。只退出 frame、只调用 `SYS+0x020` 或调用 raw PCM stop 都不能替代 close。
+
+type-5 worker 还确认了未导出到 SYS table 的实时采集层：
+
+```text
+0x80194900(sample_rate, bits, channels)  capture open
+0x80194ddc()                             capture ready
+0x80193e94(buffer, bytes)                blocking PCM read
+```
+
+- worker 固定调用 `0x80194900(16000, 16, 1)`。
+- worker 以 0x1000 byte 为单位调用 read，随后立即调用 type-5 PCM sink；录音结束前
+  固件已经能得到完整 PCM block。
+- read 从 DMA completed queue 取 buffer index，经 `0x8058066c` 函数指针复制/转换
+  数据；队列为空时通过 scheduler wait，不依赖 WAV 文件。
+- 两个函数均无 SYS table entry。研究头只按已导出 raw playback 函数的相对地址
+  定位并做 MIPS prologue 检查；不把固定 VA 当成稳定 ABI。
+
 开发建议：
 
-- SDK 不公开这组 wrapper。不要把 `SYS+0x000/+0x008/+0x00c/+0x010` 命名为
+- SDK 不公开 type-5 session manager wrapper。不要把 `SYS+0x000..+0x02c` 命名为
   app init、event loop、timer、sleep 或通用 resource open API。
-- 目前仅保留 `BDA_SYS_CLOSE_LIKE` 常量用于逆向 `SYS+0x004` close entry；普通
-  BDA 开发应使用已确认的 FS、raw audio、timer/delay wrapper。
+- type-5 结构和生命周期可用于构造下一阶段录音 probe，但在 callback 事件码、
+  `SYS+0x014` 参数、异常清理和重复 open/close 真机验证完成前，不进入公开 SDK。
+- firmware-private PCM capture 已通过 V12 真机闭环，并以精确 C200knl profile 保护
+  后公开为 `bda_audio_capture_open/read/stop`。签名检查失败必须返回 unsupported，
+  不能猜地址继续调用；阻塞 read 也不能直接放在 GUI wndproc 中。
+- 普通 BDA 开发仍应使用已确认的 FS、raw audio、timer/delay wrapper。
 
 ### SYS +0x004: `BDA_SYS_CLOSE_LIKE`
 
