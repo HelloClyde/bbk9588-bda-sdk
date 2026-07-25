@@ -74,7 +74,7 @@ python reverse\bda_sdk_usage.py "fly-src-api\雷霆战机.bda" -o "reverse\docs\
 | GUI | +0x400 | 2 | `BDA_GUI_BLIT_ALT_LIKE` | `0x800c0c90` | `lui $v1, 0x8047` | 带全局 clip/prepare 的 blit；C200 使用 x,y,height,width,buffer 五参数，TileBlit 真机会逐块 flip 后死机。 |
 | GUI | +0x40c | 3 | `BDA_GUI_REGION_DRAW_LIKE` | `0x800b2e30` | `addiu $sp, $sp, -0x50` | region draw/copy；C200 使用 context,x,y,width,height 五参数。 |
 | GUI | +0x414 | 8 | `BDA_GUI_RENDER_HELPER_LIKE` | `0x800b34c0` | `lui $v1, 0x8047` | low-level render helper；C200 读取 descriptor、多个 stack 参数并可分配临时 buffer。 |
-| GUI | +0x418 | 6 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x800b3d90` | `addiu $sp, $sp, -0x60` | 双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key_or_zero；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交。 |
+| GUI | +0x418 | 6 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x800b3d90` | `addiu $sp, $sp, -0x60` | 双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key；C200knl 真机确认 0 跳过黑色而非禁用色键，0xf81f 跳过洋红。 |
 | GUI | +0x4a4 | 1 | `BDA_GUI_CURRENT_FONT_LIKE` | `0x800bf744` | `lui $v1, 0x8082` | current font pointer getter；C200 返回 context+0x54，context=0 时使用 default draw context。 |
 | GUI | +0x4d0 | 1 | `BDA_GUI_FONT_CELL_WIDTH_LIKE` | `0x800c1c68` | `lui $v0, 0x8082` | font cell width-like metric；C200 返回 current font descriptor +0x38。 |
 | GUI | +0x4d4 | 1 | `BDA_GUI_FONT_CELL_HEIGHT_LIKE` | `0x800c1c80` | `addiu $sp, $sp, -0x20` | font cell height-like metric；C200 查询 primary/fallback font callback 并返回较大值。 |

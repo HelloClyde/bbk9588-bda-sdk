@@ -143,7 +143,9 @@ typedef unsigned long long u64;
 #define BDA_GUI_RENDER_COPY_LIKE    0x410u
 #define BDA_GUI_RENDER_HELPER_LIKE  0x414u
 #define BDA_GUI_RENDER_FINISH_LIKE  0x418u /* source first; destination at stack arg 6 */
+#define BDA_GUI_COLOR_KEY_BLACK_RGB565_LIKE 0x0000u
 #define BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE 0xf81fu
+#define BDA_GUI_OPAQUE_BLACK_RGB565_LIKE 0x0001u
 #define BDA_GUI_PICTURE_SOURCE_FREE_LIKE 0x50cu
 /*
  * low-level rect writer。C200 的 +0x430 是 5 参数 ABI：rect,x0,y0,x1,y1；
@@ -1777,11 +1779,13 @@ static inline int bda_gui_render_picture_like(
 /*
  * Copy a rectangle from source_context to destination_context. C200 reads
  * height at stack+0x10, destination_context at +0x14, destination x/y at
- * +0x18/+0x1c and color_key_rgb565_or_zero at +0x20. A compatible context is valid as the
+ * +0x18/+0x1c and color_key_rgb565 at +0x20. A compatible context is valid as the
  * source or destination. V19 verified compatible-to-compatible composition,
  * followed by one compatible-to-visible copy inside a complete draw guard.
- * V20 and original Thunder/Tank call sites confirm 0 disables color key and
- * RGB565 0xf81f skips magenta source pixels. V21 verified sub-rectangle
+ * V20 and original Thunder/Tank call sites confirm RGB565 0xf81f skips
+ * magenta source pixels. Later C200knl true-hardware tests show that 0 skips
+ * black source pixels rather than disabling the key; use 0x0001 for visually
+ * black source data when the copy key is 0. V21 verified sub-rectangle
  * clean-to-back restoration and a 33-pixel-wide back-to-visible dirty present.
  */
 static inline int bda_gui_context_copy_like(
@@ -1793,7 +1797,7 @@ static inline int bda_gui_context_copy_like(
     bda_handle_t destination_context,
     s32 destination_x,
     s32 destination_y,
-    u32 color_key_rgb565_or_zero
+    u32 color_key_rgb565
 ) {
     typedef int (*copy_fn_t)(
         u32, u32, u32, u32, u32, u32, u32, u32, u32
@@ -1810,7 +1814,7 @@ static inline int bda_gui_context_copy_like(
         (u32)destination_context,
         (u32)destination_x,
         (u32)destination_y,
-        color_key_rgb565_or_zero
+        color_key_rgb565
     );
 }
 

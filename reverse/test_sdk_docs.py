@@ -73,6 +73,7 @@ class SdkDocsTest(unittest.TestCase):
             [
                 "README.md",
                 "compatibility.md",
+                "gam4980_sdk_optimization.md",
                 "getting_started.md",
                 "minesweeper_v1.md",
                 "releasing.md",
@@ -884,8 +885,10 @@ class SdkDocsTest(unittest.TestCase):
             "bda_gui_tick_count_25ms",
             "bda_gui_tick_elapsed_25ms",
             "bda_gui_tick_elapsed_ms",
-            "BDA_GUI_COLOR_KEY_NONE",
+            "bda_gui_rgb565_avoid_black_key",
+            "BDA_GUI_COLOR_KEY_BLACK_RGB565",
             "BDA_GUI_COLOR_KEY_MAGENTA_RGB565",
+            "BDA_GUI_OPAQUE_BLACK_RGB565",
         ]
         for text in required_offsets:
             self.assertIn(text, stable_header)
@@ -912,11 +915,26 @@ class SdkDocsTest(unittest.TestCase):
             "33x32",
             "0xfffffff0 -> 0x10",
             "frame stop",
-            "BBK 9588 真机仍需复测",
+            "RGB565 `0x0000` context-copy 行为为 C200knl 真机确认",
+            "当前没有验证到固件通用的“禁用色键”值",
+            "旧文字、旧图标或上一帧从黑色区域透出",
             "alpha blending",
         ]:
             self.assertIn(phrase, verified)
 
+        self.assertNotIn(
+            "#define BDA_GUI_COLOR_KEY_NONE",
+            stable_header,
+        )
+        self.assertIn(
+            "#define BDA_GUI_COLOR_KEY_BLACK_RGB565 0x0000u",
+            stable_header,
+        )
+        self.assertIn(
+            "#define BDA_GUI_OPAQUE_BLACK_RGB565 0x0001u",
+            stable_header,
+        )
+        self.assertIn("BDA_GUI_COLOR_KEY_BLACK_RGB565", source)
         self.assertGreaterEqual(verified.count("```mermaid"), 2)
         self.assertNotIn("-I reverse", verified)
         self.assertIn("game_rendering_api.md", verified_index)
@@ -2116,11 +2134,26 @@ class SdkDocsTest(unittest.TestCase):
     def test_game_color_key_sprite_probe_is_documented(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")
         catalog_tool = read("reverse/bda_api_catalog.py")
+        generated_catalogs = (
+            read("reverse/docs/api_catalog.md")
+            + read("reverse/docs/system_api_tables.md")
+        )
         c200_notes = read("reverse/docs/c200_api_function_notes.md")
         progress = read("reverse/docs/game_api_verification_progress.md")
         verified = read("docs/verified/touch_window_lifecycle_api.md")
         self.assertIn("BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE 0xf81fu", header)
-        self.assertIn("color_key_rgb565_or_zero", header)
+        self.assertIn("BDA_GUI_COLOR_KEY_BLACK_RGB565_LIKE 0x0000u", header)
+        self.assertIn("BDA_GUI_OPAQUE_BLACK_RGB565_LIKE 0x0001u", header)
+        self.assertIn("color_key_rgb565", header)
+        self.assertNotIn("color_key_rgb565_or_zero", header)
+        self.assertNotIn(
+            "`BDA_GUI_COLOR_KEY_BLACK_RGB565_LIKE`",
+            generated_catalogs,
+        )
+        self.assertNotIn(
+            "`BDA_GUI_OPAQUE_BLACK_RGB565_LIKE`",
+            generated_catalogs,
+        )
         self.assertIn("0xf81f 洋红透明键", catalog_tool)
         self.assertIn("雷霆战机 `0x81c10db8`", c200_notes)
         self.assertIn("GameColorKeySpriteProbeV20", progress)

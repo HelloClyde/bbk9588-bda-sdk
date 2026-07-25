@@ -1,9 +1,10 @@
 # 游戏离屏绘制、精灵与计时 API
 
-验证环境：`bbk9588-emulator-v0.1.5`，8013 端口，完整 NAND 固件启动路径。
+验证环境：`bbk9588-emulator-v0.1.5`（8013 端口，完整 NAND 固件启动路径）；
+context-copy 黑色色键差异另经 BBK 9588 C200、`C200knl.bin` 真机验证。
 
-验证等级：模拟器稳定公开；BBK 9588 真机仍需复测。本文结论只覆盖
-`kj409588/C200` 固件，不扩张到其他机型或固件版本。
+验证等级：模拟器稳定公开；RGB565 `0x0000` context-copy 行为为 C200knl 真机确认。
+本文结论只覆盖 `kj409588/C200` 固件，不扩张到其他机型或固件版本。
 
 完整示例：`example/games/minesweeper/minesweeper_bda.c`。
 
@@ -19,8 +20,10 @@
 | `bda_gui_tick_count_25ms()` | GUI `+0x6d8` | 读取 32-bit 单调 25 ms tick |
 | `bda_gui_tick_elapsed_25ms()` | 纯 SDK helper | 用无符号减法计算 tick 差值 |
 | `bda_gui_tick_elapsed_ms()` | 纯 SDK helper | 把 tick 差值换算成毫秒 |
-| `BDA_GUI_COLOR_KEY_NONE` | `0` | 不透明复制 |
+| `BDA_GUI_COLOR_KEY_BLACK_RGB565` | `0x0000` | 真机上跳过黑色 source pixel |
 | `BDA_GUI_COLOR_KEY_MAGENTA_RGB565` | `0xf81f` | 跳过洋红 source pixel |
+| `BDA_GUI_OPAQUE_BLACK_RGB565` | `0x0001` | 视觉近黑、不会命中黑色色键的 source pixel |
+| `bda_gui_rgb565_avoid_black_key()` | 纯 SDK helper | 把 `0x0000` 最小幅度映射为 `0x0001` |
 
 这些名称是公开 SDK 的唯一名称，不提供 `_like` 兼容别名。
 
@@ -99,6 +102,35 @@ if (result != 0) {
 一个 `240x320` 全屏 VX 需要 `153624` byte。内存紧张时可使用较小舞台、精灵 surface
 和 dirty rect，不必为每个对象保存全屏副本。
 
+## C200knl 真机的透明黑陷阱
+
+`bda_gui_context_copy()` 的末参数不是“是否启用透明”的布尔值，而是要跳过的 RGB565
+source color。C200knl 真机确认参数 `0` 会跳过 `0x0000` 黑色；旧 SDK 将其命名为
+`BDA_GUI_COLOR_KEY_NONE` 是错误的。当前没有验证到固件通用的“禁用色键”值。
+
+这条规则发生在 context copy 阶段，不是 CPU 直接写 framebuffer，也不是 BDA 图标
+`0xf81f` 透明键本身。典型错误链路是：
+
+```text
+CPU/VX 中的 0x0000
+  -> draw 到 compatible context
+  -> context_copy(..., color_key=0)
+  -> 黑色 source pixel 不覆盖 visible destination
+  -> 旧文字、旧图标或上一帧从黑色区域透出
+```
+
+真机正反验证中，只有图标黑色描边为 `0x0000` 时表现为局部边缘残留；把整个九宫格
+改成 `0x0000` 后，旧菜单、Loading 画面和新图标大面积重叠。将待提交的 `0x0000`
+替换成 `0x0001` 后恢复正常。构造要以黑色为色键提交的 CPU/VX 帧时应使用：
+
+```c
+pixel = bda_gui_rgb565_avoid_black_key(pixel);
+```
+
+如果选择 `0xf81f` 作为 copy 色键，则 source 中的洋红也必须保证不承担可见内容。
+任何色键都可能与真实画面颜色冲突；当前 SDK 不再声称存在可靠的
+`BDA_GUI_COLOR_KEY_NONE`。
+
 ## 一次提交完整帧
 
 只有 compatible 到 visible 的最后一次 copy 放在动态 draw guard 内：
@@ -115,7 +147,7 @@ static int present_full_frame(void) {
     result = bda_gui_context_copy(
         g_back, 0, 0, 240, 320,
         g_visible, 0, 0,
-        BDA_GUI_COLOR_KEY_NONE
+        BDA_GUI_COLOR_KEY_BLACK_RGB565
     );
     (void)bda_gui_draw_guard_end();
     return result == 0;
@@ -155,7 +187,7 @@ V20 中洋红背景完全透明，底层网格保持可见：
 (void)bda_gui_context_copy(
     clean, old_x, old_y, 32, 32,
     g_back, old_x, old_y,
-    BDA_GUI_COLOR_KEY_NONE
+    BDA_GUI_COLOR_KEY_BLACK_RGB565
 );
 
 /* 合成新精灵。 */
@@ -170,7 +202,7 @@ V20 中洋红背景完全透明，底层网格保持可见：
 (void)bda_gui_context_copy(
     g_back, dirty_x, dirty_y, dirty_w, dirty_h,
     g_visible, dirty_x, dirty_y,
-    BDA_GUI_COLOR_KEY_NONE
+    BDA_GUI_COLOR_KEY_BLACK_RGB565
 );
 (void)bda_gui_draw_guard_end();
 ```
@@ -267,7 +299,9 @@ draw slot 回归在同一个 8013 QEMU 进程中连续运行 6 轮。每轮运�
 
 - 本文 API 已在 8013 完整固件路径重复验证并进入公开 include，但真机仍需复测。
 - `bda_gui_draw_vx()` 不提供缩放、旋转或 alpha blending。
-- `bda_gui_context_copy()` 当前只确认不透明复制和精确 RGB565 洋红色键。
+- `bda_gui_context_copy()` 当前确认精确 RGB565 黑色/洋红色键；没有验证通用的
+  “无色键”参数。需要保留纯黑 source pixel 时应先映射为 `0x0001`，或选择画面中
+  确实不存在的其他 key。
 - visible present 必须位于完整动态 draw guard 中；compatible 之间的合成不需要 guard。
 - 不要用 `GUI+0x3f8/+0x400` 替代本文链路；裸 tile blit 在真机曾逐块翻转后死机。
 - 每个 compatible context 都占用固件资源，创建失败必须立即降级或退出，退出时必须释放。

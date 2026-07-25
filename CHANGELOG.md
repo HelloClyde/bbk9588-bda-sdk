@@ -21,6 +21,10 @@ All notable SDK and packer changes are recorded here. The project follows
   dynamically verified category 4 boundary from other static limits.
 - Publish the true-hardware-verified nominal 1 ms timer lifecycle API, while
   documenting its observed 194-200 count range over nominal 200 ms windows.
+- Correct the C200knl context-copy color-key contract: argument `0` skips
+  RGB565 black rather than disabling transparency. Replace the misleading
+  `BDA_GUI_COLOR_KEY_NONE` name with an explicit black key and provide an
+  opaque-near-black replacement constant/helper.
 
 ## 0.1.0-alpha.1
 

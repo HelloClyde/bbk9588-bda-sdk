@@ -67,4 +67,8 @@
 - [完整扫雷示例](minesweeper_v1.md)
 - [SDK API 目录与公开/研究边界](sdk_api_layout.md)
 
+## 设计与路线
+
+- [gam4980 移植反馈：SDK 优化建议](gam4980_sdk_optimization.md)
+
 每篇 API 文档都会标出验证环境和已知边界。没有动态证据的接口不得加入公开 SDK。

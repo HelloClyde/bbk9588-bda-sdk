@@ -149,7 +149,7 @@ a1/a2       source_x/source_y
 a3/sp+0x10  width/height
 sp+0x14     destination_context
 sp+0x18/1c  destination_x/destination_y
-sp+0x20     RGB565 color_key_or_zero
+sp+0x20     RGB565 color_key_rgb565
 ```
 
 V14/V15 真机仍确认 source/destination ABI、compatible context 的创建与释放，以及

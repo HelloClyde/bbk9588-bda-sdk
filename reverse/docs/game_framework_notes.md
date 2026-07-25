@@ -226,7 +226,8 @@ frame 注册和 message `0x60 -> GUI+0x304(object)` 后，用 `GUI+0x310` 创建
 sprite 两块 compatible context；`GUI+0x418(sprite -> back)` 完成隐藏 surface 合成，
 最后只对 `GUI+0x418(back -> visible)` 使用一次 `GUI+0x074(1/0)`。连续 116616 帧
 无旧位置残影，两块 context 均由 `GUI+0x314` 释放。V20 又结合原机调用点确认
-`GUI+0x418` 末参数 0 禁用透明键，RGB565 `0xf81f` 跳过洋红 source pixel；透明精灵
+`GUI+0x418` 末参数 0 在 C200knl 真机上跳过 RGB565 黑色 source pixel，并不禁用
+透明键；`0xf81f` 跳过洋红 source pixel。需要保留黑色时应先映射为 `0x0001`；透明精灵
 连续 4448 帧正常。V21 再增加 clean background surface：先把旧精灵区域从 clean
 恢复到 back，再合成新精灵，只在一个 draw guard 内把新旧位置的最小外接 dirty rect
 提交到 visible；第一次移动只提交 `33x32`，连续 20862 帧无残影并释放三块 surface。

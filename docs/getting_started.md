@@ -73,6 +73,13 @@ bda-validate build\HelloWorld.bda
 如需把 alpha 预合成为固定背景色，传
 `--icon-transparent-key none --icon-background RRGGBB`。
 
+注意：图标资源中的 `0xf81f` 与运行期 `bda_gui_context_copy()` 的色键参数不是同一层
+设置。C200knl 真机上 context copy 参数 `0` 会跳过 RGB565 `0x0000`，并不表示禁用
+透明；把含纯黑像素的 compatible context 提交到可见画面前，应使用
+`bda_gui_rgb565_avoid_black_key()` 将黑色映射为 `BDA_GUI_OPAQUE_BLACK_RGB565`，
+或选择 source 中确实不存在的其他色键。详见
+[游戏离屏绘制、精灵与计时 API](verified/game_rendering_api.md#c200knl-真机的透明黑陷阱)。
+
 这些数值是分类的总菜单项容量，不等于还能添加的 BDA 数量；固件预置或硬编码菜单项
 也会占用槽位。“娱乐天地”（category `4`）放入第 11 个 BDA 时，即使 header、
 checksum 和图标均合法也不会出现，这一点已经动态验证。其他分类上限来自 C200 固件

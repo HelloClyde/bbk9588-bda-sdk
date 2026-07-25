@@ -56,7 +56,7 @@ open/write/attenuation 和 `SYS+0x0a0` stop 已在真机形成安全返回闭环
 | decoded BMP render | GUI `+0x410` | 是 | V5 通过 | 待测 | 32x32 RGB565 decode buffer 正确显示 |
 | compatible context copy | GUI `+0x310/+0x418/+0x314` | 是 | V6/V8/V19-V21 通过 | 待测 | 三块 compatible surface 可同时存在；支持 hidden->hidden 合成/恢复和 hidden->visible present |
 | 双缓冲精灵 | GUI `+0x540/+0x310/+0x418/+0x074` | 是 | V19-V21 通过 | 待测 | sprite->back 后单次 back->visible；不透明与色键透明动画均无残影 |
-| RGB565 color key | GUI `+0x418` 末参数 | 是 | V20/V21 通过 | 待测 | 0 禁用透明键；0xf81f 跳过洋红 source pixel，alpha 待测 |
+| RGB565 color key | GUI `+0x418` 末参数 | 是 | V20/V21 通过 | C200knl 通过 | 0 跳过黑色；0xf81f 跳过洋红；未验证禁用色键值，alpha 待测 |
 | dirty rectangle 局部提交 | GUI `+0x418/+0x074` | 是 | V21 通过 | 待测 | clean 恢复旧区域，back 合成新位置，只提交新旧位置的最小外接矩形 |
 | PCM 音频写入 | SYS `+0x06c/+0x074/+0x078` | 是 | V2 通过 | V2/V3 通过 | 22050 Hz/16-bit/mono，8 批均消费 1024 byte |
 | PCM 音频清理 | SYS `+0x0a0` | 是 | 返回但后端 timer 状态异常 | V4 通过 | 真机返回菜单、无残留声音且系统正常；禁止直调 `0x80195b24` |
@@ -1378,8 +1378,9 @@ FAILURES=0x00000000
 RESULT=PASS
 ```
 
-V19 参数 0 时深色背景不透明，V20 参数 `0xf81f` 时洋红 source pixel 被跳过，形成
-正反对照。因此 `+0x418` 末参数现收窄为 RGB565 `color_key_or_zero`。alpha blending
+V19 参数 0 时非零深色背景可见，但未覆盖精确 `0x0000`；后续 C200knl 真机确认
+0 会跳过黑色。V20 参数 `0xf81f` 时洋红 source pixel 被跳过，形成
+正反对照。因此 `+0x418` 末参数现收窄为 RGB565 `color_key_rgb565`。alpha blending
 仍未验证，V20 也仍需真机复测。退出后 8013 保持运行，`invalid=0`。BDA SHA-256：
 
 ```text

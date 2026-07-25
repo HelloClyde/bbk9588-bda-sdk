@@ -136,7 +136,7 @@ C200 会把 `0x80281680` 处的 8 个 word 复制到 `0x81c00000`，原生 BDA �
 | GUI | +0x40c | `BDA_GUI_REGION_DRAW_LIKE` | `0x8028126c` | `0x800b2e30` | 是 | `addiu $sp, $sp, -0x50` | region draw/copy；C200 使用 context,x,y,width,height 五参数。 |
 | GUI | +0x410 | `BDA_GUI_RENDER_COPY_LIKE` | `0x80281270` | `0x800b3124` | 是 | `addiu $sp, $sp, -0x58` | low-level render/copy helper；C200 使用 context,x,y,width,height,descriptor 六参数。 |
 | GUI | +0x414 | `BDA_GUI_RENDER_HELPER_LIKE` | `0x80281274` | `0x800b34c0` | 是 | `lui $v1, 0x8047` | low-level render helper；C200 读取 descriptor、多个 stack 参数并可分配临时 buffer。 |
-| GUI | +0x418 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x80281278` | `0x800b3d90` | 是 | `addiu $sp, $sp, -0x60` | 双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key_or_zero；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交。 |
+| GUI | +0x418 | `BDA_GUI_RENDER_FINISH_LIKE` | `0x80281278` | `0x800b3d90` | 是 | `addiu $sp, $sp, -0x60` | 双 context 矩形复制；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key；C200knl 真机确认 0 跳过黑色而非禁用色键。 |
 | GUI | +0x430 | `BDA_GUI_RECT_PREPARE_LIKE` | `0x80281290` | `0x800c0410` | 是 | `lw $v0, 0x10($sp)` | rect writer；C200 使用 rect,x0,y0,x1,y1 五参数并写入四个 word。 |
 | GUI | +0x46c | `BDA_GUI_RECT_CONTAINS_LIKE` | `0x802812cc` | `0x800c0818` | 是 | `lw $v0, ($a0)` | 矩形命中测试，判断点是否落在 x0/y0/x1/y1 范围内。 |
 | GUI | +0x4a4 | `BDA_GUI_CURRENT_FONT_LIKE` | `0x80281304` | `0x800bf744` | 是 | `lui $v1, 0x8082` | current font pointer getter；C200 返回 context+0x54，context=0 时使用 default draw context。 |

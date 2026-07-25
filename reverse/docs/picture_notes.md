@@ -167,7 +167,7 @@ C200 会按 backend bytes-per-pixel 临时分配 buffer，并调用 backend `+0x
 
 `GUI+0x418` 的 C200 table entry `0x800b3d90` 会读取第二个 context 和 source/destination
 矩形参数，命中子区域后调用 backend `+0x94`。因此它更像双 context render/copy
-helper，不是简单 present/finish。末参数为 RGB565 `color_key_or_zero`：原机
+helper，不是简单 present/finish。末参数为 RGB565 `color_key_rgb565`：原机
 雷霆战机/决战坦克使用 `0xf81f`，V20 已在模拟器确认洋红 source pixel 透明。
 
 `0x81c06f78` 的 dispatcher 通过 jump table 选择 `0..7` render/clip/scaling mode，
