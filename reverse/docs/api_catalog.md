@@ -120,7 +120,7 @@
 | GUI | +0x40c | `BDA_GUI_REGION_DRAW_LIKE` | 174 | 28 | 中 | region draw/copy；C200 使用 context,x,y,width,height 五参数。 |
 | GUI | +0x410 | `BDA_GUI_RENDER_COPY_LIKE` | 38 | 7 | 中 | low-level render/copy helper；C200 使用 context,x,y,width,height,descriptor 六参数。 |
 | GUI | +0x414 | `BDA_GUI_RENDER_HELPER_LIKE` | 69 | 9 | 中 | low-level render helper；C200 读取 descriptor、多个 stack 参数并可分配临时 buffer。 |
-| GUI | +0x418 | `BDA_GUI_RENDER_FINISH_LIKE` | 117 | 13 | 中 | 双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key_or_zero；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交。 |
+| GUI | +0x418 | `BDA_GUI_RENDER_FINISH_LIKE` | 117 | 13 | 中 | 双 context 矩形复制；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key；C200knl 真机确认 0 跳过黑色而非禁用色键。 |
 | GUI | +0x430 | `BDA_GUI_RECT_PREPARE_LIKE` | 69 | 6 | 中 | rect writer；C200 使用 rect,x0,y0,x1,y1 五参数并写入四个 word。 |
 | GUI | +0x46c | `BDA_GUI_RECT_CONTAINS_LIKE` | 505 | 33 | 中 | 矩形命中测试，判断点是否落在 x0/y0/x1/y1 范围内。 |
 | GUI | +0x4a4 | `BDA_GUI_CURRENT_FONT_LIKE` | 29 | 10 | 中 | current font pointer getter；C200 返回 context+0x54，context=0 时使用 default draw context。 |

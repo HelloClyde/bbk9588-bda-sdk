@@ -3,8 +3,24 @@
 
 #include "bda/detail/runtime.h"
 
-#define BDA_GUI_COLOR_KEY_NONE 0u
+#define BDA_GUI_COLOR_KEY_BLACK_RGB565 0x0000u
 #define BDA_GUI_COLOR_KEY_MAGENTA_RGB565 0xf81fu
+#define BDA_GUI_OPAQUE_BLACK_RGB565 0x0001u
+
+/*
+ * C200knl true-hardware behavior: GUI+0x418 treats 0 as a black color key,
+ * not as "no color key". No firmware-wide disable value is verified.
+ *
+ * When copying with BDA_GUI_COLOR_KEY_BLACK_RGB565, encode an opaque black
+ * source pixel as BDA_GUI_OPAQUE_BLACK_RGB565. The one-bit blue difference is
+ * visually negligible but prevents old destination pixels from showing
+ * through black text, shadows and antialiasing.
+ */
+static inline u16 bda_gui_rgb565_avoid_black_key(u16 color) {
+    return color == BDA_GUI_COLOR_KEY_BLACK_RGB565
+        ? BDA_GUI_OPAQUE_BLACK_RGB565
+        : color;
+}
 
 /* Raw RGB565 picture descriptor verified for native-size GUI+0x410 draws. */
 typedef struct bda_gui_picture {
@@ -192,6 +208,10 @@ static inline void bda_gui_rectangle(
 /*
  * Draw one complete RGB565 VX resource block at its native dimensions.
  * Width and height are read from the VX header; this API does not scale.
+ *
+ * This call alone does not select a color key. The black-key pitfall occurs
+ * when a context containing the VX result is later submitted through
+ * bda_gui_context_copy(..., BDA_GUI_COLOR_KEY_BLACK_RGB565).
  */
 static inline int bda_gui_draw_vx(
     bda_handle_t context, s32 x, s32 y, const void *vx_resource
@@ -236,7 +256,13 @@ static inline int bda_gui_render_picture(
 /*
  * Copy a source rectangle to a visible or compatible destination context.
  * Presenting to the visible context must be enclosed by one complete dynamic
- * draw guard. Use BDA_GUI_COLOR_KEY_NONE for an opaque copy.
+ * draw guard.
+ *
+ * The final argument always selects a source color to skip on verified
+ * C200knl hardware. In particular, 0 skips RGB565 black; it does not disable
+ * transparency. Choose a key absent from the source, or replace source pixels
+ * equal to that key before copying. There is currently no verified
+ * firmware-wide "no color key" value.
  */
 static inline int bda_gui_context_copy(
     bda_handle_t source_context,

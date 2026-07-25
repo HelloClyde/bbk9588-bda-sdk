@@ -781,7 +781,7 @@ static int present_screen(void) {
     old_object = bda_gui_select_draw_object(g_draw, g_draw_object);
     copy_result = bda_gui_context_copy(
         g_back, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
-        g_draw, 0, 0, 0
+        g_draw, 0, 0, BDA_GUI_COLOR_KEY_BLACK_RGB565
     );
     (void)bda_gui_select_draw_object(g_draw, old_object);
     (void)bda_gui_draw_guard_end();

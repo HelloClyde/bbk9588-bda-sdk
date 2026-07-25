@@ -24,6 +24,16 @@ CORE_API_DEFINE_NAMES = {
     "BDA_MEM_FREE",
 }
 
+# RGB565 pixel values live beside the GUI declarations in the research header,
+# but they are data constants rather than GUI table offsets.  Keep them out of
+# the generated API catalog even though the reverse-engineering names use the
+# conventional _LIKE suffix.
+NON_API_DEFINE_NAMES = {
+    "BDA_GUI_COLOR_KEY_BLACK_RGB565_LIKE",
+    "BDA_GUI_COLOR_KEY_MAGENTA_RGB565_LIKE",
+    "BDA_GUI_OPAQUE_BLACK_RGB565_LIKE",
+}
+
 NOTES: dict[tuple[str, int], str] = {
     ("GUI", 0x030): "event poll；C200 参数为 message_buffer,frame_or_handle，会填 0x1c byte message packet。",
     ("GUI", 0x03C): "异步 notify/post；C200 将 handle,message,a,b 写入 frame queue，0xb1 只置 pending flag。",
@@ -115,7 +125,7 @@ NOTES: dict[tuple[str, int], str] = {
     ("GUI", 0x40C): "region draw/copy；C200 使用 context,x,y,width,height 五参数。",
     ("GUI", 0x410): "low-level render/copy helper；C200 使用 context,x,y,width,height,descriptor 六参数。",
     ("GUI", 0x414): "low-level render helper；C200 读取 descriptor、多个 stack 参数并可分配临时 buffer。",
-    ("GUI", 0x418): "双 context 矩形复制；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key_or_zero；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交。",
+    ("GUI", 0x418): "双 context 矩形复制；V19-V21 验证 compatible 合成、0xf81f 洋红透明键和 dirty rect 局部提交；stack+0x14 为 destination，stack+0x20 为 RGB565 color_key；C200knl 真机确认 0 跳过黑色而非禁用色键。",
     ("GUI", 0x430): "rect writer；C200 使用 rect,x0,y0,x1,y1 五参数并写入四个 word。",
     ("GUI", 0x46C): "矩形命中测试，判断点是否落在 x0/y0/x1/y1 范围内。",
     ("GUI", 0x4A4): "current font pointer getter；C200 返回 context+0x54，context=0 时使用 default draw context。",
@@ -207,6 +217,8 @@ def parse_sdk_defines(path: Path) -> dict[tuple[str, int], list[str]]:
         if not match:
             continue
         name, table, value = match.groups()
+        if name in NON_API_DEFINE_NAMES:
+            continue
         if not (name.endswith("_LIKE") or name in CORE_API_DEFINE_NAMES):
             continue
         offset = int(value, 16)

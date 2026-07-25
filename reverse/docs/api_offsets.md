@@ -382,7 +382,7 @@ GUI +0x3f4  current clip rect intersection test；context,rect
 GUI +0x40c  region draw/copy 类
 GUI +0x410  render/copy helper；context,x,y,width,height,descriptor
 GUI +0x414  low-level render helper，多 stack 参数和 descriptor
-GUI +0x418  双 context 矩形复制；支持 compatible source/destination 子矩形和 dirty present；末参数 0 禁用色键，0xf81f 跳过洋红 source pixel
+GUI +0x418  双 context 矩形复制；支持 compatible source/destination 子矩形和 dirty present；C200knl 真机确认末参数 0 跳过黑色 source pixel，0xf81f 跳过洋红；尚无已验证的禁用色键值
 GUI +0x430  rect writer；rect,x0,y0,x1,y1 五参数，SDK wrapper 为 bda_gui_rect_prepare_like()
 GUI +0x0a4  object/default client rect 查询；handle,rect，成功写 16 byte rect
 GUI +0x3f8  framebuffer/region blit 类

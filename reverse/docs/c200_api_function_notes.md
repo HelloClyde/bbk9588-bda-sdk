@@ -1355,7 +1355,7 @@ GUI+0x418 -> 0x800b3d90
   控制流确认 `a0=source_context`、`a1/a2=source_x/y`、`a3=width`，调用者
   `stack+0x10=height`、`stack+0x14=destination_context`、
   `stack+0x18/+0x1c=destination_x/y`，`stack+0x20` 是 RGB565
-  `color_key_or_zero`。
+  `color_key_rgb565`。
 - 具体 stack slot 已能从 C200 固定：`stack+0x10` 参与第一矩形的
   `y+height_or_y2`，`stack+0x14` 作为第二个 context，即 `context_b`；`stack+0x18/+0x1c`
   作为第二矩形 origin，`stack+0x20` 会原样转发给 backend `+0x94`。
@@ -1378,7 +1378,8 @@ GUI+0x418 -> 0x800b3d90
 - 雷霆战机 `0x81c10db8` 把 `s5=0xf81f`，并在 visible→temp 和 temp→visible 两个
   `GUI+0x418` 调用前写到 `stack+0x20`。决战坦克同时存在参数 0 和显式
   `0xf81f` 的复制分支，说明该参数不是固定保留 word。
-- V19 使用末参数 0，32x32 深色背景被不透明复制。V20 把 sprite surface 未命中
+- V19 使用末参数 0，32x32 非零深色背景被复制；该实验没有覆盖精确 `0x0000`。
+  V20 把 sprite surface 未命中
   图案的像素填为 RGB565 洋红 `0xf81f`，并仅在 sprite→back 时传同一 color key；
   画面只保留图案，底层网格完整穿透洋红区域。两张采样帧中透明精灵移动并换色，
   无旧位置残影，连续 4448 帧后正常释放两块 context，模拟器 `invalid=0`。
@@ -1387,15 +1388,20 @@ GUI+0x418 -> 0x800b3d90
   最后只把新旧位置的最小外接 dirty rect 从 back 复制到 visible。第一次移动
   `old_x=0,new_x=1` 时日志为 `DIRTY WIDTH=0x21`，三次 copy 均返回 0；两张采样帧
   网格无残影，连续 20862 帧后 clean/back/sprite 均释放，模拟器 `invalid=0`。
-- 当前可把 0 解释为禁用 color key，非零值解释为要跳过的 RGB565 source color。
-  alpha blending 和多个透明键仍未验证；V19-V21 还需要真机复测。
+- 后续 C200knl 真机正反测试覆盖了精确 `0x0000`：参数 0 会跳过黑色 source pixel，
+  不是禁用 color key。将整屏背景设为 0 会使旧菜单、旧 Loading 和新图标重叠；
+  把 source 黑色映射为 `0x0001` 后恢复正常。当前没有验证到通用的禁用 color key
+  值；alpha blending 和多个透明键仍未验证。
 
 开发建议：
 
 - 公开 SDK 为 `GUI+0x418` 提供九参数 `bda_gui_context_copy()`，末参数命名为
-  `color_key_rgb565`，并提供 `BDA_GUI_COLOR_KEY_NONE` 和
-  `BDA_GUI_COLOR_KEY_MAGENTA_RGB565`。研究 header 继续保留 `_like` 名供 probe
-  使用；`GUI+0x410/+0x414` 仍只暴露 low-level 候选。旧文档里的 “finish” 只是
+  `color_key_rgb565`，并提供显式的 `BDA_GUI_COLOR_KEY_BLACK_RGB565`、
+  `BDA_GUI_COLOR_KEY_MAGENTA_RGB565` 和 `BDA_GUI_OPAQUE_BLACK_RGB565`。不再提供
+  语义错误的 `BDA_GUI_COLOR_KEY_NONE`。研究 header 对应常量是
+  `BDA_GUI_COLOR_KEY_BLACK_RGB565_LIKE` 和
+  `BDA_GUI_OPAQUE_BLACK_RGB565_LIKE`；它们是 RGB565 像素值，不是 GUI table
+  offset。`GUI+0x410/+0x414` 仍只暴露 low-level 候选。旧文档里的 “finish” 只是
   早期行为猜测，不应理解成无参数提交/flush。
 - 这两个入口适合复刻相册、电子画板、小游戏的完整 render pipeline；不要在普通
   no-template demo 中直接调用。
