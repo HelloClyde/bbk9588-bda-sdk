@@ -1848,7 +1848,9 @@ static inline int bda_gui_rect_contains_like(const bda_rect_like_t *rect, s32 x,
  * GUI+0x6b0 的 C200 table entry 无参数，直接返回内部 screen/framebuffer pointer。
  * 它不是 4 参数分配函数；真正的屏幕初始化逻辑在相邻内部函数中。这个 pointer
  * 属于 firmware display state，不是 SDK 分配的稳定 framebuffer；普通 BDA
- * 不要直接写入，也不要把它和 GUI+0x3f8/+0x400 拼成自定义 present 路径。
+ * 不要直接调用这个研究 getter 或写入未经校验的地址，也不要把它和
+ * GUI+0x3f8/+0x400 拼成自定义 present 路径。已验证 C200 布局上的整帧提交应使用
+ * sdk/include/bda_graphics.h 的 bda_gui_framebuffer_acquire/present_rgb565。
  */
 static inline void *bda_gui_screen_buffer_like(void) {
     typedef void *(*screen_buffer_fn)(void);

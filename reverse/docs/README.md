@@ -505,6 +505,7 @@ example/input/key_polling/key_msgbox_demo.c            已验证的六键 packet
 example/input/touch_crosshair/touch_crosshair_demo.c       真机 V23 两阶段绘制的无闪烁触摸定位测试
 example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图元和彩色像素绘制
 example/graphics/picture_render/picture_render_demo.c    已验证的原生尺寸 raw RGB565 动态提交
+example/graphics/direct_framebuffer/direct_framebuffer_demo.c 已验证的 C200 240x320 RGB565 整帧直接提交
 example/games/minesweeper/minesweeper_bda.c            娱乐天地分类的 9x9 可玩扫雷
 example/system/runtime_services/runtime_services_demo.c  已验证的 heap、seek、目录和枚举闭环
 example/system/high_resolution_timer/high_resolution_timer_demo.c  已验证的标称 1 ms timer 生命周期

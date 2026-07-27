@@ -88,6 +88,7 @@ class SdkDocsTest(unittest.TestCase):
                 "audio_capture_api.md",
                 "audio_pcm_api.md",
                 "controls_api.md",
+                "direct_framebuffer_api.md",
                 "file_selector_api.md",
                 "fs_write_api.md",
                 "game_rendering_api.md",
@@ -181,6 +182,50 @@ class SdkDocsTest(unittest.TestCase):
             "模拟器应用逆向",
         ]:
             self.assertNotIn(phrase, combined)
+
+    def test_direct_framebuffer_api_is_guarded_and_documented(self) -> None:
+        graphics = read("sdk/include/bda_graphics.h")
+        runtime = read("sdk/include/bda/detail/runtime.h")
+        verified = read("docs/verified/direct_framebuffer_api.md")
+        example = read(
+            "example/graphics/direct_framebuffer/direct_framebuffer_demo.c"
+        )
+
+        self.assertIn(
+            "#define BDA_SDK_INTERNAL_GUI_SCREEN_BUFFER     0x6b0u",
+            runtime,
+        )
+        self.assertIn(
+            "#define BDA_SDK_INTERNAL_GUI_SCREEN_ORIENTATION      0x738u",
+            runtime,
+        )
+        for name in [
+            "bda_gui_framebuffer_t",
+            "bda_gui_framebuffer_acquire",
+            "bda_gui_framebuffer_present_rgb565",
+            "BDA_GUI_FRAMEBUFFER_WIDTH",
+            "BDA_GUI_FRAMEBUFFER_HEIGHT",
+            "BDA_GUI_FRAMEBUFFER_STRIDE_BYTES",
+            "BDA_GUI_FRAMEBUFFER_SIZE_BYTES",
+        ]:
+            self.assertIn(name, graphics)
+            self.assertIn(name, verified + "\n" + example)
+        for guard in [
+            "physical == 0u",
+            "(physical & 3u) != 0u",
+            "physical > 0x20000000u - BDA_GUI_FRAMEBUFFER_SIZE_BYTES",
+            "orientation != 0x130u",
+            "orientation != 0x131u",
+            "0xa0000000u | physical",
+            '__asm__ volatile("sync"',
+        ]:
+            self.assertIn(guard, graphics)
+        self.assertNotIn("0x01f82000u", graphics)
+        self.assertIn("不固定 framebuffer 物理地址", verified)
+        self.assertNotIn("bda_sdk_internal_", example)
+        self.assertIn("5ebf5d14d0fbb7ee257001117a24ee57077672967bf22de17bc0ad263cc77462", verified)
+        self.assertIn("单缓冲", verified)
+        self.assertIn("必须回退", verified)
 
     def test_public_dialog_header_matches_verified_scope(self) -> None:
         header = read("sdk/include/bda_dialogs.h")

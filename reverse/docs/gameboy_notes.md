@@ -140,8 +140,11 @@ GUI +0x5d4  input packet-like，传入至少 6 byte buffer，C200 会写入按�
 其余未公开名称仍只是从调用上下文推断。注意该应用没有使用其他游戏常见的
 `GUI+0x3f8/+0x400` blit 组，而是使用较高 offset 的扩展 GUI/event 表。
 `GUI+0x6b0` 返回的 pointer 属于 firmware display state，不是 SDK 分配的稳定
-framebuffer；普通 BDA 不要直接写入，也不要把它和 `GUI+0x3f8/+0x400`
-拼成自定义 present 路径。
+framebuffer；普通 BDA 不要直接调用研究 getter、裸写未知地址，也不要把它和
+`GUI+0x3f8/+0x400` 拼成自定义 present 路径。原 `GAMEBOY.BDA` 的整帧复制、
+`+0x738` 分支方向语义、8013 独立 BDA 和 `ps-for9588` 真机长稳闭环完成后，
+受保护的 C200 固定布局 wrapper 已进入 `sdk/include/bda_graphics.h`；地址或方向
+校验失败时仍必须回退固件绘图路径。
 
 ## 音频线索
 

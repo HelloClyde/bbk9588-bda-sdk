@@ -74,6 +74,14 @@ Loading 和新 UI 大面积重叠；V26 仅将待提交 source 的 `0x0000` 改�
 
 ### 后续建议
 
+2026-07-27 已新增面向 C200 游戏/模拟器的受保护快速路径：
+`bda_gui_framebuffer_acquire()` 使用固件 GUI API 返回的动态地址，不固定物理地址，
+并校验 KSEG、范围、对齐和方向值，
+`bda_gui_framebuffer_present_rgb565()` 负责 240×320 RGB565 整帧连续写入与方向
+补偿。该接口及动态证据见
+[direct_framebuffer_api.md](verified/direct_framebuffer_api.md)。它解决的是已知 C200
+上的低延迟整帧提交，不取代下述面向普通应用、兼容更多固件的高层 surface 设计。
+
 首先重新验证 `GUI+0x418` 是否存在真正的“禁用色键”值。在结果明确前，不应继续把
 `0` 命名为 `BDA_GUI_COLOR_KEY_NONE`。如果固件没有无色键模式，应明确命名为黑色色键，
 并由高层 opaque-copy wrapper 选择安全路径。

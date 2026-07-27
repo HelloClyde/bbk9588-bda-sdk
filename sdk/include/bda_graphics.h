@@ -6,6 +6,19 @@
 #define BDA_GUI_COLOR_KEY_BLACK_RGB565 0x0000u
 #define BDA_GUI_COLOR_KEY_MAGENTA_RGB565 0xf81fu
 #define BDA_GUI_OPAQUE_BLACK_RGB565 0x0001u
+#define BDA_GUI_FRAMEBUFFER_WIDTH 240u
+#define BDA_GUI_FRAMEBUFFER_HEIGHT 320u
+#define BDA_GUI_FRAMEBUFFER_STRIDE_BYTES 480u
+#define BDA_GUI_FRAMEBUFFER_SIZE_BYTES \
+    (BDA_GUI_FRAMEBUFFER_STRIDE_BYTES * BDA_GUI_FRAMEBUFFER_HEIGHT)
+
+typedef struct bda_gui_framebuffer {
+    volatile u16 *pixels;
+    u32 width;
+    u32 height;
+    u32 stride_bytes;
+    u32 rotate_180;
+} bda_gui_framebuffer_t;
 
 /*
  * C200knl true-hardware behavior: GUI+0x418 treats 0 as a black color key,
@@ -20,6 +33,115 @@ static inline u16 bda_gui_rgb565_avoid_black_key(u16 color) {
     return color == BDA_GUI_COLOR_KEY_BLACK_RGB565
         ? BDA_GUI_OPAQUE_BLACK_RGB565
         : color;
+}
+
+/*
+ * Acquire the firmware's active C200-compatible 240x320 RGB565 scan buffer.
+ * The framebuffer address comes from the GUI API and is not fixed by the SDK.
+ * This wrapper validates its KSEG alias, range, alignment and orientation. On
+ * success pixels uses the corresponding uncached alias.
+ *
+ * Return 0 on success and -1 when the firmware layout is not recognized.
+ * Direct writes are a low-latency, single-buffer path rather than a vsynced
+ * page flip. Keep a firmware drawing fallback for unsupported firmware.
+ */
+static inline int bda_gui_framebuffer_acquire(
+    bda_gui_framebuffer_t *framebuffer
+) {
+    typedef void *(*buffer_fn_t)(void);
+    typedef u32 (*orientation_fn_t)(void);
+    void *table;
+    void *buffer_api;
+    void *orientation_api;
+    u32 address;
+    u32 segment;
+    u32 physical;
+    u32 orientation;
+
+    if (!framebuffer)
+        return -1;
+    framebuffer->pixels = 0;
+    framebuffer->width = 0u;
+    framebuffer->height = 0u;
+    framebuffer->stride_bytes = 0u;
+    framebuffer->rotate_180 = 0u;
+
+    table = bda_sdk_internal_gui();
+    if (!table || (u32)table == 0xffffffffu)
+        return -1;
+    buffer_api = bda_sdk_internal_api(
+        table, BDA_SDK_INTERNAL_GUI_SCREEN_BUFFER
+    );
+    orientation_api = bda_sdk_internal_api(
+        table, BDA_SDK_INTERNAL_GUI_SCREEN_ORIENTATION
+    );
+    if (!buffer_api || (u32)buffer_api == 0xffffffffu ||
+        !orientation_api || (u32)orientation_api == 0xffffffffu)
+        return -1;
+
+    address = (u32)((buffer_fn_t)buffer_api)();
+    orientation = ((orientation_fn_t)orientation_api)();
+    segment = address & 0xe0000000u;
+    physical = address & 0x1fffffffu;
+    if ((segment != 0x80000000u && segment != 0xa0000000u) ||
+        physical == 0u || (physical & 3u) != 0u ||
+        physical > 0x20000000u - BDA_GUI_FRAMEBUFFER_SIZE_BYTES ||
+        (orientation != 0x130u && orientation != 0x131u))
+        return -1;
+
+    framebuffer->pixels = (volatile u16 *)(0xa0000000u | physical);
+    framebuffer->width = BDA_GUI_FRAMEBUFFER_WIDTH;
+    framebuffer->height = BDA_GUI_FRAMEBUFFER_HEIGHT;
+    framebuffer->stride_bytes = BDA_GUI_FRAMEBUFFER_STRIDE_BYTES;
+    framebuffer->rotate_180 = orientation == 0x130u;
+    return 0;
+}
+
+/*
+ * Copy one tightly packed 240x320 RGB565 frame to a descriptor returned by
+ * bda_gui_framebuffer_acquire(). The source must be 32-bit aligned.
+ *
+ * Return 0 on success and -1 for an invalid descriptor or source.
+ */
+static inline int bda_gui_framebuffer_present_rgb565(
+    const bda_gui_framebuffer_t *framebuffer,
+    const u16 *source
+) {
+    typedef u32 framebuffer_word_t __attribute__((__may_alias__));
+    const framebuffer_word_t *source_words;
+    volatile framebuffer_word_t *destination_words;
+    u32 remaining = (
+        BDA_GUI_FRAMEBUFFER_WIDTH * BDA_GUI_FRAMEBUFFER_HEIGHT
+    ) / 2u;
+
+    if (!framebuffer || !source || ((u32)source & 3u) != 0u ||
+        !framebuffer->pixels ||
+        framebuffer->width != BDA_GUI_FRAMEBUFFER_WIDTH ||
+        framebuffer->height != BDA_GUI_FRAMEBUFFER_HEIGHT ||
+        framebuffer->stride_bytes != BDA_GUI_FRAMEBUFFER_STRIDE_BYTES)
+        return -1;
+
+    source_words = (const framebuffer_word_t *)source;
+    destination_words = (volatile framebuffer_word_t *)framebuffer->pixels;
+    if (!framebuffer->rotate_180) {
+        while (remaining != 0u) {
+            *destination_words++ = *source_words++;
+            --remaining;
+        }
+    } else {
+        source_words += (
+            BDA_GUI_FRAMEBUFFER_WIDTH * BDA_GUI_FRAMEBUFFER_HEIGHT
+        ) / 2u;
+        while (remaining != 0u) {
+            u32 pair = *--source_words;
+            *destination_words++ = (pair << 16) | (pair >> 16);
+            --remaining;
+        }
+    }
+#if defined(__mips__)
+    __asm__ volatile("sync" ::: "memory");
+#endif
+    return 0;
 }
 
 /* Raw RGB565 picture descriptor verified for native-size GUI+0x410 draws. */

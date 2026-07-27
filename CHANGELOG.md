@@ -25,6 +25,10 @@ All notable SDK and packer changes are recorded here. The project follows
   RGB565 black rather than disabling transparency. Replace the misleading
   `BDA_GUI_COLOR_KEY_NONE` name with an explicit black key and provide an
   opaque-near-black replacement constant/helper.
+- Add the guarded C200 240x320 RGB565 direct-framebuffer API, including
+  GUI-provided dynamic addressing, orientation compensation, uncached
+  full-frame copies, firmware fallback requirements, an independently
+  verified example, and emulator/true-device evidence.
 
 ## 0.1.0-alpha.1
 

@@ -17,6 +17,7 @@ input/key_polling/        key_msgbox_demo.c + KeyInput.bda
 input/touch_crosshair/    touch_crosshair_demo.c + TouchCrosshair.bda
 graphics/primitives/      graphics_primitives_demo.c + GraphicsPrimitives.bda
 graphics/picture_render/  picture_render_demo.c + PictureRender.bda
+graphics/direct_framebuffer/ direct_framebuffer_demo.c + DirectFramebuffer.bda
 games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
 system/runtime_services/  runtime_services_demo.c + RuntimeServices.bda
 system/high_resolution_timer/ high_resolution_timer_demo.c + HighResolutionTimer.bda
@@ -39,6 +40,7 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 | `input/touch_crosshair/` | 触摸坐标、无闪烁重绘、窗口退出 | 真机 | [生命周期教程](../docs/verified/touch_window_lifecycle_api.md) |
 | `graphics/primitives/` | 点、线、圆、矩形和文字 | 模拟器 | [API 文档](../docs/verified/graphics_primitives_api.md) |
 | `graphics/picture_render/` | 原生尺寸 raw RGB565 动态提交 | 模拟器 | [API 文档](../docs/verified/picture_rendering_api.md) |
+| `graphics/direct_framebuffer/` | C200 240×320 RGB565 整帧直接提交 | 模拟器 + 真机 | [API 文档](../docs/verified/direct_framebuffer_api.md) |
 | `games/minesweeper/` | 双缓冲、VX、色键、dirty rect、tick | 模拟器 | [游戏绘图教程](../docs/verified/game_rendering_api.md) |
 | `system/runtime_services/` | heap、seek、目录和枚举 | 模拟器 | [API 文档](../docs/verified/runtime_services_api.md) |
 | `system/high_resolution_timer/` | 标称 1 ms timer 和完整 start/stop 生命周期 | 模拟器 + 真机 | [API 文档](../docs/verified/high_resolution_timer_api.md) |
@@ -62,6 +64,14 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 bda-pack example\basic\hello_world\hello_world_msgbox.c `
   --title HelloWorld --category 9 `
   -o example\basic\hello_world\HelloWorld.bda
+```
+
+直接 framebuffer 验证示例：
+
+```powershell
+bda-pack example\graphics\direct_framebuffer\direct_framebuffer_demo.c `
+  --title DirectFB --category 9 `
+  -o example\graphics\direct_framebuffer\DirectFramebuffer.bda
 ```
 
 扫雷带自定义图标，并放入“娱乐天地”分类：

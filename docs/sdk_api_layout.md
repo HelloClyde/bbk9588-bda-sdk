@@ -16,7 +16,7 @@
 | `bda_input.h` | 六键轮询、原始输入事件和高速触摸坐标读取 |
 | `bda_time.h` | 25 ms tick、标称 1 ms counter、Frame 周期定时器和 busy-wait delay |
 | `bda_window.h` | Frame、消息、事件泵和窗口生命周期 |
-| `bda_graphics.h` | draw context、图元、文字、VX、picture 和 context copy |
+| `bda_graphics.h` | draw context、图元、文字、VX、picture、context copy 和 C200 framebuffer |
 | `bda_dialogs.h` | Message Box、确认框、帮助页和文件选择器 |
 | `bda_controls.h` | 内建控件、GIF 和自定义控件类 |
 | `bda_audio.h` | raw PCM 播放，以及 C200knl 固件保护的实时录音 |
@@ -44,6 +44,7 @@ helper 位于 `bda/detail/runtime.h`，它是公开 wrapper 的实现细节，�
 - [触摸与窗口生命周期](verified/touch_window_lifecycle_api.md)
 - [高速触摸坐标读取](verified/touch_position_api.md)
 - [GAMEBOY 式原始输入事件](verified/raw_input_event_api.md)
+- [C200 直接 framebuffer](verified/direct_framebuffer_api.md)
 - [游戏绘图与计时](verified/game_rendering_api.md)
 - [高分辨率计时](verified/high_resolution_timer_api.md)
 - [窗口消息定时器](verified/window_timer_api.md)
