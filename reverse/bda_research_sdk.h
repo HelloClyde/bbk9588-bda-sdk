@@ -176,7 +176,7 @@ typedef unsigned long long u64;
 #define BDA_GUI_MILLISECOND_TIMER_STOP_LIKE  0x718u
 #define BDA_GUI_MILLISECOND_COUNT_LIKE       0x71cu
 #define BDA_GUI_STATE_QUERY_LIKE       0x72cu
-#define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u
+#define BDA_GUI_SCREEN_ORIENTATION_LIKE 0x738u
 #define BDA_GUI_EVENT_FETCH_LIKE       0x750u
 
 /* GAMEBOY.BDA 中观察到的 file selector/session 调用。 */
@@ -1848,7 +1848,9 @@ static inline int bda_gui_rect_contains_like(const bda_rect_like_t *rect, s32 x,
  * GUI+0x6b0 的 C200 table entry 无参数，直接返回内部 screen/framebuffer pointer。
  * 它不是 4 参数分配函数；真正的屏幕初始化逻辑在相邻内部函数中。这个 pointer
  * 属于 firmware display state，不是 SDK 分配的稳定 framebuffer；普通 BDA
- * 不要直接写入，也不要把它和 GUI+0x3f8/+0x400 拼成自定义 present 路径。
+ * 不要直接调用这个研究 getter 或写入未经校验的地址，也不要把它和
+ * GUI+0x3f8/+0x400 拼成自定义 present 路径。已验证 C200 布局上的整帧提交应使用
+ * sdk/include/bda_graphics.h 的 bda_gui_framebuffer_acquire/present_rgb565。
  */
 static inline void *bda_gui_screen_buffer_like(void) {
     typedef void *(*screen_buffer_fn)(void);
@@ -1880,8 +1882,8 @@ static inline int bda_gui_state_query_like(void) {
 /*
  * C200 当前直接返回 0x130，可作为 GUI table smoke test。
  */
-static inline int bda_gui_screen_width_like(void) {
-    return bda_call0(bda_gui_table(), BDA_GUI_SCREEN_WIDTH_LIKE);
+static inline int bda_gui_screen_orientation_like(void) {
+    return bda_call0(bda_gui_table(), BDA_GUI_SCREEN_ORIENTATION_LIKE);
 }
 
 /*

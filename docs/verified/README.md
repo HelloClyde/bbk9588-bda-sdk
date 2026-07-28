@@ -27,6 +27,8 @@
 - [窗口消息定时器 API](window_timer_api.md)：8013 与真机验证的 Frame 周期定时器、`0x144` 消息、改周期和注销生命周期。
 - [堆、文件定位与目录 API](runtime_services_api.md)：8013 验证的 alloc/free、seek、mkdir/chdir 和完整目录枚举生命周期。
 - [原始 RGB565 Picture 提交 API](picture_rendering_api.md)：8013 验证的 GUI `+0x410` 原生尺寸动态提交和 28-byte descriptor。
+- [C200 直接 Framebuffer API](direct_framebuffer_api.md)：模拟器与真机验证的
+  240×320 RGB565 整帧提交、方向补偿和严格固件布局回退。
 - [系统文件选择器 API](file_selector_api.md)：8013 验证的默认目录、后缀过滤、选择/取消和结果链表释放。
 - [控件 API](controls_api.md)：8013 验证的内建控件、`medit/listbox` VX 皮肤绑定、
   内存 GIF 自动播放、消息 helper、自定义类注册和失败边界。

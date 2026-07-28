@@ -215,7 +215,7 @@ int bda_gui_input_packet_like(bda_gui_input_packet_like_t *packet);
 void *bda_gui_screen_buffer_like(void);
 void bda_gui_touch_position_like(u16 *x, u16 *y);
 int bda_gui_state_query_like(void);
-int bda_gui_screen_width_like(void);
+int bda_gui_screen_orientation_like(void);
 int bda_touch_pressed_9588(void); /* 危险固定地址失败探针，禁止真机调用 */
 int bda_gui_event_fetch_like(bda_gui_event_fetch_like_t *out_event);
 int bda_gui_file_selector_update_like(bda_file_selector_like_t *selector);
@@ -400,7 +400,7 @@ MIPS o32 只有 `a0..a3` 四个参数寄存器；`bda_call5()` / `bda_call6()` �
 
 ```text
 低风险 smoke:
-  bda_gui_screen_width_like()
+  bda_gui_screen_orientation_like()
   bda_gui_rect_prepare_like()
   bda_gui_rect_contains_like()
   bda_alloc()/bda_free()
@@ -451,15 +451,15 @@ framebuffer/tile 游戏不能直接套用 `bda_gui_blit_like()` / `bda_gui_blit_
 结果又确认，即使只在循环外统一 `draw_guard_end_like()`，仍会逐块 flip 并在全部 tile
 渲染后死机。当前结论是 `GUI+0x074/+0x400` 依赖原机游戏的 surface/context 生命周期，
 SDK 暂不把它作为可玩 tile 游戏绘图接口。
-`bda_gui_screen_width_like()` 是很适合 standalone 的 smoke：C200 当前直接返回
-`0x130`，研究示例 `reverse\examples\gui_screen_width_demo.c` 会用 message box 显示结果。
+`bda_gui_screen_orientation_like()` 是很适合 standalone 的 smoke：C200 当前直接返回
+`0x130`，研究示例 `reverse\examples\gui_screen_orientation_demo.c` 会用 message box 显示结果。
 
 ```powershell
-python -m bda_packer reverse\examples\gui_screen_width_demo.c `
-  --title WidthDemo `
+python -m bda_packer reverse\examples\gui_screen_orientation_demo.c `
+  --title OrientDemo `
   --category 9 `
   -I reverse `
-  -o build\WidthDemo.bda
+  -o build\OrientDemo.bda
 ```
 
 file read 示例：
@@ -505,6 +505,7 @@ example/input/key_polling/key_msgbox_demo.c            已验证的六键 packet
 example/input/touch_crosshair/touch_crosshair_demo.c       真机 V23 两阶段绘制的无闪烁触摸定位测试
 example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图元和彩色像素绘制
 example/graphics/picture_render/picture_render_demo.c    已验证的原生尺寸 raw RGB565 动态提交
+example/graphics/direct_framebuffer/direct_framebuffer_demo.c 已验证的 C200 240x320 RGB565 整帧直接提交
 example/games/minesweeper/minesweeper_bda.c            娱乐天地分类的 9x9 可玩扫雷
 example/system/runtime_services/runtime_services_demo.c  已验证的 heap、seek、目录和枚举闭环
 example/system/high_resolution_timer/high_resolution_timer_demo.c  已验证的标称 1 ms timer 生命周期
@@ -525,7 +526,7 @@ example/gui/gif_player/gif_player_demo.c                 已验证的内存 GIF8
 ```text
 reverse/examples/hello_msgbox.c              兼容的 message box build smoke
 reverse/examples/gui_rect_contains_demo.c    rect helper / RectDemo
-reverse/examples/gui_screen_width_demo.c     standalone 常量查询 smoke
+reverse/examples/gui_screen_orientation_demo.c  standalone 方向查询 smoke
 reverse/examples/input_state_demo.c          input packet/event/state 查询
 reverse/examples/mem_alloc_demo.c            firmware heap alloc/free
 reverse/examples/fs_read_demo.c              file open/read/seek/tell/close

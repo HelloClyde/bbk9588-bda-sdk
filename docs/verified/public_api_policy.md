@@ -54,6 +54,8 @@ SDK 尚未对外发布，不为仓库内部出现过的旧误名保留兼容别�
   `docs/verified/runtime_services_api.md`
 - 原生尺寸 raw RGB565 picture descriptor 提交：
   `docs/verified/picture_rendering_api.md`
+- C200 240×320 RGB565 直接 framebuffer 获取、方向补偿、整帧提交和布局拒绝回退：
+  `docs/verified/direct_framebuffer_api.md`
 - 系统文件选择器：`docs/verified/file_selector_api.md`
 - 内建控件、内存 GIF89a 播放、控件消息和自定义类：
   `docs/verified/controls_api.md`

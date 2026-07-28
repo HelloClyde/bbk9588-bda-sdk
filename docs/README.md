@@ -21,7 +21,7 @@
 | [`bda_input.h`](../sdk/include/bda_input.h) | 按键包、原始输入事件和高速触摸坐标读取 |
 | [`bda_time.h`](../sdk/include/bda_time.h) | tick、标称 1 ms counter、Frame 周期定时器和 delay |
 | [`bda_window.h`](../sdk/include/bda_window.h) | Frame、消息、事件泵和生命周期 |
-| [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX 和 picture |
+| [`bda_graphics.h`](../sdk/include/bda_graphics.h) | draw context、图元、文字、VX、picture 和 C200 framebuffer |
 | [`bda_dialogs.h`](../sdk/include/bda_dialogs.h) | 消息框、确认框、帮助页和文件选择器 |
 | [`bda_controls.h`](../sdk/include/bda_controls.h) | 内建控件、GIF 与自定义控件 |
 | [`bda_audio.h`](../sdk/include/bda_audio.h) | raw PCM 播放，以及受固件保护的实时录音 |
@@ -48,6 +48,7 @@
 | 高分辨率计时 | [high_resolution_timer_api.md](verified/high_resolution_timer_api.md) | 模拟器 + 真机 |
 | 窗口消息定时器 | [window_timer_api.md](verified/window_timer_api.md) | 模拟器 + 真机 |
 | Raw RGB565 picture | [picture_rendering_api.md](verified/picture_rendering_api.md) | 8013 模拟器 |
+| C200 直接 framebuffer | [direct_framebuffer_api.md](verified/direct_framebuffer_api.md) | 模拟器 + 真机 |
 | 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 8013 模拟器 |
 | 内建控件、GIF 与自定义类 | [controls_api.md](verified/controls_api.md) | 8013 模拟器 |
 | Raw PCM 音频生命周期 | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 + 真机 |

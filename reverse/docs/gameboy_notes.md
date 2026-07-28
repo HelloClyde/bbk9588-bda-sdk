@@ -130,7 +130,7 @@ pointer 存到 `0x81c2051c`，并派生出 `+0x11200` 的另一个 pointer。代
 ```text
 GUI +0x6b0  screen/framebuffer pointer getter；C200 table entry 无参数
 GUI +0x6c0  最新校准触摸坐标 getter；GAMEBOY 在低层事件码 8/11 分支各调用一次
-GUI +0x738  screen width-like；C200 table entry 当前直接返回 0x130
+GUI +0x738  screen orientation；0x130 为整帧旋转 180°，0x131 为正向
 GUI +0x72c  state/query-like；C200 table entry 无参数，真机 probe 全程返回 0，仍属研究接口
 GUI +0x750  全局 raw input event fetch；两个 s32 output pointer，真机验证后已公开
 GUI +0x5d4  input packet-like，传入至少 6 byte buffer，C200 会写入按键状态
@@ -140,8 +140,11 @@ GUI +0x5d4  input packet-like，传入至少 6 byte buffer，C200 会写入按�
 其余未公开名称仍只是从调用上下文推断。注意该应用没有使用其他游戏常见的
 `GUI+0x3f8/+0x400` blit 组，而是使用较高 offset 的扩展 GUI/event 表。
 `GUI+0x6b0` 返回的 pointer 属于 firmware display state，不是 SDK 分配的稳定
-framebuffer；普通 BDA 不要直接写入，也不要把它和 `GUI+0x3f8/+0x400`
-拼成自定义 present 路径。
+framebuffer；普通 BDA 不要直接调用研究 getter、裸写未知地址，也不要把它和
+`GUI+0x3f8/+0x400` 拼成自定义 present 路径。原 `GAMEBOY.BDA` 的整帧复制、
+`+0x738` 分支方向语义、8013 独立 BDA 和 `ps-for9588` 真机长稳闭环完成后，
+受保护的 C200 固定布局 wrapper 已进入 `sdk/include/bda_graphics.h`；地址或方向
+校验失败时仍必须回退固件绘图路径。
 
 ## 音频线索
 

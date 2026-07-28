@@ -2582,23 +2582,22 @@ helper 已撤销。
 `sdk/include/bda_time.h`；由于真机窗口存在约 3% 差异，公开语义是标称 1 ms 的
 高分辨率单调计数，不是精确墙钟。
 
-### GUI +0x738: `BDA_GUI_SCREEN_WIDTH_LIKE`
+### GUI +0x738: `BDA_GUI_SCREEN_ORIENTATION_LIKE`
 
 system function VA：`0x80024708`
 
 当前证据：
 
 - table entry 目标的第一条指令是 `jr ra`，delay slot 是 `addiu v0, zero, 0x130`。
-- 因此函数无参数，稳定返回 `0x130`，即十进制 `304`。
-- `GAMEBOY.BDA` 在扩展 GUI/screen buffer 路径附近引用该 offset；结合
-  320x240 设备和内部边距，`0x130` 更像可绘制区域宽度，而不是完整屏幕模式结构。
+- 因此函数无参数，C200 稳定返回 `0x130`。
+- `GAMEBOY.BDA` 在整帧复制前查询该值：`0x130` 走 180° 反向复制，
+  `0x131` 走正向复制。因此它是 screen orientation，不是宽度。
 
 开发建议：
 
-- SDK 将旧 `BDA_GUI_SCREEN_MODE_QUERY_LIKE` / `bda_gui_screen_mode_query_like()`
-  直接改名为 `BDA_GUI_SCREEN_WIDTH_LIKE` / `bda_gui_screen_width_like()`。
-- 该 return value 适合当作系统可绘制宽度常量使用；高度、颜色深度和 framebuffer 布局
-  仍应从 `GUI+0x6b0/+0x72c/+0x750` 等扩展 GUI 调用继续确认。
+- 研究区使用 `BDA_GUI_SCREEN_ORIENTATION_LIKE` /
+  `bda_gui_screen_orientation_like()`。
+- 普通应用使用公开的 `bda_gui_framebuffer_acquire()`，不要自行解释 raw 值。
 
 ## 内存表
 

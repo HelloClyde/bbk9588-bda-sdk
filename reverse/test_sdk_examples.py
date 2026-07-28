@@ -19,6 +19,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/input/touch_crosshair/TouchCrosshair.bda", "TouchXY", 9),
         ("example/graphics/primitives/GraphicsPrimitives.bda", "Graphics", 9),
         ("example/graphics/picture_render/PictureRender.bda", "PictureRaw", 9),
+        ("example/graphics/direct_framebuffer/DirectFramebuffer.bda", "DirectFB", 9),
         ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
         ("example/system/high_resolution_timer/HighResolutionTimer.bda", "HighResTimer", 9),
@@ -104,9 +105,11 @@ class SdkExamplesTest(unittest.TestCase):
             "reverse/examples/gui_rect_contains_demo.c", "RectDemo", ("reverse",)
         )
 
-    def test_gui_screen_width_example_builds(self) -> None:
+    def test_gui_screen_orientation_example_builds(self) -> None:
         self.build_and_validate(
-            "reverse/examples/gui_screen_width_demo.c", "WidthDemo", ("reverse",)
+            "reverse/examples/gui_screen_orientation_demo.c",
+            "OrientDemo",
+            ("reverse",),
         )
 
     def test_input_state_example_builds(self) -> None:
@@ -220,6 +223,12 @@ class SdkExamplesTest(unittest.TestCase):
     def test_picture_render_example_builds(self) -> None:
         self.build_and_validate(
             "example/graphics/picture_render/picture_render_demo.c", "PictureRaw"
+        )
+
+    def test_direct_framebuffer_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/graphics/direct_framebuffer/direct_framebuffer_demo.c",
+            "DirectFB",
         )
 
     def test_control_gallery_example_builds(self) -> None:
