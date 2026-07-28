@@ -130,7 +130,7 @@ pointer 存到 `0x81c2051c`，并派生出 `+0x11200` 的另一个 pointer。代
 ```text
 GUI +0x6b0  screen/framebuffer pointer getter；C200 table entry 无参数
 GUI +0x6c0  最新校准触摸坐标 getter；GAMEBOY 在低层事件码 8/11 分支各调用一次
-GUI +0x738  screen width-like；C200 table entry 当前直接返回 0x130
+GUI +0x738  screen orientation；0x130 为整帧旋转 180°，0x131 为正向
 GUI +0x72c  state/query-like；C200 table entry 无参数，真机 probe 全程返回 0，仍属研究接口
 GUI +0x750  全局 raw input event fetch；两个 s32 output pointer，真机验证后已公开
 GUI +0x5d4  input packet-like，传入至少 6 byte buffer，C200 会写入按键状态

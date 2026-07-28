@@ -144,7 +144,7 @@
 | GUI | +0x718 | `BDA_GUI_MILLISECOND_TIMER_STOP_LIKE` | 0 | 0 | 中 | 1 ms timer stop；C200 mask TCU0 并注销 IRQ 0x17；每个成功 start 在退出前调用一次。 |
 | GUI | +0x71c | `BDA_GUI_MILLISECOND_COUNT_LIKE` | 0 | 0 | 中 | 标称 1 ms raw counter；无参数返回 u32，只有 +0x714 start 后才持续递增；V4 在 8013 和真机通过，真机 200 ms 窗口实测 194..200 count。 |
 | GUI | +0x72c | `BDA_GUI_STATE_QUERY_LIKE` | 9 | 6 | 中 | GAMEBOY 状态查询；C200 table entry 无参数并更新内部状态 word。 |
-| GUI | +0x738 | `BDA_GUI_SCREEN_WIDTH_LIKE` | 12 | 6 | 中 | 返回屏幕宽度常量；C200 当前返回 0x130。 |
+| GUI | +0x738 | `BDA_GUI_SCREEN_ORIENTATION_LIKE` | 12 | 6 | 中 | 返回 screen orientation；C200 的 0x130 表示整帧复制需旋转 180 度，0x131 表示正向。 |
 | GUI | +0x750 | `BDA_GUI_EVENT_FETCH_LIKE` | 2 | 2 | 高 | 全局 raw input event 获取；C200 使用 a0/a1 两个 s32 output pointer；GbTouchEventV1 真机确认 8/12/11 为 touch down/move/up、9/10 为 key down/up，已公开为 `bda_gui_raw_event_fetch()`。code 3 语义未命名，调用方必须有界 drain。 |
 | GUI | +0x808 | `BDA_GUI_DECODE_JPEG_LIKE` | 0 | 0 | 中 | JPEG decode；C200 使用 owner,out,path,mode，mode 截成 signed 8-bit，mode==1 先做路径/格式检查。 |
 | MEM | +0x000 | `BDA_MEM_TRACK_ALLOC_LIKE` | 1858 | 54 | 中 | tracked heap alloc；C200 单参数 size，debug tracking 开启时记录 pointer/size。 |

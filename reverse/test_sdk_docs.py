@@ -1600,10 +1600,14 @@ class SdkDocsTest(unittest.TestCase):
         time_notes = read("reverse/docs/time_notes.md")
         gameboy_notes = read("reverse/docs/gameboy_notes.md")
 
-        self.assertIn("#define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u", header)
-        self.assertIn("static inline int bda_gui_screen_width_like(void)", header)
-        self.assertIn("int bda_gui_screen_width_like(void);", readme)
-        self.assertIn("gui_screen_width_demo.c", readme)
+        self.assertIn(
+            "#define BDA_GUI_SCREEN_ORIENTATION_LIKE 0x738u", header
+        )
+        self.assertIn(
+            "static inline int bda_gui_screen_orientation_like(void)", header
+        )
+        self.assertIn("int bda_gui_screen_orientation_like(void);", readme)
+        self.assertIn("gui_screen_orientation_demo.c", readme)
         self.assertIn("`0x130`", readme)
         self.assertNotIn("BDA_GUI_SCREEN_MODE_QUERY_LIKE", header)
         self.assertNotIn("bda_gui_screen_mode_query_like", header)
@@ -1652,10 +1656,10 @@ class SdkDocsTest(unittest.TestCase):
 
         self.assertIn("GUI +0x738", c200_notes)
         self.assertIn("delay slot 是 `addiu v0, zero, 0x130`", c200_notes)
-        self.assertIn("BDA_GUI_SCREEN_WIDTH_LIKE", c200_notes)
+        self.assertIn("BDA_GUI_SCREEN_ORIENTATION_LIKE", c200_notes)
         self.assertIn("SYS +0x0a8  不公开 no-op stub", time_notes)
         self.assertIn("SDK 不再公开该 wrapper", time_notes)
-        self.assertIn("GUI +0x738  screen width-like", gameboy_notes)
+        self.assertIn("GUI +0x738  screen orientation", gameboy_notes)
 
     def test_msgbox_api_has_dynamic_standalone_evidence(self) -> None:
         verified = read("docs/verified/msgbox_api.md")

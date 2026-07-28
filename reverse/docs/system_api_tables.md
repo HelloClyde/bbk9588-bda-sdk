@@ -160,7 +160,7 @@ C200 会把 `0x80281680` 处的 8 个 word 复制到 `0x81c00000`，原生 BDA �
 | GUI | +0x718 | `BDA_GUI_MILLISECOND_TIMER_STOP_LIKE` | `0x80281578` | `0x8001ddb0` | 是 | `addiu $sp, $sp, -0x18` | 1 ms timer stop；C200 mask TCU0 并注销 IRQ 0x17；每个成功 start 在退出前调用一次。 |
 | GUI | +0x71c | `BDA_GUI_MILLISECOND_COUNT_LIKE` | `0x8028157c` | `0x8001dde0` | 是 | `lui $v0, 0x8047` | 标称 1 ms raw counter；无参数返回 u32，只有 +0x714 start 后才持续递增；V4 在 8013 和真机通过，真机 200 ms 窗口实测 194..200 count。 |
 | GUI | +0x72c | `BDA_GUI_STATE_QUERY_LIKE` | `0x8028158c` | `0x8005a2d4` | 是 | `lui $v0, 0x804a` | GAMEBOY 状态查询；C200 table entry 无参数并更新内部状态 word。 |
-| GUI | +0x738 | `BDA_GUI_SCREEN_WIDTH_LIKE` | `0x80281598` | `0x80024708` | 是 | `jr $ra` | 返回屏幕宽度常量；C200 当前返回 0x130。 |
+| GUI | +0x738 | `BDA_GUI_SCREEN_ORIENTATION_LIKE` | `0x80281598` | `0x80024708` | 是 | `jr $ra` | 返回 screen orientation；C200 的 0x130 表示整帧复制需旋转 180 度，0x131 表示正向。 |
 | GUI | +0x750 | `BDA_GUI_EVENT_FETCH_LIKE` | `0x802815b0` | `0x8001de5c` | 是 | `addiu $sp, $sp, -0x28` | 全局 raw input event 获取；C200 使用 a0/a1 两个 s32 output pointer；GbTouchEventV1 真机确认 8/12/11 为 touch down/move/up、9/10 为 key down/up，已公开为 `bda_gui_raw_event_fetch()`。code 3 语义未命名，调用方必须有界 drain。 |
 | GUI | +0x808 | `BDA_GUI_DECODE_JPEG_LIKE` | `0x80281668` | `0x800e2d2c` | 是 | `addiu $sp, $sp, -0x38` | JPEG decode；C200 使用 owner,out,path,mode，mode 截成 signed 8-bit，mode==1 先做路径/格式检查。 |
 | MEM | +0x000 | `BDA_MEM_TRACK_ALLOC_LIKE` | `0x8028169c` | `0x80058574` | 是 | `addiu $sp, $sp, -0x18` | tracked heap alloc；C200 单参数 size，debug tracking 开启时记录 pointer/size。 |

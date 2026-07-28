@@ -105,9 +105,11 @@ class SdkExamplesTest(unittest.TestCase):
             "reverse/examples/gui_rect_contains_demo.c", "RectDemo", ("reverse",)
         )
 
-    def test_gui_screen_width_example_builds(self) -> None:
+    def test_gui_screen_orientation_example_builds(self) -> None:
         self.build_and_validate(
-            "reverse/examples/gui_screen_width_demo.c", "WidthDemo", ("reverse",)
+            "reverse/examples/gui_screen_orientation_demo.c",
+            "OrientDemo",
+            ("reverse",),
         )
 
     def test_input_state_example_builds(self) -> None:

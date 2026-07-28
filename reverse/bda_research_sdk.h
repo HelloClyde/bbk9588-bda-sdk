@@ -176,7 +176,7 @@ typedef unsigned long long u64;
 #define BDA_GUI_MILLISECOND_TIMER_STOP_LIKE  0x718u
 #define BDA_GUI_MILLISECOND_COUNT_LIKE       0x71cu
 #define BDA_GUI_STATE_QUERY_LIKE       0x72cu
-#define BDA_GUI_SCREEN_WIDTH_LIKE      0x738u
+#define BDA_GUI_SCREEN_ORIENTATION_LIKE 0x738u
 #define BDA_GUI_EVENT_FETCH_LIKE       0x750u
 
 /* GAMEBOY.BDA 中观察到的 file selector/session 调用。 */
@@ -1882,8 +1882,8 @@ static inline int bda_gui_state_query_like(void) {
 /*
  * C200 当前直接返回 0x130，可作为 GUI table smoke test。
  */
-static inline int bda_gui_screen_width_like(void) {
-    return bda_call0(bda_gui_table(), BDA_GUI_SCREEN_WIDTH_LIKE);
+static inline int bda_gui_screen_orientation_like(void) {
+    return bda_call0(bda_gui_table(), BDA_GUI_SCREEN_ORIENTATION_LIKE);
 }
 
 /*

@@ -73,7 +73,10 @@ class C200ApiTablesTest(unittest.TestCase):
         self.assertEqual(by_name["BDA_GUI_CAPTURE_REGION_ALLOC_LIKE"]["target_va"], 0x800C0BF0)
         self.assertEqual(by_name["BDA_GUI_RENDER_COPY_LIKE"]["target_va"], 0x800B3124)
         self.assertEqual(by_name["BDA_GUI_RECT_PREPARE_LIKE"]["target_va"], 0x800C0410)
-        self.assertEqual(by_name["BDA_GUI_SCREEN_WIDTH_LIKE"]["target_va"], 0x80024708)
+        self.assertEqual(
+            by_name["BDA_GUI_SCREEN_ORIENTATION_LIKE"]["target_va"],
+            0x80024708,
+        )
         self.assertEqual(by_name["BDA_FS_OPEN"]["target_va"], 0x80170B68)
         self.assertEqual(by_name["BDA_FS_EOF_LIKE"]["target_va"], 0x8017AC84)
         self.assertEqual(by_name["BDA_FS_ERROR_LIKE"]["target_va"], 0x8017ACFC)
