@@ -959,6 +959,10 @@ class SdkDocsTest(unittest.TestCase):
         runtime_example = read(
             "example/system/runtime_services/runtime_services_demo.c"
         )
+        heap_probe = read("reverse/examples/max_heap_hardware_probe.c")
+        heap_hardware_log = read(
+            "docs/verified/assets/max_heap_v1_hardware_log.txt"
+        )
         picture_example = read(
             "example/graphics/picture_render/picture_render_demo.c"
         )
@@ -998,10 +1002,32 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("6ac2fc57342a89fe", runtime_doc)
         self.assertIn("4bda88ee59db295d", picture_doc)
         self.assertIn("15360 = 160 * 96", picture_doc)
-        self.assertIn("真机仍需复测", runtime_doc)
+        for token in [
+            "11337728",
+            "11403264",
+            "11599872",
+            "10.8125 MiB",
+            "11.0625 MiB",
+            "耗尽返回值 | `NULL`",
+            "8c2e2e3f160ba6c0a5c37db4a1dcadf5e3dde977c1e8df3da6dc416422a8deb0",
+            "84863eb890bfda7601ed578864a971d9b97c985afc52dd43688126d83c80be1f",
+        ]:
+            self.assertIn(token, runtime_doc)
+        self.assertIn("RECOVERY_RESERVE_BYTES KIB(256)", heap_probe)
+        self.assertIn("FINE_STEP_BYTES        KIB(64)", heap_probe)
+        self.assertIn("PROBE_CAP_BYTES        MIB(16)", heap_probe)
+        self.assertIn("touch_and_verify_pages", heap_probe)
+        self.assertIn("MAX SAFE SINGLE BYTES=11337728", heap_hardware_log)
+        self.assertIn(
+            "FIRST FAILED CANDIDATE BYTES=11403264", heap_hardware_log
+        )
+        self.assertIn("RECOVERY PAGE=PASS", heap_hardware_log)
+        self.assertIn("RESULT=PASS", heap_hardware_log)
+        self.assertNotIn("约 6.5 MiB", runtime_doc)
         self.assertIn("真机仍需复测", picture_doc)
 
         for asset in [
+            "max_heap_v1_hardware_log.txt",
             "runtime_services_probe_pass.png",
             "runtime_services_probe_log.txt",
             "picture_render_phase0.png",

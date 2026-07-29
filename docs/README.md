@@ -48,7 +48,7 @@
 | 高分辨率计时 | [high_resolution_timer_api.md](verified/high_resolution_timer_api.md) | 模拟器 + 真机 |
 | 窗口消息定时器 | [window_timer_api.md](verified/window_timer_api.md) | 模拟器 + 真机 |
 | Raw RGB565 picture | [picture_rendering_api.md](verified/picture_rendering_api.md) | 8013 模拟器 |
-| 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 8013 模拟器 |
+| 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 堆：C200 真机；文件服务：8013 模拟器 |
 | 内建控件、GIF 与自定义类 | [controls_api.md](verified/controls_api.md) | 8013 模拟器 |
 | Raw PCM 音频生命周期 | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 + 真机 |
 | 实时 PCM 录音 | [audio_capture_api.md](verified/audio_capture_api.md) | C200 真机 |
