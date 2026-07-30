@@ -21,6 +21,7 @@ graphics/direct_framebuffer/ direct_framebuffer_demo.c + DirectFramebuffer.bda
 games/minesweeper/        minesweeper_bda.c + MinesweeperV1.bda + icon
 system/runtime_services/  runtime_services_demo.c + RuntimeServices.bda
 system/high_resolution_timer/ high_resolution_timer_demo.c + HighResolutionTimer.bda
+system/hardware_detection/ hardware_detection_demo.c + HardwareDetect.bda
 system/file_selector/     file_selector_demo.c + FileSelector.bda
 system/confirm_dialog/    confirm_dialog_probe.c + ConfirmDialog.bda
 system/three_button_dialog/ three_button_dialog_demo.c + ThreeButtonDialog.bda
@@ -44,6 +45,7 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 | `games/minesweeper/` | 双缓冲、VX、色键、dirty rect、tick | 模拟器 | [游戏绘图教程](../docs/verified/game_rendering_api.md) |
 | `system/runtime_services/` | heap、seek、目录和枚举 | 模拟器 | [API 文档](../docs/verified/runtime_services_api.md) |
 | `system/high_resolution_timer/` | 标称 1 ms timer 和完整 start/stop 生命周期 | 模拟器 + 真机 | [API 文档](../docs/verified/high_resolution_timer_api.md) |
+| `system/hardware_detection/` | 9588/9688 机型与 JZ47xx 芯片识别 | 真机 | [API 文档](../docs/verified/hardware_detection_api.md) |
 | `system/file_selector/` | 默认目录、后缀过滤和完整路径返回 | 模拟器 | [API 文档](../docs/verified/file_selector_api.md) |
 | `system/confirm_dialog/` | 系统是/否确认框及返回值 | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
 | `system/three_button_dialog/` | 系统是/全部/否确认框及三个返回值 | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |

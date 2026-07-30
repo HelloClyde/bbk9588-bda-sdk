@@ -509,6 +509,7 @@ example/graphics/direct_framebuffer/direct_framebuffer_demo.c 已验证的 C200 
 example/games/minesweeper/minesweeper_bda.c            娱乐天地分类的 9x9 可玩扫雷
 example/system/runtime_services/runtime_services_demo.c  已验证的 heap、seek、目录和枚举闭环
 example/system/high_resolution_timer/high_resolution_timer_demo.c  已验证的标称 1 ms timer 生命周期
+example/system/hardware_detection/hardware_detection_demo.c  真机验证的 9588/9688 与 JZ47xx 只读识别
 example/system/file_selector/file_selector_demo.c       已验证的系统模态文件选择器
 example/system/confirm_dialog/confirm_dialog_probe.c     已验证的是/否确认框及返回值
 example/system/three_button_dialog/three_button_dialog_demo.c  已验证的是/全部/否确认框及返回值

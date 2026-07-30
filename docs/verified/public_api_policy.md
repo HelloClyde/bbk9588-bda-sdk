@@ -36,6 +36,8 @@ SDK 尚未对外发布，不为仓库内部出现过的旧误名保留兼容别�
 
 ## 当前公开范围
 
+- 9588/9688 机型与 JZ4720/JZ4730/JZ4740 只读识别：
+  `docs/verified/hardware_detection_api.md`
 - Message Box、是/否和是/全部/否确认框：`docs/verified/msgbox_api.md`
 - 系统帮助页：`docs/verified/help_page_api.md`
 - 文件写入与读回：`docs/verified/fs_write_api.md`

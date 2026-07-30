@@ -23,6 +23,7 @@ class SdkExamplesTest(unittest.TestCase):
         ("example/games/minesweeper/MinesweeperV1.bda", "MinesV1", 4),
         ("example/system/runtime_services/RuntimeServices.bda", "RuntimeSvc", 9),
         ("example/system/high_resolution_timer/HighResolutionTimer.bda", "HighResTimer", 9),
+        ("example/system/hardware_detection/HardwareDetect.bda", "HardwareDetect", 9),
         ("example/system/file_selector/FileSelector.bda", "FileSelect", 9),
         ("example/system/confirm_dialog/ConfirmDialog.bda", "Confirm", 9),
         ("example/system/three_button_dialog/ThreeButtonDialog.bda", "ThreeDialog", 9),
@@ -260,6 +261,12 @@ class SdkExamplesTest(unittest.TestCase):
         self.build_and_validate(
             "example/system/high_resolution_timer/high_resolution_timer_demo.c",
             "HighResTimer",
+        )
+
+    def test_hardware_detection_example_builds(self) -> None:
+        self.build_and_validate(
+            "example/system/hardware_detection/hardware_detection_demo.c",
+            "HardwareDetect",
         )
 
     def test_audio_pcm_example_builds(self) -> None:

@@ -11,6 +11,7 @@
 | 头文件 | 能力 |
 |---|---|
 | `bda_types.h` | SDK 版本、freestanding 基础类型和 handle |
+| `bda_hardware.h` | 9588/9688 机型、JZ47xx 芯片和原始签名地址识别 |
 | `bda_memory.h` | `memset`、`memcpy`、堆分配与释放 |
 | `bda_filesystem.h` | 文件读写、seek、目录与枚举 |
 | `bda_input.h` | 六键轮询、原始输入事件和高速触摸坐标读取 |
@@ -41,6 +42,7 @@ helper 位于 `bda/detail/runtime.h`，它是公开 wrapper 的实现细节，�
 - [已验证示例](../example/README.md)
 - [开发者文档](README.md)
 - [公开 API 准入规则](verified/public_api_policy.md)
+- [机型与芯片识别](verified/hardware_detection_api.md)
 - [触摸与窗口生命周期](verified/touch_window_lifecycle_api.md)
 - [高速触摸坐标读取](verified/touch_position_api.md)
 - [GAMEBOY 式原始输入事件](verified/raw_input_event_api.md)

@@ -14,6 +14,8 @@
 
 当前已验证：
 
+- [机型与芯片识别 API](hardware_detection_api.md)：真机验证的 9588/JZ4730
+  识别，以及与 9588/9688 原厂恢复程序一致的只读检测流程。
 - [Message Box 与确认框 API](msgbox_api.md)：`GUI+0x2b8` 的单按钮、是/否、是/全部/否布局及返回值。
 - [系统帮助页 API](help_page_api.md)：`GUI+0x5a8` 的标题/正文协议、同步生命周期与父 Frame 恢复。
 - [文件写入 API](fs_write_api.md)：`fopen/fwrite/tell/error/close/reopen/read` 写入闭环。
