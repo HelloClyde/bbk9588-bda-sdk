@@ -11,6 +11,7 @@
  */
 
 #include "bda_types.h"
+#include "bda_hardware.h"
 #include "bda_memory.h"
 #include "bda_filesystem.h"
 #include "bda_input.h"

@@ -29,6 +29,9 @@ All notable SDK and packer changes are recorded here. The project follows
   GUI-provided dynamic addressing, orientation compensation, uncached
   full-frame copies, firmware fallback requirements, an independently
   verified example, and emulator/true-device evidence.
+- Publish the true-hardware-verified read-only BBK 9588/9688 and
+  JZ4720/JZ4730/JZ4740 identification API, example BDA, and verification
+  boundaries.
 
 ## 0.1.0-alpha.1
 

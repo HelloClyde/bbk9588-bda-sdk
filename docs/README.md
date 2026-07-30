@@ -16,6 +16,7 @@
 |---|---|
 | [`bda_sdk.h`](../sdk/include/bda_sdk.h) | 聚合全部已验证公共模块 |
 | [`bda_types.h`](../sdk/include/bda_types.h) | SDK 版本、基础类型和 handle |
+| [`bda_hardware.h`](../sdk/include/bda_hardware.h) | 9588/9688 机型与 JZ47xx 芯片识别 |
 | [`bda_memory.h`](../sdk/include/bda_memory.h) | freestanding 内存 helper 和 heap |
 | [`bda_filesystem.h`](../sdk/include/bda_filesystem.h) | 文件、seek、目录和枚举 |
 | [`bda_input.h`](../sdk/include/bda_input.h) | 按键包、原始输入事件和高速触摸坐标读取 |
@@ -35,6 +36,7 @@
 
 | 能力 | 文档 | 动态验证 |
 |---|---|---|
+| 9588/9688 机型与 JZ47xx 芯片识别 | [hardware_detection_api.md](verified/hardware_detection_api.md) | 9588/JZ4730 真机 |
 | Message Box 与确认框 | [msgbox_api.md](verified/msgbox_api.md) | 8013 模拟器 |
 | 系统帮助页 | [help_page_api.md](verified/help_page_api.md) | 8013 模拟器 |
 | 系统文件选择器 | [file_selector_api.md](verified/file_selector_api.md) | 8013 模拟器 |

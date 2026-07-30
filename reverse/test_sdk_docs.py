@@ -29,6 +29,7 @@ class SdkDocsTest(unittest.TestCase):
         for header in [
             "bda_sdk.h",
             "bda_types.h",
+            "bda_hardware.h",
             "bda_memory.h",
             "bda_filesystem.h",
             "bda_input.h",
@@ -57,6 +58,7 @@ class SdkDocsTest(unittest.TestCase):
                 "include/bda_dialogs.h",
                 "include/bda_filesystem.h",
                 "include/bda_graphics.h",
+                "include/bda_hardware.h",
                 "include/bda_input.h",
                 "include/bda_memory.h",
                 "include/bda_sdk.h",
@@ -93,6 +95,7 @@ class SdkDocsTest(unittest.TestCase):
                 "fs_write_api.md",
                 "game_rendering_api.md",
                 "graphics_primitives_api.md",
+                "hardware_detection_api.md",
                 "help_page_api.md",
                 "high_resolution_timer_api.md",
                 "input_polling_api.md",
@@ -126,6 +129,7 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("只保存动态验证后公开的 API", sdk_readme)
         for header in [
             "bda_sdk.h",
+            "bda_hardware.h",
             "bda_memory.h",
             "bda_filesystem.h",
             "bda_input.h",
