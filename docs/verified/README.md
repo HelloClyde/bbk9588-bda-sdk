@@ -36,5 +36,6 @@
   内存 GIF 自动播放、消息 helper、自定义类注册和失败边界。
 - [Raw PCM 音频 API](audio_pcm_api.md)：8013 与真机验证的 22050 Hz/16-bit/mono、
   衰减控制、open/write/stop，以及禁止直调 AIC MMIO 的真机边界。
-- [实时 PCM 录音 API](audio_capture_api.md)：C200 真机验证的
-  16000 Hz/16-bit/mono 阻塞读取、固件 profile 检查和安全 stop。
+- [实时 PCM 录音 API](audio_capture_api.md)：9588/JZ4730 真机验证的
+  16000 Hz/16-bit/mono 读取生命周期，以及 9588/9688 JZ47xx 精确固件 profile、
+  成熟度查询、ready 轮询和安全 stop。

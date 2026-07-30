@@ -20,7 +20,7 @@
 | `bda_graphics.h` | draw context、图元、文字、VX、picture、context copy 和 C200 framebuffer |
 | `bda_dialogs.h` | Message Box、确认框、帮助页和文件选择器 |
 | `bda_controls.h` | 内建控件、GIF 和自定义控件类 |
-| `bda_audio.h` | raw PCM 播放，以及 C200knl 固件保护的实时录音 |
+| `bda_audio.h` | raw PCM 播放，以及 9588/9688 精确固件 profile 保护的实时录音 |
 | `bda_sdk.h` | 聚合上述全部公共模块 |
 
 例如，一个带窗口、按键和绘图的游戏可以只包含：

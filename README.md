@@ -3,7 +3,7 @@
 [![SDK CI](https://github.com/HelloClyde/bbk9588-bda-sdk/actions/workflows/sdk-ci.yml/badge.svg)](https://github.com/HelloClyde/bbk9588-bda-sdk/actions/workflows/sdk-ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-面向 BBK / 步步高 9588（`kj409588` / C200 固件）的原生 BDA 开发工具链。
+面向 BBK / 步步高 9588（C200）和 9688（C100）固件的原生 BDA 开发工具链。
 它可以把 freestanding MIPS little-endian C 源码编译成独立 `*.bda`，并提供经过
 动态验证的系统 API 头文件、示例和开发文档。
 
@@ -16,6 +16,7 @@
 - 生成菜单标题、分类、VX 图标、入口和校验字段
 - 静态验证 BDA header、checksum、入口和图标区
 - 使用已验证的文件、窗口、绘图、输入、对话框、控件和 raw PCM API
+- 通过型号、芯片和机器码三重门禁选择 9588/9688 JZ47xx 录音 profile
 - 运行带源码和预编译 BDA 的完整示例，包括触摸十字、控件和扫雷
 - 在专用 NAND 副本中自动部署 BDA 到 8013 模拟器
 
@@ -60,6 +61,8 @@ bda-validate build\HelloWorld.bda
 
 公开应用只应包含 [`sdk/include/`](sdk/include/) 中的头文件。未经完整动态验证的
 候选接口位于 `reverse/bda_research_sdk.h`，只能用于探针，不能作为稳定 SDK API。
+已验证 API 的附加精确固件绑定会通过公开成熟度字段标明
+`STATIC_CANDIDATE`，不能据此宣称对应真机已经通过。
 
 ## 项目结构
 

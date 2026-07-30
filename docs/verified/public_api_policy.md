@@ -18,6 +18,12 @@ wrapper 共用的动态函数表实现。这里不是逆向 API 候选目录，�
    动态证据和未覆盖边界。
 5. 有可编译的最小示例，并保留构建或回归验证。
 
+已经完成动态闭环的公开 API 可以增加“精确固件绑定”，但不得借此引入新的未验证
+参数或生命周期。新增绑定必须同时具备设备/芯片识别、完整机器码门禁、固定镜像 hash、
+离线调用约定复核和公开的成熟度字段；未完成对应真机闭环时必须标记为
+`STATIC_CANDIDATE`，文档和兼容性矩阵不得写成真机通过。录音 API 的多固件 profile
+采用这一规则：公开调用约定来自已验证基线，各固件绑定保留各自的验证等级。
+
 可观察结果包括屏幕输出、导出的日志或数据文件、输入响应和绘图截图。仅有以下证据
 不够进入本目录：
 
@@ -63,7 +69,8 @@ SDK 尚未对外发布，不为仓库内部出现过的旧误名保留兼容别�
   `docs/verified/controls_api.md`
 - 22050 Hz/16-bit/mono raw PCM open、write、attenuation 与真机安全 stop：
   `docs/verified/audio_pcm_api.md`
-- C200knl 固件保护的 16000 Hz/16-bit/mono 实时 PCM 录音：
+- 9588/9688 多固件 profile 保护的 16000 Hz/16-bit/mono 实时 PCM 录音；
+  9588/JZ4730 已真机验证，其余 profile 保持静态候选：
   `docs/verified/audio_capture_api.md`
 
 未达到上述条件的 API 必须留在 `reverse/bda_research_sdk.h` 或 `reverse/docs/` 逆向材料中，

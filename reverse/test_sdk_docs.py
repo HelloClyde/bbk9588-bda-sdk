@@ -390,14 +390,17 @@ class SdkDocsTest(unittest.TestCase):
             self.assertIn(name, playback_docs)
             self.assertIn(name, playback_example)
         for name in [
-            "bda_audio_capture_is_supported",
+            "bda_audio_capture_profile",
             "bda_audio_capture_open",
+            "bda_audio_capture_ready",
             "bda_audio_capture_read",
             "bda_audio_capture_stop",
         ]:
             self.assertIn(name, header)
             self.assertIn(name, capture_docs)
             self.assertIn(name, capture_example)
+        self.assertIn("bda_audio_capture_is_supported", header)
+        self.assertIn("bda_audio_capture_is_supported", capture_docs)
         self.assertIn("bda_audio_capture_firmware", header)
         self.assertIn("bda_audio_capture_firmware", capture_docs)
         for token in [
@@ -410,12 +413,29 @@ class SdkDocsTest(unittest.TestCase):
         ]:
             self.assertIn(token, header)
             self.assertIn(token, capture_docs)
-        self.assertIn("BDA_AUDIO_INTERNAL_C200_SYS_PCM_OPEN", header)
-        self.assertIn("init_code[0] != 0x27bdffe0u", header)
-        self.assertIn("read_code[0] != 0x27bdffb8u", header)
-        self.assertIn("stop_code[0] != 0x3c03b001u", header)
+        for token in [
+            "BDA_AUDIO_CAPTURE_FIRMWARE_9588_JZ4720",
+            "BDA_AUDIO_CAPTURE_FIRMWARE_9588_JZ4730",
+            "BDA_AUDIO_CAPTURE_FIRMWARE_9588_JZ4740",
+            "BDA_AUDIO_CAPTURE_FIRMWARE_9688_JZ4730",
+            "BDA_AUDIO_CAPTURE_FIRMWARE_9688_JZ4740",
+            "BDA_AUDIO_CAPTURE_SUPPORT_STATIC_CANDIDATE",
+            "BDA_AUDIO_CAPTURE_SUPPORT_HARDWARE_VERIFIED",
+            "bda_audio_internal_capture_profile_detect",
+            "capture_init_takes_format",
+            "0x801967f0u",
+            "0x80199d4cu",
+            "0x80194900u",
+            "0x801a169cu",
+            "0x8019e400u",
+        ]:
+            self.assertIn(token, header)
+        self.assertIn('#include "bda_hardware.h"', header)
+        self.assertIn("static u32 detection_complete", header)
+        self.assertIn("BDA_AUDIO_CAPTURE_SUPPORT_STATIC_CANDIDATE", capture_docs)
+        self.assertIn("静态候选", capture_docs)
         self.assertIn("bytes != BDA_AUDIO_CAPTURE_BLOCK_BYTES", header)
-        self.assertIn("不会调用固件私有地址", capture_docs)
+        self.assertIn("不会调用任何录音私有地址", capture_docs)
         self.assertIn("首次 read 会启动 DMA", capture_docs)
         self.assertIn("实时波形", capture_docs)
         self.assertIn("calculate_waveform", capture_example)

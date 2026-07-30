@@ -32,6 +32,10 @@ All notable SDK and packer changes are recorded here. The project follows
 - Publish the true-hardware-verified read-only BBK 9588/9688 and
   JZ4720/JZ4730/JZ4740 identification API, example BDA, and verification
   boundaries.
+- Move the exact 9588/9688 JZ4720/JZ4730/JZ4740 capture profiles into the
+  public audio API, including cached hardware/signature gating, profile
+  maturity reporting, format-aware initialization, and nonblocking
+  `bda_audio_capture_ready()` polling.
 
 ## 0.1.0-alpha.1
 

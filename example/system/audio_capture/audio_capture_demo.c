@@ -385,6 +385,35 @@ static void wait_escape_release(void) {
     } while (bda_gui_input_packet_key_pressed(&packet, BDA_KEY_ESCAPE));
 }
 
+static int wait_capture_block_ready(
+    bda_audio_capture_t *capture,
+    bda_gui_message_t *message,
+    bda_gui_input_packet_t *packet,
+    int *escape_pressed
+) {
+    int ready;
+
+    for (;;) {
+        ready = bda_audio_capture_ready(capture);
+        if (ready != 0) {
+            return ready;
+        }
+        (void)bda_gui_event_pump_frame_once(message, g_frame);
+        if (g_need_redraw) {
+            redraw_scene();
+        }
+        (void)bda_gui_input_packet(packet);
+        if (bda_gui_input_packet_key_pressed(packet, BDA_KEY_ESCAPE)) {
+            *escape_pressed = 1;
+            return 0;
+        }
+        if (g_exit) {
+            return 0;
+        }
+        bda_sys_delay(1u);
+    }
+}
+
 static void close_window(bda_gui_message_t *message) {
     u32 close_wait;
 
@@ -409,6 +438,7 @@ static void close_window(bda_gui_message_t *message) {
 __attribute__((section(".text.bda_main")))
 int bda_main(void) {
     bda_audio_capture_t capture = BDA_AUDIO_CAPTURE_INITIALIZER;
+    const bda_audio_capture_profile_t *profile;
     bda_frame_desc_t descriptor;
     bda_gui_message_t message;
     bda_gui_input_packet_t packet;
@@ -421,12 +451,20 @@ int bda_main(void) {
 
     reset_log();
     log_text("START AUDIO CAPTURE WAVEFORM V1");
-    log_value("FIRMWARE=", bda_audio_capture_firmware());
-    if (!bda_audio_capture_is_supported()) {
+    profile = bda_audio_capture_profile();
+    log_value(
+        "FIRMWARE=",
+        profile != 0
+            ? profile->firmware
+            : BDA_AUDIO_CAPTURE_FIRMWARE_NONE
+    );
+    if (profile == 0) {
         log_text("RESULT=UNSUPPORTED");
         bda_msgbox("Audio Capture", "Unsupported firmware");
         return 0;
     }
+    log_value("SUPPORT LEVEL=", profile->support_level);
+    log_text(profile->name);
     file = open_raw();
     if (!bda_fs_file_is_valid(file)) {
         log_text("RAW OPEN FAILED");
@@ -487,6 +525,18 @@ int bda_main(void) {
     for (block = 0u;
          !failed && !g_exit && block < CAPTURE_MAX_BLOCKS;
          ++block) {
+        if (block != 0u) {
+            result = wait_capture_block_ready(
+                &capture, &message, &packet, &escape_pressed
+            );
+            if (result < 0) {
+                failed = 1;
+                break;
+            }
+            if (result == 0) {
+                break;
+            }
+        }
         if ((block & 7u) == 0u) {
             log_value("BEFORE READ BLOCK=", block);
         }
