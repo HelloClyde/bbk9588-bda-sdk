@@ -54,7 +54,7 @@
 | 堆、seek、目录与枚举 | [runtime_services_api.md](verified/runtime_services_api.md) | 堆：C200 真机；文件服务：8013 模拟器 |
 | 内建控件、GIF 与自定义类 | [controls_api.md](verified/controls_api.md) | 8013 模拟器 |
 | Raw PCM 音频生命周期 | [audio_pcm_api.md](verified/audio_pcm_api.md) | 模拟器 + 真机 |
-| 实时 PCM 录音 | [audio_capture_api.md](verified/audio_capture_api.md) | C200 真机 |
+| 实时 PCM 录音 | [audio_capture_api.md](verified/audio_capture_api.md) | 9588/JZ4730 真机；其他 profile 为静态候选 |
 
 ![图形图元验证](verified/assets/graphics_primitives_bda_verified.png)
 

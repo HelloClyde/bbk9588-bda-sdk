@@ -33,7 +33,7 @@ SDK 版本：`0.1.0-alpha.1`。这里的“通过”表示仓库存在独立测�
 | Frame 窗口定时器 | 通过 | 通过 | 10 ms 调度；Frame 退出前必须停止全部 timer |
 | 内建控件、GIF、自定义控件 | 通过 | 未验证 | 控件依赖父 Frame 与消息分发 |
 | Raw PCM 22050/16/mono | 通过 | 通过 | 退出只调用系统 stop，禁止固定地址 AIC reset |
-| 实时 PCM 录音 16000/16/mono | 不支持 | 通过 | 仅匹配指定 C200knl profile；固定 4096-byte block |
+| 实时 PCM 录音 16000/16/mono | 不支持 | 部分通过 | 9588/JZ4730 已通过；其他四个精确 profile 为静态候选；固定 4096-byte block |
 
 ## 稳定性等级
 
