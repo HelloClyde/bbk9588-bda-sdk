@@ -41,6 +41,7 @@
 | 系统帮助页 | [help_page_api.md](verified/help_page_api.md) | 8013 模拟器 |
 | 系统文件选择器 | [file_selector_api.md](verified/file_selector_api.md) | 8013 模拟器 |
 | 文件写入与读回 | [fs_write_api.md](verified/fs_write_api.md) | 8013 模拟器 |
+| 全局文件 flush | [fs_flush_api.md](verified/fs_flush_api.md) | 8013 模拟器强制断电 A/B |
 | 六键轮询 | [input_polling_api.md](verified/input_polling_api.md) | 8013 模拟器 |
 | 高速触摸坐标读取 | [touch_position_api.md](verified/touch_position_api.md) | 真机 |
 | GAMEBOY 式原始输入事件 | [raw_input_event_api.md](verified/raw_input_event_api.md) | 真机 |

@@ -36,6 +36,9 @@ All notable SDK and packer changes are recorded here. The project follows
   public audio API, including cached hardware/signature gating, profile
   maturity reporting, format-aware initialization, and nonblocking
   `bda_audio_capture_ready()` polling.
+- Publish the no-argument global filesystem flush API after an 8013 forced
+  power-cut A/B test preserved the flushed 4096-byte file while the unflushed
+  control remained 0 bytes.
 
 ## 0.1.0-alpha.1
 

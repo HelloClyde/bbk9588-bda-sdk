@@ -235,7 +235,8 @@ int bda_input_poll_normalized(bda_input_state_t *state);
 - `read`/`write` 返回元素数，调用者必须处理短读和短写。
 - `seek` 成功返回新位置，不是固定返回 `0`。
 - 缺少统一的文件大小、存在性、完整写入和路径拼接 helper。
-- truncate、flush、rename 和断电一致性仍需进一步验证。
+- truncate、rename 和真机断电一致性仍需进一步验证；全局 flush 已完成 8013
+  强制断电 A/B 并公开为 `bda_fs_flush_all()`。
 
 ### 可直接实现的 helper
 
@@ -257,7 +258,6 @@ int bda_fs_join_path(char *out, bda_size_t capacity,
 以下能力不能只凭常见 FAT/C stdio 行为推断：
 
 - `wb` 是否在所有目标上可靠截断旧文件。
-- flush 或 sync 的真实固件入口与返回语义。
 - rename 是否能用于同目录原子替换。
 - seek 到文件末尾之外再写入的行为。
 - 写入后模拟器重启、NAND 重新挂载和真机断电后的持久性。

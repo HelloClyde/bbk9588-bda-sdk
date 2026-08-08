@@ -92,6 +92,7 @@ class SdkDocsTest(unittest.TestCase):
                 "controls_api.md",
                 "direct_framebuffer_api.md",
                 "file_selector_api.md",
+                "fs_flush_api.md",
                 "fs_write_api.md",
                 "game_rendering_api.md",
                 "graphics_primitives_api.md",
@@ -3303,12 +3304,41 @@ class SdkDocsTest(unittest.TestCase):
         self.assertIn("0x801705ec", fs_notes + "\n" + c200_notes)
         self.assertIn("0x8000f8a0", fs_notes + "\n" + c200_notes)
         self.assertIn("FS +0x074", c200_notes)
-        self.assertIn("不公开 SDK wrapper", c200_notes)
+        self.assertIn("bda_fs_flush_all", c200_notes)
         self.assertIn("不等于具体 directory enumeration 一定成功", c200_notes)
         self.assertNotIn("bda_fs_media_present_raw_like(const char", header + readme)
         self.assertNotIn("bda_fs_media_present_raw_like(u32", header + readme)
         self.assertNotIn("bda_fs_storage_ready_like(const char", header + readme)
         self.assertNotIn("bda_fs_storage_ready_like(u32", header + readme)
+
+    def test_fs_flush_all_is_public_after_forced_power_cut_ab(self) -> None:
+        public_header = read("sdk/include/bda_filesystem.h")
+        runtime = read("sdk/include/bda/detail/runtime.h")
+        verified = read("docs/verified/fs_flush_api.md")
+        evidence = read(
+            "docs/verified/assets/fs_flush_power_probe_result.txt"
+        )
+        example = read(
+            "example/filesystem/fs_flush/fs_flush_power_demo.c"
+        )
+        c200_notes = read("reverse/docs/c200_api_function_notes.md")
+
+        self.assertIn("BDA_SDK_INTERNAL_FS_FLUSH_ALL  0x074u", runtime)
+        self.assertIn("static inline void bda_fs_flush_all(void)", public_header)
+        self.assertIn("global operation", public_header)
+        self.assertIn("does not close handles", public_header)
+        self.assertIn("bda_fs_flush_all();", example)
+        self.assertNotIn("bda_sdk_internal_api", example)
+        self.assertIn("F74YES.DAT", example + "\n" + verified)
+        self.assertIn("F74NO.DAT", example + "\n" + verified)
+        self.assertIn("flushed read=4096, byte_match=1", evidence)
+        self.assertIn("control read=0, byte_match=0", evidence)
+        self.assertIn(
+            "4bdb590eaadb6efc9fc001b29f09b2af9edf289898cd204289fcf5557d97cb87",
+            verified + "\n" + evidence,
+        )
+        self.assertIn("void bda_fs_flush_all(void)", c200_notes)
+        self.assertIn("真机物理断电仍未验证", verified + "\n" + c200_notes)
 
     def test_fs_chdir_mkdir_and_rmdir_are_documented_from_c200(self) -> None:
         header = SDK_HEADER.read_text(encoding="utf-8")

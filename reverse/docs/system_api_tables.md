@@ -44,6 +44,7 @@ C200 会把 `0x80281680` 处的 8 个 word 复制到 `0x81c00000`，原生 BDA �
 | FS | +0x050 | `BDA_FS_GETCWD_LIKE` | `0x80280e20` | `0x801700d0` | 是 | `lui $v0, 0x8047` | current directory getter；C200 使用 buffer,size，返回所需 byte 数，写入 A:/B: 前缀路径。 |
 | FS | +0x054 | `BDA_FS_PATH_INFO_LIKE` | `0x80280e24` | `0x8017a0d8` | 是 | `addiu $sp, $sp, -0x20` | path info getter；C200 使用 path,info，填充 0x18 byte attr/size/time-like 结构。 |
 | FS | +0x06c | `BDA_FS_STAT_LIKE` | `0x80280e3c` | `0x8017a5ec` | 是 | `addiu $sp, $sp, -0x28` | path/flags 存在性或属性检查；C200 只使用 a0/a1，不填充 stat 输出结构。 |
+| FS | +0x074 | `BDA_FS_FLUSH_ALL` | `0x80280e44` | `0x8017b0d0` | 是 | `lui $v0, 0x804c` | 全局 open-file flush；无参数，遍历脏 file object 写回数据和 metadata；8013 强制断电 A/B 验证 4096-byte flushed 文件完整、未 flush 对照为 0 byte。 |
 | FS | +0x078 | `BDA_FS_MEDIA_PRESENT_RAW_LIKE` | `0x80280e48` | `0x8017952c` | 是 | `addiu $sp, $sp, -0x18` | raw media-present query；C200 无参数，底层读取 0xb0010300 的 media-present bit 后返回 0/1。 |
 | FS | +0x07c | `BDA_FS_STORAGE_READY_LIKE` | `0x80280e4c` | `0x801705ec` | 是 | `addiu $sp, $sp, -0x18` | 无参数存储介质就绪查询；C200 返回内部检测结果低 8 位。 |
 | GUI | +0x030 | `BDA_GUI_EVENT_POLL_LIKE` | `0x80280e90` | `0x800dbfd0` | 是 | `addiu $sp, $sp, -0x28` | event poll；C200 参数为 message_buffer,frame_or_handle，会填 0x1c byte message packet。 |
@@ -220,7 +221,6 @@ C200 会把 `0x80281680` 处的 8 个 word 复制到 `0x81c00000`，原生 BDA �
 | +0x008 | 2658 | 54 | GUI | `0x80280e68` | `0x800dbd90` | `addiu $sp, $sp, -0x18` | 未分类 candidate：只能作为 disasm 导航，不能当作 SDK API。 |
 | +0x008 | 2658 | 54 | SYS | `0x80280c68` | `0x80185628` | `addiu $sp, $sp, -0x28` | 已分析为 10-slot system resource scheduler/tick helper，不公开 wrapper。 |
 | +0x008 | 2658 | 54 | RES | `0x80280d38` | `0x8013bb40` | `lui $v0, 0x804b` | 已分析为 resource manager cleanup，会释放全局 buffer/file handle，不公开 wrapper。 |
-| +0x074 | 2462 | 51 | FS | `0x80280e44` | `0x8017b0d0` | `lui $v0, 0x804c` | 已定位但不公开：FS 内部状态/helper，不是通用 stat/read API。 |
 | +0x00c | 2412 | 54 | GUI | `0x80280e6c` | `0x800dbe90` | `addiu $sp, $sp, -0x18` | 未分类 candidate：只能作为 disasm 导航，不能当作 SDK API。 |
 | +0x00c | 2412 | 54 | SYS | `0x80280c6c` | `0x80185814` | `addiu $sp, $sp, -0x70` | 已分析为 system resource scheduler helper，含 busy-wait，不公开 wrapper。 |
 | +0x00c | 2412 | 54 | RES | `0x80280d3c` | `0x8013bc10` | `addiu $sp, $sp, -0x18` | 已分析为 resource descriptor/global state 写入 helper，不公开 wrapper。 |

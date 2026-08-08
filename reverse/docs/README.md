@@ -260,6 +260,7 @@ u32 bda_fs_path_info_size_like(const bda_fs_path_info_like_t *info);
 int bda_fs_stat_like(const char *path, u32 flags);
 int bda_fs_media_present_raw_like(void);
 int bda_fs_storage_ready_like(void);
+void bda_fs_flush_all(void);
 
 void *bda_sys_table(void);
 int bda_sys_session_open_like(bda_sys_session_desc_like_t *descriptor);
@@ -501,6 +502,7 @@ filesystem raw wrapper 保持保守命名，直到 struct layout 和 return valu
 ```text
 example/basic/hello_world/hello_world_msgbox.c        最小 verified message box
 example/filesystem/fs_write/fs_write_demo.c              已验证的写入、关闭、重开和读回闭环
+example/filesystem/fs_flush/fs_flush_power_demo.c       已验证的全局 flush 强制断电 A/B 对照
 example/input/key_polling/key_msgbox_demo.c            已验证的六键 packet 轮询
 example/input/touch_crosshair/touch_crosshair_demo.c       真机 V23 两阶段绘制的无闪烁触摸定位测试
 example/graphics/primitives/graphics_primitives_demo.c   已验证的 frame 图元和彩色像素绘制

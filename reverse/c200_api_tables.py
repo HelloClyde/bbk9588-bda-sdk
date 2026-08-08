@@ -23,7 +23,6 @@ TABLE_SLOTS = {
 UNKNOWN_CANDIDATE_NOTES: dict[tuple[str, int], str] = {
     ("FS", 0x064): "已分析为低层 block read support helper；volume/index 和 block 参数依赖内部状态，不公开 wrapper。",
     ("FS", 0x068): "已分析为 file-object block read helper；a3 是内部 file object/descriptor，不公开 wrapper。",
-    ("FS", 0x074): "已定位但不公开：FS 内部状态/helper，不是通用 stat/read API。",
     ("FS", 0x080): "已定位但不公开：FS 内部状态/helper，普通 BDA 不应直接调用。",
     ("RES", 0x000): "已分析为 resource manager 全局 reset，普通 BDA 不应公开调用。",
     ("RES", 0x004): "已分析为 resource manager 文件/cache 路径，不是 DLX loader，不公开 wrapper。",

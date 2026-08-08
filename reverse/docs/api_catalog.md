@@ -28,6 +28,7 @@
 | FS | +0x050 | `BDA_FS_GETCWD_LIKE` | 557 | 53 | 中 | current directory getter；C200 使用 buffer,size，返回所需 byte 数，写入 A:/B: 前缀路径。 |
 | FS | +0x054 | `BDA_FS_PATH_INFO_LIKE` | 554 | 53 | 中 | path info getter；C200 使用 path,info，填充 0x18 byte attr/size/time-like 结构。 |
 | FS | +0x06c | `BDA_FS_STAT_LIKE` | 97 | 10 | 中 | path/flags 存在性或属性检查；C200 只使用 a0/a1，不填充 stat 输出结构。 |
+| FS | +0x074 | `BDA_FS_FLUSH_ALL` | 2462 | 51 | 中 | 全局 open-file flush；无参数，遍历脏 file object 写回数据和 metadata；8013 强制断电 A/B 验证 4096-byte flushed 文件完整、未 flush 对照为 0 byte。 |
 | FS | +0x078 | `BDA_FS_MEDIA_PRESENT_RAW_LIKE` | 11 | 7 | 中 | raw media-present query；C200 无参数，底层读取 0xb0010300 的 media-present bit 后返回 0/1。 |
 | FS | +0x07c | `BDA_FS_STORAGE_READY_LIKE` | 105 | 20 | 中 | 无参数存储介质就绪查询；C200 返回内部检测结果低 8 位。 |
 | GUI | +0x030 | `BDA_GUI_EVENT_POLL_LIKE` | 784 | 54 | 中 | event poll；C200 参数为 message_buffer,frame_or_handle，会填 0x1c byte message packet。 |

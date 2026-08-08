@@ -387,6 +387,22 @@ path/access wrapper 形状。它不会创建、删除或写入文件；`stat` �
 和 `6` 有额外分支，会继续检查打开后的对象属性；其他 flags 主要按 standard path
 打开结果返回。flags 的完整枚举仍需结合更多调用点命名。
 
+## 全局 open-file flush
+
+`FS+0x074`（C200 `0x8017b0d0`）是无参数全局 flush。它检查文件系统初始化状态，
+取得全局锁并遍历最多 100 个 open-file slot，对带 dirty flag 的 file object 执行
+writeback。公开 SDK 名称为：
+
+```c
+void bda_fs_flush_all(void);
+```
+
+8013 强制断电 A/B 已确认：flush 前写入且保持打开的 `F74YES.DAT` 重启后为 4096 byte
+并逐字节匹配；flush 后才写入且同样未 close 的 `F74NO.DAT` 重启后为 0 byte。这个
+入口不关闭任何 handle，也不是 `fflush(file)`；普通程序仍应正常 close。原始 return
+value 混合内部状态，公开 wrapper 不暴露。完整记录见
+`docs/verified/fs_flush_api.md`。
+
 ## 暂不公开的辅助函数
 
 FS 表还有一些 C200 table entry 已能定位到 function VA，但当前不公开 SDK wrapper：
@@ -397,7 +413,6 @@ FS+0x04c  0x80170078  FS/internal state init 或 reset；会写全局错误状�
 FS+0x058  0x80179998  低层 storage/boot-sector 检查；触碰全局存储状态，风险高
 FS+0x064  0x8017afb4  低层 block read support helper；volume/index 和 block 参数依赖内部状态
 FS+0x068  0x8017a200  file-object block read helper；a3 是内部 file object/descriptor
-FS+0x074  0x8017b0d0  全局 open-file flush/sync 候选；会拿锁并遍历 open file table
 FS+0x080  0x8017a708  path/open-object 内部检查；会扫描打开文件表，不是普通 exists/stat
 FS+0x094  0x800d4950  落到 GUI-like function 区域，不能按 FS API 暴露
 ```
@@ -406,13 +421,6 @@ FS+0x094  0x800d4950  落到 GUI-like function 区域，不能按 FS API 暴露
 检查 `0xe9/0xeb` boot-sector-like signature 和 `0x55aa` 尾标记，并写
 `0x80474278/0x80474248` 等全局状态。不要在 SDK 中包装为普通 storage
 query；现有只读 storage ready wrapper 是 `bda_fs_storage_ready_like()`。
-
-`FS+0x074` 会检查全局 FS 初始化状态，拿 `0x804c` 附近的全局锁，调用内部状态
-聚合 helper `0x80181778()`，然后遍历 `0x8086cce0` 附近最多 100 个 open file
-object slot；对 `object+0x4a` 带 `0x4000` flag 的对象调用 `0x801781dc()` 做
-flush/writeback-like 操作。它还会调用 `0x80184cbc()` 和解锁 helper。这个入口
-影响全局打开文件状态，当前不公开为 SDK wrapper；需要文件写入后收尾时优先使用
-具体 file handle 的 close/flush 语义，而不是全局 sync。
 
 `FS+0x068` 不是 standard file handle 操作。C200 entry 把 `a3` 当内部
 file object/descriptor 读取 `+0x48/+0x4a/+0x20/+0x3c`，按 0x200 byte block

@@ -18,6 +18,7 @@ class BdaApiCatalogTest(unittest.TestCase):
         self.assertIn("BDA_GUI_MSGBOX", defs[("GUI", 0x2B8)])
         self.assertNotIn(("GUI", 0x81C00004), defs)
         self.assertNotIn(("FS", 0x81C00008), defs)
+        self.assertIn("BDA_FS_FLUSH_ALL", defs[("FS", 0x074)])
         self.assertIn(("SYS", 0x000), defs)
         self.assertIn("BDA_SYS_SESSION_OPEN_LIKE", defs[("SYS", 0x000)])
         self.assertNotIn(("SYS", 0x010), defs)

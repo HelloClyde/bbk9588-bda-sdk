@@ -527,7 +527,7 @@ system function VA：`0x8017952c`
 - 用它区分底层 media-present 状态；实际文件读写仍应先用
   `bda_fs_storage_ready_like()`，再检查每个 `fopen/findfirst/stat` return value。
 
-### FS +0x074: 不公开的全局 flush/sync 候选
+### FS +0x074: `BDA_FS_FLUSH_ALL`
 
 system function VA：`0x8017b0d0`
 
@@ -540,11 +540,18 @@ system function VA：`0x8017b0d0`
   `object+0x4a` 带 `0x4000` flag 的对象调用 `0x801781dc()`。
 - `0x801781dc()` 会分配临时 buffer，按 file object 的 offset/size/path 状态调用
   内部 read/writeback helper，并释放临时 buffer。
+- `模拟考场.bda` 在 `0x81c0f750` 存在一次明确分类的无参数 FS+0x074 调用。
+- 独立 `FsFlush.bda` 在 8013 模拟器完成强制断电 A/B：flush 前写入且保持打开的
+  4096-byte 文件重启后完整匹配；同次 flush 后才写入、同样未 close 的对照文件重启后
+  长度为 0。成功调用时原始 return value 为 0。
 
 开发建议：
 
-- 当前不公开 SDK wrapper。它影响全局打开文件状态，且 return value 混合内部状态
-  聚合结果和 flush error，普通开发不要直接调用。
+- SDK 公开为 `void bda_fs_flush_all(void)`。它影响全部打开文件状态，不接受 file
+  handle，也不会关闭句柄。
+- 原始 return value 混合内部状态聚合结果和 flush error，因此稳定 wrapper 有意不
+  暴露它；调用者继续检查 write 长度、`bda_fs_error(file)` 和最终 close 结果。
+- 当前持久化结论只覆盖 8013 模拟器；真机物理断电仍未验证。
 
 ## SYS 表
 

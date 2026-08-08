@@ -20,6 +20,7 @@ CORE_API_DEFINE_NAMES = {
     "BDA_FS_SEEK",
     "BDA_FS_TELL",
     "BDA_FS_REMOVE",
+    "BDA_FS_FLUSH_ALL",
     "BDA_MEM_ALLOC",
     "BDA_MEM_FREE",
 }
@@ -35,6 +36,7 @@ NON_API_DEFINE_NAMES = {
 }
 
 NOTES: dict[tuple[str, int], str] = {
+    ("FS", 0x074): "全局 open-file flush；无参数，遍历脏 file object 写回数据和 metadata；8013 强制断电 A/B 验证 4096-byte flushed 文件完整、未 flush 对照为 0 byte。",
     ("GUI", 0x030): "event poll；C200 参数为 message_buffer,frame_or_handle，会填 0x1c byte message packet。",
     ("GUI", 0x03C): "异步 notify/post；C200 将 handle,message,a,b 写入 frame queue，0xb1 只置 pending flag。",
     ("GUI", 0x040): "同步 send；C200 直接调用 handle+0x88 wndproc，参数为 handle,message,wparam,lparam。",

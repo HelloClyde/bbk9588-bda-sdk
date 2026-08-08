@@ -226,6 +226,7 @@ typedef unsigned long long u64;
 #define BDA_FS_GETCWD_LIKE    0x050u
 #define BDA_FS_PATH_INFO_LIKE 0x054u
 #define BDA_FS_STAT_LIKE      0x06cu
+#define BDA_FS_FLUSH_ALL      0x074u
 #define BDA_FS_MEDIA_PRESENT_RAW_LIKE 0x078u
 #define BDA_FS_STORAGE_READY_LIKE 0x07cu
 
@@ -2420,6 +2421,11 @@ static inline u32 bda_fs_path_info_size_like(const bda_fs_path_info_like_t *info
  */
 static inline int bda_fs_stat_like(const char *path, u32 flags) {
     return bda_call2(bda_fs_table(), BDA_FS_STAT_LIKE, (u32)path, flags);
+}
+
+/* Public SDK name: bda_fs_flush_all(). The raw mixed return value is ignored. */
+static inline void bda_fs_flush_all(void) {
+    (void)bda_call0(bda_fs_table(), BDA_FS_FLUSH_ALL);
 }
 
 /*

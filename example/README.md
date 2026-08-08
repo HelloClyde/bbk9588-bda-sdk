@@ -13,6 +13,7 @@
 ```text
 basic/hello_world/        hello_world_msgbox.c + HelloWorld.bda
 filesystem/fs_write/     fs_write_demo.c + FsWrite.bda
+filesystem/fs_flush/     fs_flush_power_demo.c + FsFlush.bda
 input/key_polling/        key_msgbox_demo.c + KeyInput.bda
 input/touch_crosshair/    touch_crosshair_demo.c + TouchCrosshair.bda
 graphics/primitives/      graphics_primitives_demo.c + GraphicsPrimitives.bda
@@ -37,6 +38,7 @@ gui/gif_player/           gif_player_demo.c + GifPlayer.bda
 |---|---|---|---|
 | `basic/hello_world/` | Message Box | 模拟器 | [API 文档](../docs/verified/msgbox_api.md) |
 | `filesystem/fs_write/` | 文件写入、关闭、重开、读回 | 模拟器 | [API 文档](../docs/verified/fs_write_api.md) |
+| `filesystem/fs_flush/` | 全局 flush 与强制断电 A/B | 模拟器 | [API 文档](../docs/verified/fs_flush_api.md) |
 | `input/key_polling/` | 六个实体键轮询 | 模拟器 | [API 文档](../docs/verified/input_polling_api.md) |
 | `input/touch_crosshair/` | 触摸坐标、无闪烁重绘、窗口退出 | 真机 | [生命周期教程](../docs/verified/touch_window_lifecycle_api.md) |
 | `graphics/primitives/` | 点、线、圆、矩形和文字 | 模拟器 | [API 文档](../docs/verified/graphics_primitives_api.md) |
@@ -74,6 +76,14 @@ bda-pack example\basic\hello_world\hello_world_msgbox.c `
 bda-pack example\graphics\direct_framebuffer\direct_framebuffer_demo.c `
   --title DirectFB --category 9 `
   -o example\graphics\direct_framebuffer\DirectFramebuffer.bda
+```
+
+全局文件 flush 的二阶段断电探针：
+
+```powershell
+bda-pack example\filesystem\fs_flush\fs_flush_power_demo.c `
+  --title FsFlush --category 9 `
+  -o example\filesystem\fs_flush\FsFlush.bda
 ```
 
 扫雷带自定义图标，并放入“娱乐天地”分类：

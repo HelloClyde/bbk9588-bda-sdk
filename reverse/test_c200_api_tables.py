@@ -86,6 +86,7 @@ class C200ApiTablesTest(unittest.TestCase):
         self.assertEqual(by_name["BDA_FS_PATH_INFO_LIKE"]["target_va"], 0x8017A0D8)
         self.assertEqual(by_name["BDA_FS_RMDIR_LIKE"]["target_va"], 0x80172520)
         self.assertEqual(by_name["BDA_FS_MEDIA_PRESENT_RAW_LIKE"]["target_va"], 0x8017952C)
+        self.assertEqual(by_name["BDA_FS_FLUSH_ALL"]["target_va"], 0x8017B0D0)
         self.assertEqual(by_name["BDA_MEM_TRACK_ALLOC_LIKE"]["target_va"], 0x80058574)
         self.assertEqual(by_name["BDA_MEM_TRACK_FREE_LIKE"]["target_va"], 0x80058618)
         self.assertEqual(by_name["BDA_MEM_TRACK_BEGIN_LIKE"]["target_va"], 0x80058554)

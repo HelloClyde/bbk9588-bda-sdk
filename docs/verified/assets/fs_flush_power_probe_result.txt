@@ -1,0 +1,22 @@
+Environment: bbk9588-emulator-v0.1.5, kj409588/C200, dedicated bda_test NAND
+Probe: example/filesystem/fs_flush/fs_flush_power_demo.c
+API: FS+0x074 via bda_fs_flush_all(void)
+
+Phase 1, both file handles still open:
+  flushed write=4096, flush completed, bda_fs_error=0
+  control write=4096, no later flush, bda_fs_error=0
+  action=force-stop without application close or firmware safe shutdown
+
+Phase 2 after restarting the same NAND:
+  flushed read=4096, byte_match=1
+  control read=0, byte_match=0
+  result=STRONG PASS
+
+Direct NAND verification after stopping QEMU:
+  F74YES.DAT size=4096
+  F74YES.DAT sha256=4bdb590eaadb6efc9fc001b29f09b2af9edf289898cd204289fcf5557d97cb87
+  F74YES.DAT expected_payload_match=true
+  F74NO.DAT size=0
+  F74NO.DAT sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  F74NO.DAT expected_payload_match=false
+

@@ -96,6 +96,19 @@ static inline int bda_fs_error(int file) {
     return fn(file);
 }
 
+/*
+ * Flush dirty data and metadata for every currently open file object.
+ * This is a global operation, not fflush(file), and it does not close handles.
+ * The firmware's mixed internal return value is intentionally not exposed.
+ */
+static inline void bda_fs_flush_all(void) {
+    typedef int (*fn_t)(void);
+    fn_t fn = (fn_t)bda_sdk_internal_api(
+        bda_sdk_internal_fs(), BDA_SDK_INTERNAL_FS_FLUSH_ALL
+    );
+    (void)fn();
+}
+
 /* Directory API: FS+0x02c/+0x030/+0x03c/+0x040/+0x044. */
 static inline int bda_fs_chdir(const char *path) {
     return bda_sdk_internal_call1(

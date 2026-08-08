@@ -127,6 +127,7 @@ FS +0x01c  BDA_FS_ERROR_LIKE        ferror-like；检查 file error flag
 FS +0x020  BDA_FS_CLEAR_ERROR_LIKE  clearerr-like；清 file error flag
 FS +0x024  BDA_FS_REMOVE            remove/unlink；删除文件
 FS +0x028  BDA_FS_RENAME_LIKE       rename/move-like；old_path,new_path
+FS +0x074  BDA_FS_FLUSH_ALL         无参数全局 open-file writeback；不关闭句柄
 ```
 
 SDK wrapper：
@@ -143,6 +144,7 @@ int bda_fs_error_like(int file);
 int bda_fs_clear_error_like(int file);
 int bda_fs_remove_raw(const char *path);
 int bda_fs_rename_like(const char *old_path, const char *new_path);
+void bda_fs_flush_all(void);
 ```
 
 成功 handle 是高地址 pointer，signed 值通常为负数。打开结果必须用
@@ -163,6 +165,7 @@ FS +0x048  disk-info/free-space 类
 FS +0x050  current directory getter；buffer,size，返回 required size
 FS +0x054  path info getter；path,info，填充 attr/size/time-like 结构
 FS +0x06c  path/flags 存在性或属性检查；C200 只使用 a0/a1，不填充 stat 结构
+FS +0x074  BDA_FS_FLUSH_ALL  全局 open-file flush；8013 强制断电 A/B 已验证
 FS +0x078  BDA_FS_MEDIA_PRESENT_RAW_LIKE  raw media-present bit 查询；无参数，返回 0/1
 FS +0x07c  storage-ready/media-present 类
 ```
